@@ -1,0 +1,47 @@
+<?php
+if (! (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) ) { echo "permission denied"; return; }
+?>
+<div class="card">
+  <div class="card-body">
+    <h4>Backups</h4>
+    <div class="mb-2">
+      <button id="btn-create-full" class="btn btn-primary">Create Full Backup Now</button>
+      <button id="btn-auto-backup" class="btn btn-secondary">Run Auto Backup</button>
+      <button id="btn-cleanup" class="btn btn-warning">Cleanup > retention</button>
+      <small class="text-muted ms-2" id="backup-msg"></small>
+    </div>
+    <div class="mb-3">
+      <input id="backup-filter" class="form-control" placeholder="Filter filename...">
+    </div>
+    <div id="backup-list"></div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  function fetchBackups(q) {
+    $('#backup-list').html('Loading...');
+    $.get(Wo_Ajax_Requests_File() + '?f=file_manager&s=list_db_backups', { q: q || '' }, function(res){
+      if (res.status != 200) { $('#backup-list').html('Load failed'); return; }
+      var html = '<div class="list-group">';
+      res.files.forEach(function(f){
+        html += '<div class="list-group-item d-flex align-items-center"><div style="flex:1;"><strong>'+f.name+'</strong><br><small class="text-muted">'+new Date(f.mtime*1000).toLocaleString()+' • '+Math.round(f.size/1024)+' KB</small></div><div><a class="btn btn-sm btn-outline-primary" href="'+Wo_Ajax_Requests_File()+'?f=file_manager&s=download_local&file='+encodeURIComponent(f.name)+'">Download</a> <button class="btn btn-sm btn-outline-success btn-upload-r2" data-file="'+f.name+'">Upload→R2</button> <button class="btn btn-sm btn-outline-warning btn-restore" data-file="'+f.name+'">Restore</button></div></div>';
+      });
+      html += '</div>';
+      $('#backup-list').html(html);
+    }, 'json');
+  }
+  $('#btn-create-full').click(function(){
+    if (!confirm('Create full DB backup now?')) return;
+    $.post(Wo_Ajax_Requests_File() + '?f=file_manager&s=create_full_backup', {}, function(res){ if (res.status==200) { $('#backup-msg').text('Created: '+res.filename); fetchBackups(); } else alert('Create failed: '+(res.error||JSON.stringify(res))); }, 'json');
+  });
+  $('#btn-auto-backup').click(function(){
+    if (!confirm('Run auto backup now?')) return;
+    $.post(Wo_Ajax_Requests_File() + '?f=file_manager&s=auto_backup_run', {}, function(res){ if (res.status==200) { $('#backup-msg').text('Auto backup run'); fetchBackups(); } else alert('Auto failed'); }, 'json');
+  });
+  $(document).on('click', '.btn-upload-r2', function(){ var f = $(this).data('file'); $.post(Wo_Ajax_Requests_File() + '?f=file_manager&s=upload_r2_from_local', { path: f, mode: 'enqueue' }, function(res){ if (res.status==200) alert('enqueued'); else alert('upload failed'); }, 'json'); });
+  $(document).on('click', '.btn-restore', function(){ var f = $(this).data('file'); if (!confirm('This will restore database into a temp DB. Continue?')) return; $.post(Wo_Ajax_Requests_File() + '?f=file_manager&s=restore_db_local', { file: f, confirm_token: 'RESTORE_NOW' }, function(res){ if (res.status==200) alert('Restored to temp DB: '+res.temp_db); else alert('restore failed: '+(res.error||JSON.stringify(res))); }, 'json'); });
+  $('#backup-filter').on('keyup', function(){ fetchBackups($(this).val()); });
+  fetchBackups();
+});
+</script>

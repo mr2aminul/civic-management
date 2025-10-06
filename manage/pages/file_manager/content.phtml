@@ -1,0 +1,572 @@
+<?php
+Global $tab;
+if (! (Wo_IsAdmin() || Wo_IsModerator()) ) {
+    echo Wo_LoadManagePage('permission-required/content');
+    return;
+}
+if ($tab == 'settings') {
+    echo Wo_LoadManagePage('file_manager/file_manager_api_setup', ['tab' => $tab]);
+    return;
+}
+?>
+<?php
+Global $tab;
+if (! (Wo_IsAdmin() || Wo_IsModerator()) ) {
+    echo Wo_LoadManagePage('permission-required/content');
+    return;
+}
+if ($tab == 'settings') {
+    echo Wo_LoadManagePage('file_manager/file_manager_api_setup', ['tab' => $tab]);
+    return;
+}
+?>
+<!-- views/file_manager.phtml - advanced UI (updated and fixed) -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+
+<!-- External libraries (CDN) - no empty integrity attributes -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.15.2/ace.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.0/jszip.min.js" crossorigin="anonymous"></script>
+
+<style>
+/* Layout */
+.fm-wrap { display:flex; gap:12px; align-items:flex-start; }
+.fm-left { width: 290px; min-width:240px; }
+.fm-main { flex:1; min-width:560px; }
+.fm-dropzone {
+  position: relative;
+  border: 2px dashed #d0d7de;
+  border-radius: 8px;
+  padding: 14px;
+  min-height: 520px;
+  background: #f8fafc;
+  display:flex;
+  flex-direction:column;
+}
+.fm-dropzone.dragover { border-color: #2b90ff; background: #eef7ff; }
+.fm-breadcrumb { margin-bottom: 10px; }
+.fm-controls { display:flex; gap:8px; align-items:center; margin-bottom: 10px;}
+.fm-queue { margin-top:12px; max-height:140px; overflow:auto; }
+.fm-queue .qitem { display:flex; gap:8px; align-items:center; padding:6px; border-radius:6px; background:#fff; margin-bottom:6px; box-shadow:0 1px 2px rgba(0,0,0,0.04);}
+.file-action { margin-left:8px; }
+.fm-left .panel { background:#fff; border-radius:8px; padding:10px; box-shadow:0 1px 3px rgba(0,0,0,0.04); margin-bottom:12px; }
+.fm-tree { max-height:380px; overflow:auto; }
+.list-group-item.folder-item { cursor:pointer; }
+.context-menu { position: absolute; z-index: 99999; background: #fff; border: 1px solid #ddd; padding:6px 0; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.08); display:none; min-width:160px;}
+.context-menu button { display:block; width:100%; text-align:left; padding:8px 12px; border:0; background:transparent; }
+.fm-preview { background:#fff; padding:12px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.04); min-height:200px;}
+.small-muted { color:#6c757d; font-size:0.9rem; }
+.search-input { display:flex; gap:8px; }
+.toolbar { display:flex; gap:8px; align-items:center; margin-bottom:10px;}
+.btn-xs { padding:.22rem .5rem; font-size:.78rem; }
+.multi-selected { background:#e9f6ff !important; }
+</style>
+
+<div class="fm-wrap">
+  <div class="fm-left">
+    <div class="panel">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <strong>File Manager</strong>
+        <small class="small-muted">advanced</small>
+      </div>
+
+      <div class="search-input mb-2">
+        <input id="fm-search" class="form-control form-control-sm" placeholder="Search files & folders...">
+        <select id="fm-sort" class="form-select form-select-sm" style="width:130px;">
+          <option value="mtime_desc">Newest</option>
+          <option value="mtime_asc">Oldest</option>
+          <option value="name_asc">Name A–Z</option>
+          <option value="name_desc">Name Z–A</option>
+        </select>
+      </div>
+
+      <div class="fm-tree mb-2">
+        <div class="list-group" id="fm-side-folders">
+          <!-- folder list injected -->
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <button id="fm-create-folder-btn" class="btn btn-sm btn-primary w-100">Create Folder</button>
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small-muted mb-1">Auto upload types</label>
+        <div id="fm-auto-types" class="small-muted">sql,zip,xlsx,docx,pdf (editable in settings)</div>
+      </div>
+
+      <div class="fm-left small-muted">
+        <div>Quota: <span id="fm-quota">--</span></div>
+        <div class="mt-1">R2: <span id="fm-r2-status">?</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <strong>Queue</strong>
+      <div id="fm-queue" class="fm-queue" aria-live="polite"></div>
+      <div class="mt-2 d-flex gap-2">
+        <button id="fm-process-queue" class="btn btn-sm btn-outline-primary w-100">Process Queue</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="fm-main">
+    <div class="fm-dropzone" id="fm-dropzone">
+      <div class="fm-breadcrumb d-flex justify-content-between align-items-center">
+        <nav aria-label="breadcrumb"><ol class="breadcrumb mb-0" id="fm-breadcrumb"></ol></nav>
+        <div class="toolbar">
+          <button id="fm-root" class="btn btn-sm btn-outline-secondary btn-xs"><i class="bi bi-house"></i></button>
+          <button id="fm-up" class="btn btn-sm btn-outline-secondary btn-xs"><i class="bi bi-arrow-up"></i></button>
+          <button id="fm-refresh" class="btn btn-sm btn-outline-secondary btn-xs">Refresh</button>
+          <button id="fm-select-all" class="btn btn-sm btn-outline-secondary btn-xs">Select all</button>
+          <button id="fm-clear-select" class="btn btn-sm btn-outline-secondary btn-xs">Clear</button>
+          <div class="dropdown">
+            <button class="btn btn-sm btn-primary dropdown-toggle btn-xs" data-bs-toggle="dropdown">Actions</button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><a id="bulk-download" class="dropdown-item" href="#">Download selected (zip)</a></li>
+              <li><a id="bulk-upload-r2" class="dropdown-item" href="#">Upload selected → R2</a></li>
+              <li><a id="bulk-delete" class="dropdown-item text-danger" href="#">Delete selected</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="fm-controls mt-2">
+        <input id="fm-new-folder" class="form-control form-control-sm" placeholder="New folder name (press Enter)" style="max-width:320px"/>
+        <div class="ms-auto small-muted" id="fm-list-meta">—</div>
+      </div>
+
+      <div id="fm-contents" style="display:flex; gap:12px; align-items:flex-start;">
+        <div style="flex:1">
+          <div id="fm-folders" class="mb-2"></div>
+          <div id="fm-files" class="mb-2"></div>
+        </div>
+
+        <div style="width:420px;">
+          <div class="fm-preview" id="fm-preview">
+            <div id="preview-area">Select a file to preview/edit</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="fm-queue mt-2" id="fm-upload-ui">
+        <div class="small-muted">Drop files anywhere into the panel to upload (supports multiple)</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Context menu -->
+<div class="context-menu" id="fm-context-menu" role="menu" aria-hidden="true">
+  <button data-action="preview">Preview / Edit</button>
+  <button data-action="download">Download</button>
+  <button data-action="upload_r2">Upload → R2</button>
+  <button data-action="rename">Rename</button>
+  <button data-action="move">Move</button>
+  <button data-action="delete" style="color:#c00">Delete</button>
+</div>
+
+<script>
+jQuery(function($){
+  // Helper: ajax base
+  const API = Wo_Ajax_Requests_File() + '?f=file_manager';
+  let currentPath = '';
+  let selected = new Set();
+  let ctxTarget = null;
+
+  // Utilities
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]); }); }
+  function formatSize(bytes){
+    if (!bytes) return '0 B';
+    const sizes = ['B','KB','MB','GB','TB'];
+    let i = Math.floor(Math.log(bytes)/Math.log(1024));
+    if (isNaN(i) || !isFinite(i)) i = 0;
+    if (i<0) i=0; if (i>4) i=4;
+    return (bytes/Math.pow(1024,i)).toFixed(1) + ' ' + sizes[i];
+  }
+
+  // Ping R2 status
+  function showR2Status(){
+    $.get(API + '&s=ping', function(res){
+      if (res && res.status === 200) $('#fm-r2-status').text(res.r2_enabled ? 'OK' : 'No');
+      else $('#fm-r2-status').text('Unknown');
+    }, 'json').fail(()=>$('#fm-r2-status').text('Error'));
+  }
+
+  // Quota
+  function loadQuota(){
+    $.get(API + '&s=get_user_quota', function(res){
+      if (res && res.status == 200) $('#fm-quota').text(formatSize(res.used) + ' / ' + formatSize(res.quota));
+    }, 'json').fail(()=>$('#fm-quota').text('--'));
+  }
+
+  // Breadcrumb
+  function setBreadcrumb(path) {
+    $('#fm-breadcrumb').empty();
+    const root = $('<li class="breadcrumb-item"><a href="#" data-path="">Root</a></li>');
+    $('#fm-breadcrumb').append(root);
+    if (!path) return;
+    const parts = path.split('/');
+    let acc = [];
+    parts.forEach((p,i) => {
+      acc.push(p);
+      const pp = acc.join('/');
+      if (i === parts.length - 1) $('#fm-breadcrumb').append('<li class="breadcrumb-item active" aria-current="page">'+escapeHtml(p)+'</li>');
+      else $('#fm-breadcrumb').append('<li class="breadcrumb-item"><a href="#" data-path="'+pp+'">'+escapeHtml(p)+'</a></li>');
+    });
+  }
+
+  // Listing
+  function listFolder(path){
+    $('#fm-files').html('<div class="text-muted p-3">Loading…</div>');
+    $.get(API + '&s=list_local_folder', { path: path }, function(res){
+      if (!res || res.status !== 200) { $('#fm-files').html('<div class="text-danger p-3">Failed to load</div>'); return; }
+      currentPath = path || '';
+      setBreadcrumb(currentPath);
+      renderSideTree(res.folders || [], res.files || []);
+      renderFiles(res.folders || [], res.files || []);
+      $('#fm-list-meta').text((res.folders?.length||0) + ' folders • ' + (res.files?.length||0) + ' files');
+    }, 'json').fail(function(){ $('#fm-files').html('<div class="text-danger p-3">Network error</div>'); });
+  }
+
+  function renderSideTree(folders, files){
+    const $side = $('#fm-side-folders').empty();
+    if ((!folders || !folders.length) && (!files || !files.length)) { $side.append('<div class="text-muted">Empty</div>'); return; }
+    folders.forEach(function(f){
+      const $el = $('<a href="#" class="list-group-item list-group-item-action folder-item-side"></a>');
+      $el.text(f.name).attr('data-path', f.path).attr('title', f.path);
+      $side.append($el);
+    });
+  }
+
+  function renderFiles(folders, files){
+    let fhtml = '';
+    if (folders && folders.length){
+      fhtml += '<div class="list-group mb-2">';
+      folders.forEach(function(f){
+        fhtml += '<div class="list-group-item folder-item" data-path="'+escapeHtml(f.path)+'"><i class="bi bi-folder2"></i> '+escapeHtml(f.name)+' <small class="text-muted ms-2">'+new Date((f.mtime||0)*1000).toLocaleString()+'</small> <div class="float-end"><button class="btn btn-sm btn-outline-danger btn-delete-folder" data-path="'+escapeHtml(f.path)+'">Delete</button></div></div>';
+      });
+      fhtml += '</div>';
+    }
+
+    let filesHtml = '<div class="list-group">';
+    if (files && files.length){
+      const sort = $('#fm-sort').val();
+      const fl = files.slice(0);
+      if (sort === 'mtime_desc') fl.sort((a,b)=> (b.mtime||0)-(a.mtime||0));
+      else if (sort === 'mtime_asc') fl.sort((a,b)=> (a.mtime||0)-(b.mtime||0));
+      else if (sort === 'name_asc') fl.sort((a,b)=> a.name.localeCompare(b.name));
+      else if (sort === 'name_desc') fl.sort((a,b)=> b.name.localeCompare(a.name));
+      fl.forEach(function(fi){
+        const safeName = escapeHtml(fi.name);
+        filesHtml += '<div class="list-group-item d-flex align-items-center file-item" data-path="'+encodeURIComponent(fi.path)+'" data-name="'+safeName+'">'
+                  + '<div style="width:38px;text-align:center"><input class="form-check-input file-checkbox" type="checkbox" data-path="'+encodeURIComponent(fi.path)+'"></div>'
+                  + '<div style="flex:1"><i class="bi bi-file-earmark"></i> '+safeName+' <small class="text-muted ms-2">'+formatSize(fi.size)+'</small></div>'
+                  + '<div>'
+                  + '<a class="btn btn-sm btn-outline-primary file-action" href="'+API+'&s=download_local&file='+encodeURIComponent(fi.path)+'">Download</a> '
+                  + '<button class="btn btn-sm btn-outline-success file-action btn-upload-r2" data-path="'+encodeURIComponent(fi.path)+'">Upload→R2</button> '
+                  + '<button class="btn btn-sm btn-outline-secondary file-action btn-preview" data-path="'+encodeURIComponent(fi.path)+'">Preview</button> '
+                  + '<button class="btn btn-sm btn-outline-danger file-action btn-delete-file" data-path="'+encodeURIComponent(fi.path)+'">Delete</button>'
+                  + '</div></div>';
+      });
+    } else {
+      filesHtml += '<div class="list-group-item text-muted">No files</div>';
+    }
+    filesHtml += '</div>';
+    $('#fm-folders').html(fhtml);
+    $('#fm-files').html(filesHtml);
+  }
+
+  // Events
+  $(document).on('click', '#fm-breadcrumb a', function(e){ e.preventDefault(); const p = $(this).data('path') || ''; listFolder(p); });
+  $(document).on('click', '.folder-item, .folder-item-side', function(e){ e.preventDefault(); const raw = $(this).attr('data-path'); const p = raw ? decodeURIComponent(raw) : ''; listFolder(p); });
+
+  $('#fm-create-folder-btn').on('click', function(){
+    const name = prompt('Folder name (relative to current folder):');
+    if (!name) return;
+    const dest = currentPath ? currentPath + '/' + name : name;
+    $.post(API + '&s=create_folder', { path: dest }, function(res){ if (res && res.status==200) listFolder(currentPath); else alert('Create failed: ' + (res?.error||JSON.stringify(res))); }, 'json');
+  });
+
+  $('#fm-new-folder').keypress(function(e){ if (e.which===13){ const name = $(this).val().trim(); if (!name) return; const dest = currentPath ? currentPath + '/' + name : name; $.post(API + '&s=create_folder', { path: dest }, function(res){ if (res && res.status==200) { $('#fm-new-folder').val(''); listFolder(currentPath); } else alert('Create failed: ' + (res?.error||JSON.stringify(res))); }, 'json'); } });
+
+  $(document).on('click', '.btn-delete-folder', function(e){ e.stopPropagation(); const raw = $(this).attr('data-path'); const p = raw ? decodeURIComponent(raw) : ''; if (!confirm('Delete folder and contents: ' + p + ' ?')) return; $.post(API + '&s=delete_local', { path: p }, function(res){ if (res && res.status==200) listFolder(currentPath); else alert('Delete failed: ' + (res?.error || 'error')); }, 'json'); });
+
+  $(document).on('click', '.btn-delete-file', function(){ const raw = $(this).attr('data-path'); const p = raw ? decodeURIComponent(raw) : ''; if (!confirm('Delete file: ' + p + ' ?')) return; $.post(API + '&s=delete_local', { path: p }, function(res){ if (res && res.status==200) listFolder(currentPath); else alert('Delete failed: ' + (res?.error || 'error')); }, 'json'); });
+
+  $(document).on('click', '.btn-upload-r2', function(){ const raw = $(this).attr('data-path'); const p = raw ? decodeURIComponent(raw) : ''; if (!confirm('Schedule upload to R2: ' + p + ' ?')) return; $.post(API + '&s=upload_r2_from_local', { path: p, mode: 'enqueue' }, function(res){ if (res && res.status==200) alert('Enqueued'); else alert('Enqueue failed: ' + (res?.error||'error')); }, 'json'); });
+
+  $(document).on('click', '.btn-preview', function(){ const raw = $(this).attr('data-path'); const p = raw ? decodeURIComponent(raw) : ''; openPreview(p); });
+
+  // Selection checkboxes
+  $(document).on('change', '.file-checkbox', function(){
+    const raw = $(this).attr('data-path'); const p = raw ? decodeURIComponent(raw) : '';
+    if (this.checked) selected.add(p); else selected.delete(p);
+    highlightSelections();
+  });
+
+  function highlightSelections(){
+    $('.file-item').removeClass('multi-selected');
+    selected.forEach(function(p){
+      // find file-item by matching encoded path attribute
+      const enc = encodeURIComponent(p);
+      $('.file-item[data-path="'+enc+'"]').addClass('multi-selected');
+    });
+    $('#fm-list-meta').text((selected.size ? selected.size + ' selected • ' : '') + $('#fm-files .list-group-item').length + ' shown');
+  }
+
+  $('#fm-select-all').on('click', function(){ $('.file-checkbox').each(function(){ this.checked = true; const raw = $(this).attr('data-path'); const p = raw ? decodeURIComponent(raw) : ''; selected.add(p); }); highlightSelections(); });
+  $('#fm-clear-select').on('click', function(){ $('.file-checkbox').prop('checked', false); selected.clear(); highlightSelections(); });
+
+  // Bulk actions
+  $('#bulk-delete').on('click', function(e){
+    e.preventDefault();
+    if (!selected.size) return alert('No files selected');
+    if (!confirm('Delete ' + selected.size + ' files?')) return;
+    const arr = Array.from(selected);
+    let done=0, fail=0;
+    arr.forEach(function(p){
+      $.post(API + '&s=delete_local', { path: p }, function(res){ if (res && res.status==200) done++; else fail++; if (done+fail===arr.length) { listFolder(currentPath); alert('Done: '+done+' failed: '+fail); } }, 'json');
+    });
+  });
+
+  $('#bulk-upload-r2').on('click', function(e){
+    e.preventDefault();
+    if (!selected.size) return alert('No files selected');
+    const arr = Array.from(selected);
+    let enq = 0, err=0;
+    arr.forEach(function(p){
+      $.post(API + '&s=upload_r2_from_local', { path: p, mode: 'enqueue' }, function(res){ if (res && res.status==200) enq++; else err++; if (enq+err===arr.length) alert('Enqueued: '+enq+' failed:'+err); }, 'json');
+    });
+  });
+
+  // Bulk download using JSZip
+  $('#bulk-download').on('click', function(e){
+    e.preventDefault();
+    if (!selected.size) return alert('No files selected');
+    const arr = Array.from(selected);
+    const zip = new JSZip();
+    let count=0, failed=0;
+    arr.forEach(function(p){
+      fetch(API + '&s=download_local&file=' + encodeURIComponent(p), { credentials: 'same-origin' })
+        .then(resp => {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.blob();
+        })
+        .then(blob => {
+          zip.file(p.split('/').pop(), blob);
+          count++;
+          if (count + failed === arr.length) {
+            zip.generateAsync({type:'blob'}).then(function(content){
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(content);
+              a.download = 'files.zip';
+              document.body.appendChild(a); a.click(); a.remove();
+            });
+          }
+        }).catch(err => { console.error('fetch err', err); failed++; if (count + failed === arr.length) alert('Some files failed to download'); });
+    });
+  });
+
+  // Drag & drop upload (fixed: call uploadFiles when files exist)
+  const dz = document.getElementById('fm-dropzone');
+  dz.addEventListener('dragover', function(e){ e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', function(){ dz.classList.remove('dragover'); });
+  dz.addEventListener('drop', function(e){ e.preventDefault(); dz.classList.remove('dragover'); const files = e.dataTransfer.files; if (!files || files.length===0) return; uploadFiles(files); });
+
+  // Upload queue UI
+  function enqueueFile(file){
+    const id = 'q_' + Math.random().toString(36).slice(2,9);
+    const $row = $('<div class="qitem" id="'+id+'"><div style="flex:1"><strong>'+escapeHtml(file.name)+'</strong> <small class="text-muted ms-2">'+formatSize(file.size)+'</small></div><div class="qprogress">queued</div><div><button class="btn btn-sm btn-outline-secondary btn-cancel">Cancel</button></div></div>');
+    $('#fm-queue').append($row);
+    return { id:id, file:file };
+  }
+
+  let uploadQueue = [], uploading=false;
+  function uploadFiles(fileList){
+    for (let i=0;i<fileList.length;i++) uploadQueue.push(enqueueFile(fileList[i]));
+    processQueue();
+  }
+  function processQueue(){
+    if (uploading) return;
+    if (!uploadQueue.length) return;
+    uploading = true;
+    const item = uploadQueue.shift();
+    const form = new FormData();
+    form.append('file', item.file, item.file.name);
+    form.append('subdir', currentPath);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', API + '&s=upload_local', true);
+    xhr.upload.onprogress = function(e){ const pct = e.lengthComputable ? Math.round(e.loaded / e.total * 100) : 0; $('#' + item.id + ' .qprogress').text(pct + '%'); };
+    xhr.onload = function(){
+      try {
+        const res = JSON.parse(xhr.responseText);
+        if (res && res.status==200) {
+          $('#' + item.id + ' .qprogress').text('done');
+          listFolder(currentPath); loadQuota();
+        } else { $('#' + item.id + ' .qprogress').text('error'); alert('Upload error: '+(res?.error||JSON.stringify(res))); }
+      } catch (e) { $('#' + item.id + ' .qprogress').text('error'); alert('Upload parse error'); }
+      uploading = false; processQueue();
+    };
+    xhr.onerror = function(){ $('#' + item.id + ' .qprogress').text('error'); uploading=false; processQueue(); };
+    xhr.send(form);
+  }
+  $(document).on('click', '.btn-cancel', function(){ $(this).closest('.qitem').remove(); });
+
+  // Context menu
+  $(document).on('contextmenu', '.file-item, .folder-item', function(e){
+    e.preventDefault();
+    ctxTarget = $(this);
+    const menu = $('#fm-context-menu');
+    menu.css({ left: e.pageX + 'px', top: e.pageY + 'px' }).show().attr('aria-hidden','false');
+    menu.data('isFile', $(this).hasClass('file-item'));
+    return false;
+  });
+  $(document).on('click', function(e){ if (!$(e.target).closest('#fm-context-menu').length) $('#fm-context-menu').hide().attr('aria-hidden','true'); });
+
+  $('#fm-context-menu button').on('click', function(){
+    const action = $(this).data('action');
+    $('#fm-context-menu').hide().attr('aria-hidden','true');
+    if (!ctxTarget) return;
+    const isFile = $('#fm-context-menu').data('isFile');
+    const raw = ctxTarget.attr('data-path');
+    const path = raw ? decodeURIComponent(raw) : '';
+    if (action === 'preview') openPreview(path);
+    if (action === 'download') window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
+    if (action === 'upload_r2') $.post(API + '&s=upload_r2_from_local', { path: path, mode:'enqueue' }, function(res){ alert(res && res.status==200?'Enqueued':'Failed: '+(res?.error||'')); }, 'json');
+    if (action === 'rename') doRename(path);
+    if (action === 'move') doMove(path);
+    if (action === 'delete') { if (!confirm('Delete: '+path+' ?')) return; $.post(API + '&s=delete_local', { path: path }, function(res){ if (res && res.status==200) listFolder(currentPath); else alert('Delete failed'); }, 'json'); }
+    ctxTarget = null;
+  });
+
+  // Rename (fetch then reupload then delete)
+  function doRename(path){
+    const name = prompt('Rename', path.split('/').pop());
+    if (!name) return;
+    const dir = path.split('/').slice(0,-1).join('/');
+    const target = dir ? dir + '/' + name : name;
+    fetch(API + '&s=download_local&file=' + encodeURIComponent(path), { credentials:'same-origin' })
+      .then(r => { if (!r.ok) throw new Error('download failed ' + r.status); return r.blob(); })
+      .then(blob => {
+        const file = new File([blob], name);
+        const form = new FormData(); form.append('file', file, name); form.append('subdir', dir);
+        return fetch(API + '&s=upload_local', { method:'POST', credentials:'same-origin', body: form });
+      }).then(r => r.json())
+      .then(res => {
+        if (res && res.status==200) {
+          $.post(API + '&s=delete_local', { path: path }, function(){ listFolder(currentPath); });
+        } else alert('Rename failed: ' + (res?.error||JSON.stringify(res)));
+      }).catch(err => alert('Rename error: ' + err));
+  }
+
+  // Move (same approach)
+  function doMove(path){
+    const to = prompt('Move to folder (relative root):', currentPath || '');
+    if (to === null) return;
+    const name = path.split('/').pop();
+    fetch(API + '&s=download_local&file=' + encodeURIComponent(path), { credentials:'same-origin' })
+      .then(r => { if (!r.ok) throw new Error('download failed ' + r.status); return r.blob(); })
+      .then(blob => {
+        const file = new File([blob], name);
+        const form = new FormData(); form.append('file', file, name); form.append('subdir', to);
+        return fetch(API + '&s=upload_local', { method:'POST', credentials:'same-origin', body: form });
+      }).then(r => r.json())
+      .then(res => {
+        if (res && res.status==200) {
+          $.post(API + '&s=delete_local', { path: path }, function(){ listFolder(currentPath); });
+        } else alert('Move failed: ' + (res?.error||JSON.stringify(res)));
+      }).catch(err => alert('Move error: ' + err));
+  }
+
+  // Preview / edit
+  function openPreview(path){
+    $('#fm-preview').html('<div id="preview-area" class="p-2">Loading preview…</div>');
+    const ext = (path.split('.').pop() || '').toLowerCase();
+    // images
+    if (['png','jpg','jpeg','gif','webp','svg'].includes(ext)) {
+      const url = API + '&s=download_local&file=' + encodeURIComponent(path);
+      $('#preview-area').html('<img src="'+url+'" style="max-width:100%;border-radius:6px"> <div class="mt-2"><a class="btn btn-sm btn-primary" href="'+url+'" target="_blank">Open</a></div>');
+      return;
+    }
+    // pdf
+    if (ext === 'pdf') {
+      const url = API + '&s=download_local&file=' + encodeURIComponent(path);
+      $('#preview-area').html('<iframe src="'+url+'" style="width:100%;height:420px;border:0"></iframe>');
+      return;
+    }
+    // spreadsheets
+    if (['xls','xlsx','csv'].includes(ext)) {
+      $('#preview-area').html('<div id="sheet-area">Loading spreadsheet…</div><div class="mt-2"><button id="btn-save-sheet" class="btn btn-sm btn-primary">Save changes</button></div>');
+      fetch(API + '&s=download_local&file=' + encodeURIComponent(path), { credentials:'same-origin' })
+        .then(r => { if (!r.ok) throw new Error('download failed ' + r.status); return r.arrayBuffer(); })
+        .then(ab => {
+          const data = new Uint8Array(ab);
+          const workbook = XLSX.read(data, { type:'array' });
+          const sheetName = workbook.SheetNames[0];
+          const html = XLSX.utils.sheet_to_html(workbook.Sheets[sheetName], { editable: true });
+          $('#sheet-area').html(html);
+          $('#btn-save-sheet').off('click').on('click', function(){
+            try {
+              const newSheet = XLSX.utils.table_to_sheet(document.querySelector('#sheet-area table'));
+              const newWb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(newWb, newSheet, sheetName);
+              const wbout = XLSX.write(newWb, { bookType: 'xlsx', type: 'array' });
+              const blob = new Blob([wbout], { type: 'application/octet-stream' });
+              const file = new File([blob], path.split('/').pop());
+              const form = new FormData(); form.append('file', file, file.name); form.append('subdir', currentPath);
+              fetch(API + '&s=upload_local', { method:'POST', credentials:'same-origin', body: form }).then(r=>r.json()).then(res=>{ if (res && res.status==200) alert('Saved'); else alert('Save failed: '+(res?.error||'')); });
+            } catch (e){ alert('Save error: '+e.message); }
+          });
+        }).catch(err => $('#sheet-area').html('<div class="text-danger">Load failed: '+err+'</div>'));
+      return;
+    }
+
+    // text types -> ACE editor
+    const textTypes = ['txt','log','php','js','css','html','json','env','md','sql','conf'];
+    if (textTypes.includes(ext) || path.indexOf('.') === -1) {
+      $('#preview-area').html('<div><div id="editor" style="height:420px;width:100%;border:1px solid #eee;border-radius:6px"></div><div class="mt-2"><button id="save-text-file" class="btn btn-sm btn-primary">Save</button> <a id="download-text-file" class="btn btn-sm btn-outline-secondary" href="'+API+'&s=download_local&file='+encodeURIComponent(path)+'">Download</a></div></div>');
+      fetch(API + '&s=download_local&file=' + encodeURIComponent(path), { credentials: 'same-origin' })
+        .then(r => { if (!r.ok) throw new Error('download failed ' + r.status); return r.text(); })
+        .then(text => {
+          const editor = ace.edit('editor');
+          editor.setOptions({fontSize: '12px'});
+          editor.session.setMode('ace/mode/' + (ext === 'php' ? 'php' : (ext==='js'?'javascript':(ext==='json'?'json':(ext==='css'?'css':(ext==='html'?'html':'text'))))));
+          editor.setValue(text, -1);
+          $('#save-text-file').off('click').on('click', function(){
+            const content = editor.getValue();
+            const file = new File([content], path.split('/').pop(), { type: 'text/plain' });
+            const form = new FormData(); form.append('file', file, file.name); form.append('subdir', currentPath);
+            fetch(API + '&s=upload_local', { method:'POST', credentials:'same-origin', body: form }).then(r=>r.json()).then(res=>{ if (res && res.status==200) alert('Saved'); else alert('Save failed: '+(res?.error||'')); });
+          });
+        }).catch(err => $('#preview-area').html('<div class="text-danger">Load failed: '+err+'</div>'));
+      return;
+    }
+
+    // fallback
+    $('#preview-area').html('<div class="p-3">Preview not available. <a id="preview-dl" href="'+API+'&s=download_local&file='+encodeURIComponent(path)+'" target="_blank">Download file</a></div>');
+  }
+
+  // Search debounce
+  function debounce(fn, wait){ let t; return function(){ clearTimeout(t); t = setTimeout(()=> fn.apply(this, arguments), wait); }; }
+  $('#fm-search').on('keyup', debounce(function(){ const q=$(this).val().trim().toLowerCase(); $('.list-group-item.file-item').each(function(){ const name = $(this).attr('data-name') || ''; $(this).toggle(name.toLowerCase().indexOf(q) !== -1); }); }, 250));
+  $('#fm-sort').on('change', function(){ listFolder(currentPath); });
+
+  // Controls
+  $('#fm-refresh').on('click', function(){ listFolder(currentPath); loadQuota(); });
+  $('#fm-root').on('click', function(){ listFolder(''); });
+  $('#fm-up').on('click', function(){ if (!currentPath) return; const parent = currentPath.split('/').slice(0,-1).join('/'); listFolder(parent); });
+
+  // Process queue (manual)
+  $('#fm-process-queue').on('click', function(){ if (!confirm('Manually process upload queue now?')) return; $.post(API + '&s=process_upload_queue', {}, function(res){ if (res && res.status==200) alert('Processed: ' + (res.processed ? res.processed.length : 0)); else alert('Failed: ' + (res?.error||'')); }, 'json'); });
+
+  // Hide menu ESC
+  $(document).on('keydown', function(e){ if (e.key === 'Escape') $('#fm-context-menu').hide().attr('aria-hidden','true'); });
+
+  // Initial load
+  listFolder('');
+  loadQuota();
+  showR2Status();
+
+});
+</script>
