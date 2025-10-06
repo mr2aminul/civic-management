@@ -505,12 +505,89 @@ if ($tab == 'settings') {
   display: none;
 }
 
+.fm-admin-link {
+  font-size: 12px;
+  color: #3b82f6;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  transition: color 0.2s;
+}
+
+.fm-admin-link:hover {
+  color: #2563eb;
+}
+
 @media (max-width: 768px) {
-  .fm-sidebar { display: none; }
-  .fm-items-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
-  .fm-list-item { grid-template-columns: 40px 1fr 80px; }
+  .fm-sidebar {
+    width: 200px;
+    position: fixed;
+    left: -200px;
+    transition: left 0.3s;
+    z-index: 20;
+    height: 100%;
+  }
+  .fm-sidebar.mobile-open {
+    left: 0;
+  }
+  .fm-header {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+  .fm-header-title {
+    font-size: 16px;
+  }
+  .fm-search-box {
+    max-width: 100%;
+    order: 3;
+    margin-top: 8px;
+  }
+  .fm-header-actions {
+    gap: 8px;
+  }
+  .fm-upload-btn {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .fm-items-grid {
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 12px;
+  }
+  .fm-item-card {
+    padding: 8px;
+  }
+  .fm-item-icon {
+    font-size: 36px;
+  }
+  .fm-list-item {
+    grid-template-columns: 40px 1fr 80px;
+    padding: 10px 12px;
+  }
   .fm-list-item > div:nth-child(4), .fm-list-item > div:nth-child(5) { display: none; }
+  .fm-list-header {
+    grid-template-columns: 40px 1fr 80px;
+    padding: 10px 12px;
+  }
   .fm-list-header > div:nth-child(4), .fm-list-header > div:nth-child(5) { display: none; }
+  .fm-toolbar {
+    gap: 8px;
+  }
+  .fm-breadcrumb {
+    font-size: 13px;
+  }
+  .fm-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  .fm-modal-content {
+    width: 95%;
+    padding: 16px;
+  }
+  .fm-context-menu {
+    min-width: 180px;
+  }
 }
 </style>
 
@@ -551,7 +628,14 @@ if ($tab == 'settings') {
       </div>
       <div class="fm-sidebar-item" data-view="trash">
         <i class="bi bi-trash"></i> Recycle Bin
+        <div style="font-size:10px;color:#f59e0b;margin-left:auto">Coming Soon</div>
       </div>
+      <div class="fm-sidebar-section">Settings</div>
+      <?php if (Wo_IsAdmin()) { ?>
+      <a href="<?php echo Wo_SiteUrl(); ?>manage/file_manager?tab=settings" class="fm-admin-link" style="text-decoration:none">
+        <i class="bi bi-gear"></i> API Setup
+      </a>
+      <?php } ?>
       <div class="fm-sidebar-section">Storage</div>
       <div class="fm-sidebar-item">
         <i class="bi bi-pie-chart"></i>
@@ -645,6 +729,7 @@ jQuery(function($){
   let items = [];
   let ctxTarget = null;
   let dragSelectStart = null;
+  let isDragging = false;
 
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
@@ -845,7 +930,7 @@ jQuery(function($){
 
   $(document).on('click', '[data-action="download-file"]', function(){
     const path = $(this).closest('.fm-list-item').data('path');
-    window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
+    downloadFile(path);
   });
 
   $(document).on('change', '.fm-item-checkbox', function(e){
@@ -859,6 +944,7 @@ jQuery(function($){
 
   $(document).on('click', '.fm-item-card[data-type="file"], .fm-list-item[data-type="file"]', function(e){
     if ($(e.target).is('input, button')) return;
+    if (isDragging) return;
     const path = $(this).data('path');
 
     if (e.ctrlKey || e.metaKey) {
@@ -891,11 +977,6 @@ jQuery(function($){
 
   $('.fm-sidebar-item[data-view]').on('click', function(){
     const view = $(this).data('view');
-
-    if (view === 'trash') {
-      alert('Recycle Bin feature coming soon!');
-      return;
-    }
 
     $('.fm-sidebar-item').removeClass('active');
     $(this).addClass('active');
@@ -961,8 +1042,22 @@ jQuery(function($){
 
   $(document).on('contextmenu', '.fm-item-card, .fm-list-item', function(e){
     e.preventDefault();
+    const path = $(this).data('path');
+
+    if (!selected.has(path) && selected.size > 0) {
+      selected.clear();
+      $('.fm-item-card, .fm-list-item').removeClass('selected').find('.fm-item-checkbox').prop('checked', false);
+      updateStats();
+    }
+
+    if (selected.size === 0) {
+      selected.add(path);
+      $(this).addClass('selected').find('.fm-item-checkbox').prop('checked', true);
+      updateStats();
+    }
+
     ctxTarget = $(this);
-    showContextMenu(e, 'file');
+    showContextMenu(e, selected.size > 1 ? 'multiple' : 'file');
   });
 
   $(document).on('contextmenu', '#fm-content-area', function(e){
@@ -981,9 +1076,15 @@ jQuery(function($){
         <div class="fm-context-menu-item" data-action="new-folder"><i class="bi bi-folder-plus"></i> New Folder</div>
         <div class="fm-context-menu-item" data-action="upload"><i class="bi bi-cloud-upload"></i> Upload</div>
       `);
+    } else if (type === 'multiple') {
+      $menu.append(`
+        <div class="fm-context-menu-item" data-action="download-multiple"><i class="bi bi-download"></i> Download (${selected.size})</div>
+        <div class="fm-context-menu-item" data-action="upload_r2_multiple"><i class="bi bi-cloud-upload"></i> Upload to R2 (${selected.size})</div>
+        <div class="fm-context-menu-item danger" data-action="delete"><i class="bi bi-trash"></i> Delete (${selected.size})</div>
+      `);
     } else {
-      const type = ctxTarget.data('type');
-      if (type === 'file') {
+      const itemType = ctxTarget.data('type');
+      if (itemType === 'file') {
         $menu.append(`
           <div class="fm-context-menu-item" data-action="preview"><i class="bi bi-eye"></i> Preview</div>
           <div class="fm-context-menu-item" data-action="download"><i class="bi bi-download"></i> Download</div>
@@ -1022,6 +1123,42 @@ jQuery(function($){
       $('#fm-file-input').click();
     } else if (action === 'new-folder') {
       $('#fm-new-folder-btn').click();
+    } else if (action === 'delete') {
+      const paths = Array.from(selected);
+      if (paths.length === 0) return;
+
+      if (!confirm(`Delete ${paths.length} item(s)?`)) return;
+
+      $.ajax({
+        url: API + '&s=delete_local',
+        type: 'POST',
+        data: { paths: paths },
+        dataType: 'json',
+        success: res => {
+          if (res && (res.status === 200 || res.status === 207)) {
+            selected.clear();
+            loadFolder(currentPath);
+            updateStats();
+          } else {
+            alert('Delete failed');
+          }
+        }
+      });
+    } else if (action === 'download-multiple') {
+      Array.from(selected).forEach(path => {
+        window.open(API + '&s=download_local&file=' + encodeURIComponent(path), '_blank');
+      });
+    } else if (action === 'upload_r2_multiple') {
+      const paths = Array.from(selected);
+      let completed = 0;
+      paths.forEach(path => {
+        $.post(API + '&s=upload_r2_from_local', { path, mode: 'enqueue' }, () => {
+          completed++;
+          if (completed === paths.length) {
+            alert(`${paths.length} file(s) enqueued for R2 upload`);
+          }
+        }, 'json');
+      });
     } else if (!ctxTarget) {
       return;
     } else {
@@ -1031,13 +1168,7 @@ jQuery(function($){
       if (action === 'open' && type === 'folder') {
         loadFolder(path);
       } else if (action === 'download' && type === 'file') {
-        window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
-      } else if (action === 'delete') {
-        if (!confirm('Delete ' + path + '?')) return;
-        $.post(API + '&s=delete_local', { path }, res => {
-          if (res && res.status === 200) loadFolder(currentPath);
-          else alert('Delete failed');
-        }, 'json');
+        downloadFile(path);
       } else if (action === 'upload_r2') {
         $.post(API + '&s=upload_r2_from_local', { path, mode: 'enqueue' }, res => {
           alert(res && res.status === 200 ? 'Enqueued for R2 upload' : 'Failed');
@@ -1048,34 +1179,62 @@ jQuery(function($){
     }
   });
 
+  function downloadFile(path) {
+    $.get(API + '&s=get_file_url', { path }, res => {
+      if (res && res.status === 200) {
+        if (res.location === 'r2' && res.url) {
+          window.open(res.url, '_blank');
+        } else {
+          window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
+        }
+      } else {
+        window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
+      }
+    }, 'json').fail(() => {
+      window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
+    });
+  }
+
   function openPreview(path) {
     $('#fm-preview-modal').addClass('active');
     $('#fm-preview-title').text(path.split('/').pop());
     const ext = path.split('.').pop().toLowerCase();
-    const url = API + '&s=download_local&file=' + encodeURIComponent(path);
 
-    if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
-      $('#fm-preview-area').html(`<img src="${url}" style="max-width:100%;border-radius:8px">`);
-    } else if (ext === 'pdf') {
-      $('#fm-preview-area').html(`<iframe src="${url}" style="width:100%;height:600px;border:0"></iframe>`);
-    } else {
+    $.get(API + '&s=get_file_url', { path }, res => {
+      let url;
+      if (res && res.status === 200 && res.location === 'r2' && res.url) {
+        url = res.url;
+      } else {
+        url = API + '&s=download_local&file=' + encodeURIComponent(path);
+      }
+
+      if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
+        $('#fm-preview-area').html(`<img src="${url}" style="max-width:100%;border-radius:8px">`);
+      } else if (ext === 'pdf') {
+        $('#fm-preview-area').html(`<iframe src="${url}" style="width:100%;height:600px;border:0"></iframe>`);
+      } else {
+        $('#fm-preview-area').html(`<p>Preview not available. <a href="${url}" target="_blank">Download file</a></p>`);
+      }
+    }, 'json').fail(() => {
+      const url = API + '&s=download_local&file=' + encodeURIComponent(path);
       $('#fm-preview-area').html(`<p>Preview not available. <a href="${url}" target="_blank">Download file</a></p>`);
-    }
+    });
   }
 
   $(document).on('keydown', function(e){
     if (e.key === 'Delete' && selected.size > 0) {
       if (confirm(`Delete ${selected.size} selected item(s)?`)) {
         const paths = Array.from(selected);
-        let completed = 0;
-        paths.forEach(path => {
-          $.post(API + '&s=delete_local', { path }, () => {
-            completed++;
-            if (completed === paths.length) {
-              selected.clear();
-              loadFolder(currentPath);
-            }
-          }, 'json');
+        $.ajax({
+          url: API + '&s=delete_local',
+          type: 'POST',
+          data: { paths: paths },
+          dataType: 'json',
+          success: res => {
+            selected.clear();
+            loadFolder(currentPath);
+            updateStats();
+          }
         });
       }
     } else if (e.ctrlKey && e.key === 'a') {
@@ -1090,6 +1249,20 @@ jQuery(function($){
       selected.clear();
       $('.fm-item-card, .fm-list-item').removeClass('selected').find('.fm-item-checkbox').prop('checked', false);
       updateStats();
+    }
+  });
+
+  $('#fm-content-area').on('mousedown', function(e){
+    if ($(e.target).closest('.fm-item-card, .fm-list-item, button, input, select').length) return;
+    isDragging = true;
+  }).on('mouseup mouseleave', function(){
+    isDragging = false;
+  });
+
+  $(document).on('selectstart', '#fm-content-area', function(e){
+    if (isDragging) {
+      e.preventDefault();
+      return false;
     }
   });
 

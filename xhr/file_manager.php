@@ -210,7 +210,6 @@ try {
                 exit;
             }
 
-            $file = urldecode($file);
             $baseDir = fm_get_local_dir();
             $fullPath = $baseDir . '/' . ltrim($file, '/');
 
@@ -226,30 +225,43 @@ try {
                 exit;
             }
 
-            header_remove();
             fm_stream_file_download($fullPath, basename($file));
             exit;
 
-        // Delete file or folder
+        // Delete file or folder (supports batch delete)
         case 'delete_local':
             if (!_fm_is_logged()) {
                 echo json_encode(['status' => 403, 'error' => 'Login required']);
                 exit;
             }
 
-            $path = $_POST['path'] ?? $_POST['file'] ?? '';
-            if (empty($path)) {
+            $paths = [];
+            if (isset($_POST['paths']) && is_array($_POST['paths'])) {
+                $paths = $_POST['paths'];
+            } elseif (!empty($_POST['path'])) {
+                $paths = [$_POST['path']];
+            } elseif (!empty($_POST['file'])) {
+                $paths = [$_POST['file']];
+            }
+
+            if (empty($paths)) {
                 echo json_encode(['status' => 400, 'error' => 'Missing path parameter']);
                 exit;
             }
 
-            $success = fm_delete_local_recursive($path);
-
-            if ($success) {
-                echo json_encode(['status' => 200, 'message' => 'Deleted successfully']);
-            } else {
-                echo json_encode(['status' => 500, 'error' => 'Delete operation failed']);
+            $results = [];
+            $allSuccess = true;
+            foreach ($paths as $path) {
+                $success = fm_delete_local_recursive($path);
+                $results[] = ['path' => $path, 'success' => $success];
+                if (!$success) $allSuccess = false;
             }
+
+            echo json_encode([
+                'status' => $allSuccess ? 200 : 207,
+                'message' => $allSuccess ? 'Deleted successfully' : 'Some deletes failed',
+                'results' => $results
+            ]);
             exit;
 
         // Upload local file to R2
@@ -694,6 +706,36 @@ try {
                 'status' => 200,
                 'quota' => $quota['quota'],
                 'used' => $quota['used']
+            ]);
+            exit;
+
+        // Get file URL (checks if file is in R2, returns CDN URL or local path indicator)
+        case 'get_file_url':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $path = $_GET['path'] ?? $_POST['path'] ?? '';
+            if (empty($path)) {
+                echo json_encode(['status' => 400, 'error' => 'Missing path parameter']);
+                exit;
+            }
+
+            $baseDir = fm_get_local_dir();
+            $fullPath = $baseDir . '/' . ltrim($path, '/');
+
+            if (!file_exists($fullPath)) {
+                echo json_encode(['status' => 404, 'error' => 'File not found']);
+                exit;
+            }
+
+            $result = fm_get_file_url($path);
+            echo json_encode([
+                'status' => 200,
+                'location' => $result['location'],
+                'url' => $result['url'],
+                'size' => filesize($fullPath)
             ]);
             exit;
 

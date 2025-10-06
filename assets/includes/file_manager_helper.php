@@ -1038,3 +1038,29 @@ function fm_cache_delete($key) {
     global $_FM_CACHE;
     unset($_FM_CACHE[$key]);
 }
+
+// ============================================
+// File URL Helper
+// ============================================
+function fm_get_file_url($relativePath) {
+    $cfg = fm_get_config();
+    $baseDir = fm_get_local_dir();
+    $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
+
+    if (!file_exists($fullPath)) {
+        return ['location' => 'none', 'url' => null];
+    }
+
+    $remoteKey = 'files/' . ltrim($relativePath, '/');
+
+    $fileRecord = fm_query("SELECT r2_uploaded, r2_key FROM fm_files WHERE filename = ? LIMIT 1", [basename($relativePath)]);
+
+    if (!empty($fileRecord) && $fileRecord[0]['r2_uploaded'] == 1 && !empty($fileRecord[0]['r2_key'])) {
+        if (!empty($cfg['r2_domain'])) {
+            $cdnUrl = rtrim($cfg['r2_domain'], '/') . '/' . ltrim($fileRecord[0]['r2_key'], '/');
+            return ['location' => 'r2', 'url' => $cdnUrl];
+        }
+    }
+
+    return ['location' => 'local', 'url' => null];
+}
