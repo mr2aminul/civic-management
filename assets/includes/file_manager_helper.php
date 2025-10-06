@@ -1,9 +1,12 @@
 <?php
-// assets/includes/file_manager_helper.php
-// File manager & backup helper - full-featured (R2, queue, db dumps, rotate, cache, quotas)
-require_once "assets/libraries/aws-sdk-php/vendor/autoload.php";
+/**
+ * File Manager & Backup System Helper
+ * Advanced features: Drive-like interface, R2 storage, quotas, permissions, recycle bin
+ */
 
-// Load .env (if exists) into environment variables
+require_once __DIR__ . "/../libraries/aws-sdk-php/vendor/autoload.php";
+
+// Load environment variables
 if (!function_exists('fm_load_env')) {
     function fm_load_env($path = null) {
         $path = $path ?: __DIR__ . '/../../.env';
@@ -12,493 +15,696 @@ if (!function_exists('fm_load_env')) {
         foreach ($lines as $line) {
             $line = trim($line);
             if ($line === '' || strpos($line, '#') === 0) continue;
-            if (strpos($line,'=') === false) continue;
-            [$k,$v] = explode('=', $line, 2);
+            if (strpos($line, '=') === false) continue;
+            [$k, $v] = explode('=', $line, 2);
             $k = trim($k); $v = trim($v);
             if ($k === '') continue;
-            if ((substr($v,0,1)==='"' && substr($v,-1)==='"') || (substr($v,0,1)==="'" && substr($v,-1)==="'")) $v = substr($v,1,-1);
+            if ((substr($v, 0, 1) === '"' && substr($v, -1) === '"') || (substr($v, 0, 1) === "'" && substr($v, -1) === "'")) $v = substr($v, 1, -1);
             putenv("$k=$v"); $_ENV[$k] = $v;
         }
     }
 }
 fm_load_env();
 
-// ---------------- CONFIG ----------------
-if (!function_exists('fm_get_config')) {
-    function fm_get_config(): array {
-        // defaults & env overrides (use env or explicit values)
-        $cfg = [];
-        $cfg['local_dir'] = getenv('BACKUP_LOCAL_DIR') ?: '/home/civicbd/civicgroup/backups';
-        $cfg['r2_key'] = getenv('R2_ACCESS_KEY_ID') ?: getenv('R2_ACCESS_KEY') ?: '2c3443e44db2a753265134fbe0a65f67';
-        $cfg['r2_secret'] = getenv('R2_SECRET_ACCESS_KEY') ?: getenv('R2_SECRET_KEY') ?: 'd24621ce0729f68776d155a3ead711679c249baafffd5a5dc581ddcf185d786e';
-        $cfg['r2_bucket'] = getenv('R2_BUCKET') ?: 'civic-management';
-        $cfg['r2_endpoint'] = getenv('R2_ENDPOINT') ?: 'https://90f483339efd91e1a8819e04ba6e31e6.r2.cloudflarestorage.com';
-        $cfg['default_user_quota'] = (int)((float)(getenv('DEFAULT_USER_QUOTA_GB') ?: 1) * 1024 * 1024 * 1024);
-        $cfg['auto_upload_exts'] = array_filter(array_map('trim', explode(',', getenv('AUTO_UPLOAD_TYPES') ?: 'sql,zip,xlsx,docx,pdf')));
-        $cfg['auto_upload_prefixes'] = array_filter(array_map('trim', explode(',', getenv('AUTO_UPLOAD_PREFIXES') ?: 'db_,sys_')));
-        $cfg['retention_days'] = (int)(getenv('DB_BACKUP_RETENTION_DAYS') ?: 30);
-        $cfg['cache_ttl'] = (int)(getenv('FM_CACHE_TTL') ?: 300);
-        $cfg['queue_json'] = rtrim($cfg['local_dir'], '/') . '/.fm_upload_queue.json';
-        $cfg['cache_dir'] = rtrim($cfg['local_dir'], '/') . '/.cache';
-        return $cfg;
+// ============================================
+// Configuration
+// ============================================
+function fm_get_config() {
+    return [
+        'local_storage' => getenv('LOCAL_STORAGE_DIR') ?: '/home/civicbd/civicgroup/storage',
+        'backup_dir' => getenv('DB_BACKUP_LOCAL_DIR') ?: '/home/civicbd/civicgroup/backups',
+        'r2_key' => getenv('R2_ACCESS_KEY_ID') ?: '',
+        'r2_secret' => getenv('R2_SECRET_ACCESS_KEY') ?: '',
+        'r2_bucket' => getenv('R2_BUCKET') ?: 'civic-management',
+        'r2_endpoint' => getenv('R2_ENDPOINT') ?: '',
+        'r2_domain' => getenv('R2_ENDPOINT_DOMAIN') ?: '',
+        'default_quota' => (int)((float)(getenv('DEFAULT_USER_QUOTA_GB') ?: 1) * 1024 * 1024 * 1024),
+        'auto_upload_types' => array_filter(array_map('trim', explode(',', getenv('AUTO_UPLOAD_TYPES') ?: 'sql,zip,xlsx,docx,pdf'))),
+        'auto_upload_prefixes' => array_filter(array_map('trim', explode(',', getenv('AUTO_UPLOAD_PREFIXES') ?: 'db_,sys_'))),
+        'recycle_retention_days' => (int)(getenv('RECYCLE_RETENTION_DAYS') ?: 30),
+        'backup_retention_days' => (int)(getenv('BACKUP_RETENTION_DAYS') ?: 30),
+    ];
+}
+
+// ============================================
+// Database Helpers
+// ============================================
+function fm_get_db() {
+    global $db, $sqlConnect;
+    if (isset($db) && method_exists($db, 'where')) {
+        return ['type' => 'joshcam', 'db' => $db];
     }
-}
-
-// ---------------- helpers ----------------
-if (!function_exists('fm_ensure_dirs')) {
-    function fm_ensure_dirs() {
-        $cfg = fm_get_config();
-        @mkdir($cfg['local_dir'], 0755, true);
-        @mkdir($cfg['cache_dir'], 0755, true);
+    if (isset($sqlConnect) && $sqlConnect instanceof mysqli) {
+        return ['type' => 'mysqli', 'db' => $sqlConnect];
     }
+    return null;
 }
-fm_ensure_dirs();
 
-if (!function_exists('fm_safe_basename')) {
-    function fm_safe_basename($name) {
-        $name = preg_replace('#[\\\\/]+#','_', $name);
-        $name = preg_replace('/[^A-Za-z0-9_\-\. ]/','_', $name);
-        $name = preg_replace('/\s+/','_', $name);
-        return trim($name, '_');
+function fm_query($sql, $params = []) {
+    $conn = fm_get_db();
+    if (!$conn) return false;
+
+    if ($conn['type'] === 'mysqli') {
+        $mysqli = $conn['db'];
+        $stmt = $mysqli->prepare($sql);
+        if (!$stmt) return false;
+
+        if (!empty($params)) {
+            $types = '';
+            $values = [];
+            foreach ($params as $p) {
+                if (is_int($p)) $types .= 'i';
+                else if (is_double($p)) $types .= 'd';
+                else $types .= 's';
+                $values[] = $p;
+            }
+            $stmt->bind_param($types, ...$values);
+        }
+
+        $stmt->execute();
+        $result = $stmt->get_result();
+        if ($result) {
+            return $result->fetch_all(MYSQLI_ASSOC);
+        }
+        return ['affected_rows' => $stmt->affected_rows, 'insert_id' => $stmt->insert_id];
     }
+
+    return false;
 }
 
-if (!function_exists('fm_get_local_dir')) {
-    function fm_get_local_dir(): string { $cfg = fm_get_config(); return rtrim($cfg['local_dir'], '/'); }
-}
+function fm_insert($table, $data) {
+    $conn = fm_get_db();
+    if (!$conn) return false;
 
-if (!function_exists('fm_cache_get')) {
-    function fm_cache_get($key) {
-        $cfg = fm_get_config();
-        $fname = $cfg['cache_dir'].'/'.preg_replace('/[^A-Za-z0-9_\-]/','_',$key).'.json';
-        if (!file_exists($fname)) return null;
-        if ($cfg['cache_ttl'] > 0 && filemtime($fname) < time() - $cfg['cache_ttl']) { @unlink($fname); return null; }
-        $c = json_decode(@file_get_contents($fname), true);
-        return $c;
-    }
-}
-if (!function_exists('fm_cache_set')) {
-    function fm_cache_set($key, $val) { $cfg = fm_get_config(); $fname = $cfg['cache_dir'].'/'.preg_replace('/[^A-Za-z0-9_\-]/','_',$key).'.json'; @file_put_contents($fname, json_encode($val)); }
-}
-if (!function_exists('fm_cache_delete')) {
-    function fm_cache_delete($key) { $cfg = fm_get_config(); $fname = $cfg['cache_dir'].'/'.preg_replace('/[^A-Za-z0-9_\-]/','_',$key).'.json'; if (file_exists($fname)) @unlink($fname); }
-}
-
-// ---------------- S3 / R2 ----------------
-// Use AWS SDK if available; fallback to rclone if installed (best-effort)
-if (!function_exists('fm_init_s3')) {
-    function fm_init_s3() {
-        $cfg = fm_get_config();
-        if (empty($cfg['r2_key']) || empty($cfg['r2_secret']) || empty($cfg['r2_bucket']) || empty($cfg['r2_endpoint'])) return null;
-        if (!class_exists('Aws\\S3\\S3Client')) return null;
+    if ($conn['type'] === 'joshcam') {
         try {
-            $s3 = new Aws\S3\S3Client([
-                'version'=>'latest',
-                'region'=>getenv('R2_REGION') ?: 'auto',
-                'endpoint'=>$cfg['r2_endpoint'],
-                'use_path_style_endpoint' => false,
-                'credentials'=>['key'=>$cfg['r2_key'],'secret'=>$cfg['r2_secret']],
-            ]);
-            return $s3;
-        } catch (Exception $e) { return null; }
-    }
-}
-
-if (!function_exists('fm_upload_to_r2')) {
-    function fm_upload_to_r2($localPath, $remoteKey) {
-        $cfg = fm_get_config();
-        if (!file_exists($localPath)) return ['success'=>false,'message'=>'local not found'];
-        $s3 = fm_init_s3();
-        if ($s3) {
-            try {
-                $params = ['Bucket'=>$cfg['r2_bucket'],'Key'=>$remoteKey,'SourceFile'=>$localPath,'ACL'=>'private'];
-                $result = $s3->putObject($params);
-                fm_cache_delete('r2_'.str_replace(['/','\\'],'_',$remoteKey));
-                fm_log_backup_event('r2_upload', $remoteKey, filesize($localPath));
-                return ['success'=>true,'url'=>method_exists($s3,'getObjectUrl') ? $s3->getObjectUrl($cfg['r2_bucket'],$remoteKey) : null];
-            } catch (Exception $e) { return ['success'=>false,'message'=>$e->getMessage()]; }
-        }
-        // fallback: try rclone if configured via RCLONE_REMOTE env
-        $rclone = getenv('RCLONE_PATH') ?: '/usr/bin/rclone';
-        $remoteName = getenv('RCLONE_REMOTE_NAME') ?: '';
-        if (is_executable($rclone) && $remoteName) {
-            $cmd = escapeshellcmd($rclone).' copyto '.escapeshellarg($localPath).' '.escapeshellarg($remoteName.':'.$remoteKey).' 2>&1';
-            exec($cmd, $out, $ret);
-            if ($ret === 0) return ['success'=>true,'url'=>null];
-            return ['success'=>false,'message'=>'rclone failed: '.implode("\n",$out)];
-        }
-        return ['success'=>false,'message'=>'No S3 client and rclone not configured'];
-    }
-}
-
-// ---------------- Queue (DB-backed preferred, JSON fallback) ----------------
-// Recommended table (create it if possible):
-/*
-CREATE TABLE fm_upload_queue (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  local_path VARCHAR(1024) NOT NULL,
-  remote_key VARCHAR(1024) NOT NULL,
-  status VARCHAR(32) NOT NULL DEFAULT 'pending',
-  message TEXT,
-  created_at DATETIME,
-  updated_at DATETIME,
-  UNIQUE KEY (local_path, remote_key(255))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-*/
-
-if (!function_exists('fm_enqueue_r2_upload')) {
-    function fm_enqueue_r2_upload($localPath, $remoteKey) {
-        global $db;
-        $now = date('Y-m-d H:i:s');
-        // try DB (joshcam $db)
-        if (isset($db) && method_exists($db,'insert')) {
-            try {
-                $db->insert('fm_upload_queue', ['local_path'=>$localPath,'remote_key'=>$remoteKey,'status'=>'pending','message'=>'','created_at'=>$now,'updated_at'=>$now]);
-                return true;
-            } catch (Exception $e) { /* continue fallback */ }
-        }
-        // try PDO (if DB_DSN present)
-        if (function_exists('fm_get_pdo')) {
-            $pdo = fm_get_pdo();
-            if ($pdo) {
-                try {
-                    $stmt = $pdo->prepare("INSERT INTO fm_upload_queue (local_path,remote_key,status,message,created_at,updated_at) VALUES (:lp,:rk,'pending','',:c,:u)");
-                    $stmt->execute([':lp'=>$localPath,':rk'=>$remoteKey,':c'=>$now,':u'=>$now]);
-                    return true;
-                } catch (Exception $e) { /* fallback json */ }
-            }
-        }
-        // JSON fallback queue
-        $cfg = fm_get_config();
-        $file = $cfg['queue_json'];
-        $q = [];
-        if (file_exists($file)) $q = json_decode(file_get_contents($file), true) ?: [];
-        $q[] = ['id'=>uniqid('q',true),'local_path'=>$localPath,'remote_key'=>$remoteKey,'status'=>'pending','message'=>'','created_at'=>$now,'updated_at'=>$now];
-        @file_put_contents($file, json_encode($q));
-        return true;
-    }
-}
-
-if (!function_exists('fm_get_pending_uploads')) {
-    function fm_get_pending_uploads($limit = 20) {
-        global $db;
-        if (isset($db) && method_exists($db,'where')) {
-            try { return $db->where('status','pending')->orderBy('created_at','ASC')->get('fm_upload_queue', $limit); } catch (Exception $e) {}
-        }
-        $pdo = fm_get_pdo();
-        if ($pdo) {
-            try {
-                $stmt = $pdo->prepare("SELECT * FROM fm_upload_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT :lim");
-                $stmt->bindValue(':lim', (int)$limit, PDO::PARAM_INT);
-                $stmt->execute();
-                return $stmt->fetchAll(PDO::FETCH_ASSOC);
-            } catch (Exception $e) {}
-        }
-        $cfg = fm_get_config(); $file = $cfg['queue_json'];
-        if (!file_exists($file)) return [];
-        $q = json_decode(file_get_contents($file), true) ?: [];
-        $out = [];
-        foreach ($q as $it) if ($it['status'] === 'pending') $out[] = $it;
-        return array_slice($out, 0, $limit);
-    }
-}
-
-if (!function_exists('fm_mark_upload_status')) {
-    function fm_mark_upload_status($id, $status, $message = '') {
-        global $db;
-        $now = date('Y-m-d H:i:s');
-        if (isset($db) && method_exists($db,'where')) {
-            try { $db->where('id', $id); return (bool)$db->update('fm_upload_queue', ['status'=>$status,'message'=>$message,'updated_at'=>$now]); } catch (Exception $e) {}
-        }
-        $pdo = fm_get_pdo();
-        if ($pdo) {
-            try {
-                $stmt = $pdo->prepare("UPDATE fm_upload_queue SET status=:s, message=:m, updated_at=:u WHERE id = :id");
-                return $stmt->execute([':s'=>$status,':m'=>$message,':u'=>$now,':id'=>$id]);
-            } catch (Exception $e) {}
-        }
-        // json fallback
-        $cfg = fm_get_config(); $file = $cfg['queue_json'];
-        if (!file_exists($file)) return false;
-        $q = json_decode(file_get_contents($file), true) ?: [];
-        foreach ($q as &$it) {
-            if ((isset($it['id']) && $it['id'] == $id) || (isset($it['id']) && (string)$it['id'] === (string)$id)) {
-                $it['status'] = $status; $it['message'] = $message; $it['updated_at'] = $now;
-            }
-        }
-        @file_put_contents($file, json_encode($q));
-        return true;
-    }
-}
-
-// Worker function
-if (!function_exists('fm_process_upload_queue_worker')) {
-    function fm_process_upload_queue_worker($limit = 10) {
-        $jobs = fm_get_pending_uploads($limit);
-        $processed = [];
-        foreach ($jobs as $job) {
-            $id = $job['id'] ?? (isset($job['local_path']) ? md5($job['local_path'].$job['remote_key']) : uniqid('q',true));
-            fm_mark_upload_status($id, 'processing', '');
-            $local = $job['local_path']; $remote = $job['remote_key'];
-            if (!file_exists($local)) { fm_mark_upload_status($id,'error','local not found'); $processed[] = ['id'=>$id,'status'=>'local_missing']; continue; }
-            $r = fm_upload_to_r2($local, $remote);
-            if ($r['success']) { fm_mark_upload_status($id,'done',''); $processed[] = ['id'=>$id,'status'=>'done','url'=>$r['url'] ?? null]; }
-            else { fm_mark_upload_status($id,'error',$r['message'] ?? 'upload failed'); $processed[] = ['id'=>$id,'status'=>'error','error'=>$r['message'] ?? 'upload failed']; }
-        }
-        return $processed;
-    }
-}
-
-// ---------------- DB dump & restore ----------------
-if (!function_exists('fm_create_db_dump')) {
-    function fm_create_db_dump($label = 'db_backup') {
-        if (!is_executable('/usr/bin/mysqldump') && !is_executable('/usr/local/bin/mysqldump')) {
-            $mysqldump = trim(shell_exec('which mysqldump 2>/dev/null'));
-        } else {
-            $mysqldump = is_executable('/usr/bin/mysqldump') ? '/usr/bin/mysqldump' : '/usr/local/bin/mysqldump';
-        }
-        if (!$mysqldump) $mysqldump = trim(shell_exec('which mysqldump 2>/dev/null'));
-        if (!$mysqldump) return ['success'=>false,'message'=>'mysqldump not found'];
-
-        $dbUser = getenv('DB_USER') ?: '';
-        $dbPass = getenv('DB_PASSWORD') ?: '';
-        $dbName = getenv('DB_NAME') ?: '';
-        if (!$dbName) return ['success'=>false,'message'=>'DB_NAME not provided'];
-
-        fm_ensure_dirs();
-        $ts = date('Ymd_His');
-        $filename = fm_safe_basename($label . '_' . $ts . '.sql.gz');
-        $path = fm_get_local_dir() . '/' . $filename;
-        $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
-        $cnf = "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\n";
-        file_put_contents($tmpcnf, $cnf);
-        $cmd = sprintf('%s --defaults-extra-file=%s %s 2>&1 | gzip -c > %s', escapeshellcmd($mysqldump), escapeshellarg($tmpcnf), escapeshellarg($dbName), escapeshellarg($path));
-        exec($cmd, $out, $ret); @unlink($tmpcnf);
-        if ($ret === 0 && file_exists($path)) { fm_log_backup_event('db_full', $filename, filesize($path)); return ['success'=>true,'path'=>$path,'filename'=>$filename]; }
-        return ['success'=>false,'message'=>'mysqldump failed: '.implode("\n",$out)];
-    }
-}
-
-if (!function_exists('fm_create_table_dump')) {
-    function fm_create_table_dump($table, $label = 'table_backup') {
-        if (!$table) return ['success'=>false,'message'=>'missing table'];
-        $mysqldump = trim(shell_exec('which mysqldump 2>/dev/null'));
-        if (!$mysqldump) return ['success'=>false,'message'=>'mysqldump not found'];
-        $dbUser = getenv('DB_USER') ?: '';
-        $dbPass = getenv('DB_PASSWORD') ?: '';
-        $dbName = getenv('DB_NAME') ?: '';
-        if (!$dbName) return ['success'=>false,'message'=>'DB_NAME not provided'];
-        fm_ensure_dirs();
-        $ts = date('Ymd_His');
-        $filename = fm_safe_basename($label . '_' . $table . '_' . $ts . '.sql.gz');
-        $path = fm_get_local_dir() . '/' . $filename;
-        $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
-        $cnf = "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\n";
-        file_put_contents($tmpcnf, $cnf);
-        $cmd = sprintf('%s --defaults-extra-file=%s %s %s 2>&1 | gzip -c > %s', escapeshellcmd($mysqldump), escapeshellarg($tmpcnf), escapeshellarg($dbName), escapeshellarg($table), escapeshellarg($path));
-        exec($cmd, $out, $ret); @unlink($tmpcnf);
-        if ($ret === 0 && file_exists($path)) { fm_log_backup_event('db_table', $filename, filesize($path)); return ['success'=>true,'path'=>$path,'filename'=>$filename]; }
-        return ['success'=>false,'message'=>'mysqldump failed: '.implode("\n",$out)];
-    }
-}
-
-if (!function_exists('fm_restore_sql_gz_local')) {
-    function fm_restore_sql_gz_local($filePath, $targetDb = '') {
-        if (!file_exists($filePath)) return ['success'=>false,'message'=>'file not found'];
-        $mysql = trim(shell_exec('which mysql 2>/dev/null'));
-        $gunzip = trim(shell_exec('which gunzip 2>/dev/null')) ?: 'gzip -d -c';
-        $dbUser = getenv('DB_USER') ?: '';
-        $dbPass = getenv('DB_PASSWORD') ?: '';
-        $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
-        $dbName = $targetDb ?: (getenv('DB_NAME') ?: '');
-        if (!$dbName) return ['success'=>false,'message'=>'target DB not specified'];
-        if ($mysql) {
-            $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
-            $cnf = "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n";
-            file_put_contents($tmpcnf, $cnf);
-            $cmd = sprintf('%s -c %s | %s --defaults-extra-file=%s %s 2>&1', escapeshellcmd($gunzip), escapeshellarg($filePath), escapeshellcmd($mysql), escapeshellarg($tmpcnf), escapeshellarg($dbName));
-            exec($cmd, $out, $ret); @unlink($tmpcnf);
-            if ($ret === 0) return ['success'=>true,'message'=>'restore completed'];
-            return ['success'=>false,'message'=>'restore failed: '.implode("\n",$out)];
-        } else {
-            // fallback to php gzread + pdo (risky for large files)
-            $contents = @gzfile($filePath);
-            if ($contents === false) return ['success'=>false,'message'=>'cannot read gz'];
-            $sql = implode('', $contents);
-            $pdo = fm_get_pdo();
-            if (!$pdo) return ['success'=>false,'message'=>'PDO not available'];
-            try { $pdo->exec($sql); return ['success'=>true,'message'=>'restore completed (pdo)']; } catch (Exception $e) { return ['success'=>false,'message'=>$e->getMessage()]; }
+            return $conn['db']->insert($table, $data);
+        } catch (Exception $e) {
+            return false;
         }
     }
+
+    $keys = array_keys($data);
+    $values = array_values($data);
+    $placeholders = implode(',', array_fill(0, count($keys), '?'));
+    $sql = "INSERT INTO `$table` (`" . implode('`, `', $keys) . "`) VALUES ($placeholders)";
+    return fm_query($sql, $values);
 }
 
-// ---------------- rotation ----------------
-if (!function_exists('fm_rotate_local_db_backups')) {
-    function fm_rotate_local_db_backups() {
-        $cfg = fm_get_config();
-        $dir = fm_get_local_dir();
-        $deleted = 0; $errors = [];
-        $it = new DirectoryIterator($dir);
-        foreach ($it as $file) {
-            if ($file->isFile()) {
-                $name = $file->getFilename();
-                if (!preg_match('/\.(sql|sql\.gz)$/i', $name)) continue;
-                if ($file->getMTime() < time() - ($cfg['retention_days'] * 86400)) {
-                    if (@unlink($file->getPathname())) $deleted++; else $errors[] = $file->getPathname();
-                }
-            }
-        }
-        return ['deleted'=>$deleted,'errors'=>$errors];
-    }
-}
+function fm_update($table, $data, $where) {
+    $conn = fm_get_db();
+    if (!$conn) return false;
 
-if (!function_exists('fm_enforce_retention')) {
-    function fm_enforce_retention() { return fm_rotate_local_db_backups(); }
-}
-
-// ---------------- Local FS operations ----------------
-if (!function_exists('fm_list_local_folder')) {
-    function fm_list_local_folder($rel = '') {
-        $base = fm_get_local_dir();
-        $full = ($rel === '') ? $base : $base . '/' . ltrim($rel, '/');
-        $folders = []; $files = [];
-        if (!is_dir($full)) return ['folders'=>[], 'files'=>[]];
-        $it = new DirectoryIterator($full);
-        foreach ($it as $item) {
-            if ($item->isDot()) continue;
-            $pathRel = ($rel === '') ? $item->getFilename() : rtrim($rel,'/') . '/' . $item->getFilename();
-            if ($item->isDir()) $folders[] = ['name'=>$item->getFilename(),'path'=>$pathRel,'mtime'=>$item->getMTime()];
-            else $files[] = ['name'=>$item->getFilename(),'path'=>$pathRel,'size'=>$item->getSize(),'mtime'=>$item->getMTime()];
-        }
-        usort($folders, function($a,$b){ return strcasecmp($a['name'],$b['name']); });
-        usort($files, function($a,$b){ return $b['mtime'] - $a['mtime']; });
-        return ['folders'=>$folders,'files'=>$files];
-    }
-}
-
-if (!function_exists('fm_save_uploaded_local')) {
-    function fm_save_uploaded_local($file, $subdir = '') {
-        $base = fm_get_local_dir();
-        $sub = trim($subdir, '/');
-        $destDir = $sub ? ($base . '/' . $sub) : $base;
-        if (!is_dir($destDir)) @mkdir($destDir, 0755, true);
-        $name = fm_safe_basename($file['name'] ?? basename($file['tmp_name']));
-        $target = $destDir . '/' . $name;
-        $orig = pathinfo($name, PATHINFO_FILENAME); $ext = pathinfo($name, PATHINFO_EXTENSION);
-        $i = 1;
-        while (file_exists($target)) {
-            $name = $orig . '_' . $i . ($ext ? '.' . $ext : '');
-            $target = $destDir . '/' . $name; $i++;
-        }
-        $moved = false;
-        if (isset($file['tmp_name']) && is_uploaded_file($file['tmp_name'])) $moved = move_uploaded_file($file['tmp_name'], $target);
-        else $moved = copy($file['tmp_name'], $target);
-        if (!$moved) return ['success'=>false,'message'=>'save failed'];
-        return ['success'=>true,'path'=>$target,'filename'=>basename($target)];
-    }
-}
-
-if (!function_exists('fm_get_file_info')) {
-    function fm_get_file_info($relPath) {
-        $full = fm_get_local_dir() . '/' . ltrim($relPath,'/');
-        if (!file_exists($full)) return [];
-        return ['name'=>basename($relPath),'path'=>ltrim($relPath,'/'),'full_path'=>$full,'size'=>is_file($full)?filesize($full):0,'mtime'=>filemtime($full),'is_folder'=>is_dir($full)?1:0];
-    }
-}
-
-if (!function_exists('fm_delete_local_recursive')) {
-    function fm_delete_local_recursive($relPath) {
-        $full = fm_get_local_dir() . '/' . ltrim($relPath,'/');
-        if (!file_exists($full)) return false;
-        if (is_file($full)) return @unlink($full);
-        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($full, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
-        $ok = true;
-        foreach ($it as $file) {
-            if ($file->isDir()) $ok = $ok && @rmdir($file->getRealPath());
-            else $ok = $ok && @unlink($file->getRealPath());
-        }
-        $ok = $ok && @rmdir($full);
-        return $ok;
-    }
-}
-
-// ---------------- Quota (fm_users table recommended) ----------------
-/*
-CREATE TABLE fm_users (
-  user_id INT PRIMARY KEY,
-  quota BIGINT NOT NULL,
-  used BIGINT NOT NULL DEFAULT 0,
-  updated_at DATETIME
-);
-*/
-if (!function_exists('fm_get_pdo')) {
-    function fm_get_pdo() {
-        static $pdo=null;
-        if ($pdo) return $pdo;
-        $dsn = getenv('DB_DSN') ?: null;
-        $user = getenv('DB_USER') ?: null;
-        $pass = getenv('DB_PASSWORD') ?: null;
-        if (!$dsn) return null;
-        try { $pdo = new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]); return $pdo; } catch (Exception $e) { return null; }
-    }
-}
-
-if (!function_exists('fm_get_user_quota')) {
-    function fm_get_user_quota($uid) {
-        $cfg = fm_get_config();
-        $pdo = fm_get_pdo();
-        if ($pdo) {
-            try {
-                $stmt = $pdo->prepare("SELECT quota, used FROM fm_users WHERE user_id = :uid");
-                $stmt->execute([':uid'=>$uid]); $r = $stmt->fetch(PDO::FETCH_ASSOC);
-                if ($r) return ['quota'=>(int)$r['quota'],'used'=>(int)$r['used']];
-                $stmt2 = $pdo->prepare("INSERT INTO fm_users (user_id, quota, used, updated_at) VALUES (:uid, :quota, 0, :u)");
-                $stmt2->execute([':uid'=>$uid, ':quota'=>$cfg['default_user_quota'], ':u'=>date('Y-m-d H:i:s')]);
-                return ['quota'=>$cfg['default_user_quota'],'used'=>0];
-            } catch (Exception $e) {}
-        }
-        return ['quota'=>$cfg['default_user_quota'],'used'=>0];
-    }
-}
-if (!function_exists('fm_update_user_used')) {
-    function fm_update_user_used($uid, $delta) {
-        $pdo = fm_get_pdo(); if (!$pdo) return false;
+    if ($conn['type'] === 'joshcam') {
         try {
-            $pdo->beginTransaction();
-            $stmt = $pdo->prepare("SELECT used FROM fm_users WHERE user_id = :uid FOR UPDATE");
-            $stmt->execute([':uid'=>$uid]); $r = $stmt->fetch(PDO::FETCH_ASSOC);
-            if (!$r) {
-                $quota = fm_get_config()['default_user_quota'];
-                $used = max(0, $delta);
-                $stmt2 = $pdo->prepare("INSERT INTO fm_users (user_id, quota, used, updated_at) VALUES (:uid, :q, :u, :t)");
-                $stmt2->execute([':uid'=>$uid,':q'=>$quota,':u'=>$used,':t'=>date('Y-m-d H:i:s')]);
-                $pdo->commit(); return true;
+            foreach ($where as $k => $v) {
+                $conn['db']->where($k, $v);
             }
-            $new = max(0, (int)$r['used'] + (int)$delta);
-            $stmt2 = $pdo->prepare("UPDATE fm_users SET used=:used, updated_at=:t WHERE user_id = :uid");
-            $stmt2->execute([':used'=>$new,':t'=>date('Y-m-d H:i:s'),':uid'=>$uid]);
-            $pdo->commit(); return true;
-        } catch (Exception $e) { if ($pdo->inTransaction()) $pdo->rollBack(); return false; }
+            return $conn['db']->update($table, $data);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    $sets = [];
+    $values = [];
+    foreach ($data as $k => $v) {
+        $sets[] = "`$k` = ?";
+        $values[] = $v;
+    }
+
+    $wheres = [];
+    foreach ($where as $k => $v) {
+        $wheres[] = "`$k` = ?";
+        $values[] = $v;
+    }
+
+    $sql = "UPDATE `$table` SET " . implode(', ', $sets) . " WHERE " . implode(' AND ', $wheres);
+    return fm_query($sql, $values);
+}
+
+// ============================================
+// R2 Storage
+// ============================================
+function fm_init_s3() {
+    $cfg = fm_get_config();
+    if (empty($cfg['r2_key']) || empty($cfg['r2_secret']) || empty($cfg['r2_endpoint'])) return null;
+    if (!class_exists('Aws\\S3\\S3Client')) return null;
+
+    try {
+        return new Aws\S3\S3Client([
+            'version' => 'latest',
+            'region' => 'auto',
+            'endpoint' => $cfg['r2_endpoint'],
+            'use_path_style_endpoint' => false,
+            'credentials' => [
+                'key' => $cfg['r2_key'],
+                'secret' => $cfg['r2_secret']
+            ],
+        ]);
+    } catch (Exception $e) {
+        return null;
     }
 }
 
-// ---------------- logging ----------------
-if (!function_exists('fm_log_backup_event')) {
-    function fm_log_backup_event($type, $filename, $size = 0, $user_id = 0) {
-        $pdo = fm_get_pdo();
-        $now = date('Y-m-d H:i:s');
-        if ($pdo) {
-            try {
-                $stmt = $pdo->prepare("INSERT INTO backups (type, filename, size, user_id, created_at) VALUES (:t,:f,:s,:u,:c)");
-                $stmt->execute([':t'=>$type,':f'=>$filename,':s'=>$size,':u'=>$user_id,':c'=>$now]); return true;
-            } catch (Exception $e) {}
-        }
-        // fallback to file log
-        $f = fm_get_local_dir() . '/.fm_helper.log';
-        $line = "[$now] $type $filename $size uid:$user_id\n";
-        @file_put_contents($f, $line, FILE_APPEND);
+function fm_upload_to_r2($localPath, $remoteKey) {
+    $cfg = fm_get_config();
+    if (!file_exists($localPath)) return ['success' => false, 'message' => 'Local file not found'];
+
+    $s3 = fm_init_s3();
+    if (!$s3) return ['success' => false, 'message' => 'R2 not configured'];
+
+    try {
+        $result = $s3->putObject([
+            'Bucket' => $cfg['r2_bucket'],
+            'Key' => $remoteKey,
+            'SourceFile' => $localPath,
+            'ACL' => 'private'
+        ]);
+
+        $url = !empty($cfg['r2_domain']) ? rtrim($cfg['r2_domain'], '/') . '/' . ltrim($remoteKey, '/') : null;
+        return ['success' => true, 'url' => $url, 'key' => $remoteKey];
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => $e->getMessage()];
+    }
+}
+
+function fm_download_from_r2($remoteKey, $localPath) {
+    $cfg = fm_get_config();
+    $s3 = fm_init_s3();
+    if (!$s3) return ['success' => false, 'message' => 'R2 not configured'];
+
+    try {
+        $result = $s3->getObject([
+            'Bucket' => $cfg['r2_bucket'],
+            'Key' => $remoteKey,
+            'SaveAs' => $localPath
+        ]);
+        return ['success' => true, 'path' => $localPath];
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => $e->getMessage()];
+    }
+}
+
+// ============================================
+// User Quotas
+// ============================================
+function fm_get_user_quota($userId) {
+    $result = fm_query("SELECT quota_bytes, used_bytes FROM fm_user_quotas WHERE user_id = ?", [$userId]);
+    if (!empty($result)) {
+        return ['quota' => (int)$result[0]['quota_bytes'], 'used' => (int)$result[0]['used_bytes']];
+    }
+
+    $cfg = fm_get_config();
+    fm_insert('fm_user_quotas', [
+        'user_id' => $userId,
+        'quota_bytes' => $cfg['default_quota'],
+        'used_bytes' => 0,
+        'updated_at' => date('Y-m-d H:i:s')
+    ]);
+
+    return ['quota' => $cfg['default_quota'], 'used' => 0];
+}
+
+function fm_update_user_quota($userId, $deltaBytes) {
+    $result = fm_query("SELECT used_bytes FROM fm_user_quotas WHERE user_id = ?", [$userId]);
+
+    if (empty($result)) {
+        $cfg = fm_get_config();
+        $newUsed = max(0, $deltaBytes);
+        fm_insert('fm_user_quotas', [
+            'user_id' => $userId,
+            'quota_bytes' => $cfg['default_quota'],
+            'used_bytes' => $newUsed,
+            'updated_at' => date('Y-m-d H:i:s')
+        ]);
         return true;
     }
+
+    $newUsed = max(0, (int)$result[0]['used_bytes'] + $deltaBytes);
+    return fm_update('fm_user_quotas', [
+        'used_bytes' => $newUsed,
+        'updated_at' => date('Y-m-d H:i:s')
+    ], ['user_id' => $userId]);
 }
 
-/* End of file_manager_helper.php */
+function fm_check_quota($userId, $requiredBytes) {
+    $quota = fm_get_user_quota($userId);
+    return ($quota['used'] + $requiredBytes) <= $quota['quota'];
+}
+
+// ============================================
+// File Operations
+// ============================================
+function fm_create_folder($userId, $folderName, $parentId = null, $isGlobal = false) {
+    $path = $folderName;
+    if ($parentId) {
+        $parent = fm_query("SELECT path FROM fm_files WHERE id = ?", [$parentId]);
+        if (!empty($parent)) {
+            $path = rtrim($parent[0]['path'], '/') . '/' . $folderName;
+        }
+    }
+
+    $data = [
+        'user_id' => $userId,
+        'parent_folder_id' => $parentId,
+        'filename' => $folderName,
+        'original_filename' => $folderName,
+        'path' => $path,
+        'is_folder' => 1,
+        'is_global' => $isGlobal ? 1 : 0,
+        'created_at' => date('Y-m-d H:i:s')
+    ];
+
+    return fm_insert('fm_files', $data);
+}
+
+function fm_upload_file($userId, $fileData, $parentId = null) {
+    $cfg = fm_get_config();
+
+    if (!fm_check_quota($userId, $fileData['size'])) {
+        return ['success' => false, 'message' => 'Quota exceeded'];
+    }
+
+    @mkdir($cfg['local_storage'], 0755, true);
+
+    $safeName = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $fileData['name']);
+    $destPath = $cfg['local_storage'] . '/' . uniqid('file_') . '_' . $safeName;
+
+    if (isset($fileData['tmp_name']) && is_uploaded_file($fileData['tmp_name'])) {
+        if (!move_uploaded_file($fileData['tmp_name'], $destPath)) {
+            return ['success' => false, 'message' => 'Failed to move uploaded file'];
+        }
+    } else {
+        return ['success' => false, 'message' => 'Invalid file upload'];
+    }
+
+    $path = $safeName;
+    if ($parentId) {
+        $parent = fm_query("SELECT path FROM fm_files WHERE id = ?", [$parentId]);
+        if (!empty($parent)) {
+            $path = rtrim($parent[0]['path'], '/') . '/' . $safeName;
+        }
+    }
+
+    $ext = strtolower(pathinfo($safeName, PATHINFO_EXTENSION));
+    $checksum = md5_file($destPath);
+
+    $data = [
+        'user_id' => $userId,
+        'parent_folder_id' => $parentId,
+        'filename' => basename($destPath),
+        'original_filename' => $fileData['name'],
+        'path' => $path,
+        'file_type' => $ext,
+        'mime_type' => $fileData['type'] ?? 'application/octet-stream',
+        'size' => filesize($destPath),
+        'checksum' => $checksum,
+        'created_at' => date('Y-m-d H:i:s')
+    ];
+
+    $fileId = fm_insert('fm_files', $data);
+
+    if ($fileId) {
+        fm_update_user_quota($userId, filesize($destPath));
+
+        $shouldAutoUpload = in_array($ext, $cfg['auto_upload_types']);
+        foreach ($cfg['auto_upload_prefixes'] as $prefix) {
+            if (stripos($safeName, $prefix) === 0) $shouldAutoUpload = true;
+        }
+
+        if ($shouldAutoUpload) {
+            $r2Key = 'files/' . date('Y/m/') . basename($destPath);
+            fm_enqueue_r2_upload($fileId, $destPath, $r2Key);
+        }
+
+        return ['success' => true, 'file_id' => $fileId, 'path' => $destPath];
+    }
+
+    return ['success' => false, 'message' => 'Database insert failed'];
+}
+
+function fm_delete_file($fileId, $userId, $isAdmin = false) {
+    $file = fm_query("SELECT * FROM fm_files WHERE id = ?", [$fileId]);
+    if (empty($file)) return ['success' => false, 'message' => 'File not found'];
+
+    $file = $file[0];
+
+    if ($file['user_id'] != $userId && !$isAdmin && $file['is_global'] == 0) {
+        return ['success' => false, 'message' => 'Permission denied'];
+    }
+
+    $cfg = fm_get_config();
+    $autoDeleteAt = date('Y-m-d H:i:s', strtotime('+' . $cfg['recycle_retention_days'] . ' days'));
+
+    fm_insert('fm_recycle_bin', [
+        'file_id' => $fileId,
+        'user_id' => $userId,
+        'original_path' => $file['path'],
+        'filename' => $file['original_filename'],
+        'size' => $file['size'],
+        'deleted_at' => date('Y-m-d H:i:s'),
+        'auto_delete_at' => $autoDeleteAt
+    ]);
+
+    fm_update('fm_files', [
+        'is_deleted' => 1,
+        'deleted_at' => date('Y-m-d H:i:s'),
+        'deleted_by' => $userId
+    ], ['id' => $fileId]);
+
+    return ['success' => true, 'message' => 'Moved to recycle bin'];
+}
+
+function fm_restore_file($recycleId, $userId, $isAdmin = false) {
+    $recycle = fm_query("SELECT * FROM fm_recycle_bin WHERE id = ?", [$recycleId]);
+    if (empty($recycle)) return ['success' => false, 'message' => 'Not found'];
+
+    $recycle = $recycle[0];
+
+    if ($recycle['user_id'] != $userId && !$isAdmin) {
+        return ['success' => false, 'message' => 'Permission denied'];
+    }
+
+    fm_update('fm_files', [
+        'is_deleted' => 0,
+        'deleted_at' => null,
+        'deleted_by' => null
+    ], ['id' => $recycle['file_id']]);
+
+    fm_update('fm_recycle_bin', [
+        'restored_at' => date('Y-m-d H:i:s')
+    ], ['id' => $recycleId]);
+
+    return ['success' => true, 'message' => 'File restored'];
+}
+
+function fm_empty_recycle_bin_auto() {
+    $expired = fm_query("SELECT * FROM fm_recycle_bin WHERE auto_delete_at <= NOW() AND restored_at IS NULL AND force_deleted_at IS NULL");
+
+    $deleted = 0;
+    foreach ($expired as $item) {
+        $file = fm_query("SELECT * FROM fm_files WHERE id = ?", [$item['file_id']]);
+        if (!empty($file)) {
+            $file = $file[0];
+            $cfg = fm_get_config();
+            $fullPath = $cfg['local_storage'] . '/' . $file['filename'];
+            if (file_exists($fullPath)) {
+                @unlink($fullPath);
+            }
+
+            fm_update_user_quota($file['user_id'], -$file['size']);
+        }
+
+        fm_update('fm_recycle_bin', [
+            'force_deleted_at' => date('Y-m-d H:i:s'),
+            'force_deleted_by' => 0
+        ], ['id' => $item['id']]);
+
+        $deleted++;
+    }
+
+    return ['deleted' => $deleted];
+}
+
+// ============================================
+// R2 Upload Queue
+// ============================================
+function fm_enqueue_r2_upload($fileId, $localPath, $remoteKey) {
+    return fm_insert('fm_upload_queue', [
+        'file_id' => $fileId,
+        'local_path' => $localPath,
+        'remote_key' => $remoteKey,
+        'status' => 'pending',
+        'created_at' => date('Y-m-d H:i:s')
+    ]);
+}
+
+function fm_process_upload_queue($limit = 20) {
+    $queue = fm_query("SELECT * FROM fm_upload_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?", [$limit]);
+
+    $processed = [];
+    foreach ($queue as $job) {
+        fm_update('fm_upload_queue', ['status' => 'processing'], ['id' => $job['id']]);
+
+        if (!file_exists($job['local_path'])) {
+            fm_update('fm_upload_queue', [
+                'status' => 'error',
+                'message' => 'Local file not found'
+            ], ['id' => $job['id']]);
+            $processed[] = ['id' => $job['id'], 'status' => 'error'];
+            continue;
+        }
+
+        $result = fm_upload_to_r2($job['local_path'], $job['remote_key']);
+
+        if ($result['success']) {
+            fm_update('fm_upload_queue', [
+                'status' => 'done',
+                'updated_at' => date('Y-m-d H:i:s')
+            ], ['id' => $job['id']]);
+
+            if ($job['file_id']) {
+                fm_update('fm_files', [
+                    'r2_key' => $job['remote_key'],
+                    'r2_uploaded' => 1,
+                    'r2_uploaded_at' => date('Y-m-d H:i:s')
+                ], ['id' => $job['file_id']]);
+            }
+
+            $processed[] = ['id' => $job['id'], 'status' => 'done'];
+        } else {
+            fm_update('fm_upload_queue', [
+                'status' => 'error',
+                'message' => $result['message'],
+                'retry_count' => $job['retry_count'] + 1
+            ], ['id' => $job['id']]);
+            $processed[] = ['id' => $job['id'], 'status' => 'error'];
+        }
+    }
+
+    return $processed;
+}
+
+// ============================================
+// Backup System
+// ============================================
+function fm_create_full_backup($createdBy = 0) {
+    $cfg = fm_get_config();
+    @mkdir($cfg['backup_dir'], 0755, true);
+
+    $dbUser = getenv('DB_USER') ?: '';
+    $dbPass = getenv('DB_PASSWORD') ?: '';
+    $dbName = getenv('DB_NAME') ?: '';
+    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+
+    if (!$dbName) return ['success' => false, 'message' => 'DB_NAME not set'];
+
+    $timestamp = date('Ymd_His');
+    $filename = "db_backup_full_{$timestamp}.sql.gz";
+    $filepath = $cfg['backup_dir'] . '/' . $filename;
+
+    $logId = fm_insert('backup_logs', [
+        'backup_type' => 'full',
+        'filename' => $filename,
+        'file_path' => $filepath,
+        'status' => 'inprogress',
+        'created_by' => $createdBy,
+        'created_at' => date('Y-m-d H:i:s')
+    ]);
+
+    $mysqldump = trim(shell_exec('which mysqldump 2>/dev/null'));
+    if (!$mysqldump) $mysqldump = '/usr/bin/mysqldump';
+
+    $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+    file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+
+    $cmd = sprintf(
+        '%s --defaults-extra-file=%s --single-transaction --quick --lock-tables=false %s 2>&1 | gzip -c > %s',
+        escapeshellcmd($mysqldump),
+        escapeshellarg($tmpcnf),
+        escapeshellarg($dbName),
+        escapeshellarg($filepath)
+    );
+
+    exec($cmd, $output, $returnCode);
+    @unlink($tmpcnf);
+
+    if ($returnCode === 0 && file_exists($filepath)) {
+        $size = filesize($filepath);
+        $checksum = md5_file($filepath);
+
+        fm_update('backup_logs', [
+            'status' => 'completed',
+            'size' => $size,
+            'checksum' => $checksum,
+            'completed_at' => date('Y-m-d H:i:s')
+        ], ['id' => $logId]);
+
+        $r2Key = 'backups/' . date('Y/m/') . $filename;
+        fm_insert('fm_upload_queue', [
+            'file_id' => null,
+            'local_path' => $filepath,
+            'remote_key' => $r2Key,
+            'status' => 'pending',
+            'created_at' => date('Y-m-d H:i:s')
+        ]);
+
+        return ['success' => true, 'filename' => $filename, 'size' => $size, 'log_id' => $logId];
+    }
+
+    fm_update('backup_logs', [
+        'status' => 'failed',
+        'error_message' => implode("\n", $output)
+    ], ['id' => $logId]);
+
+    return ['success' => false, 'message' => 'Backup failed', 'output' => $output];
+}
+
+function fm_create_table_backup($tableName, $createdBy = 0) {
+    $cfg = fm_get_config();
+    @mkdir($cfg['backup_dir'], 0755, true);
+
+    $dbUser = getenv('DB_USER') ?: '';
+    $dbPass = getenv('DB_PASSWORD') ?: '';
+    $dbName = getenv('DB_NAME') ?: '';
+    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+
+    if (!$dbName || !$tableName) return ['success' => false, 'message' => 'Missing parameters'];
+
+    $timestamp = date('Ymd_His');
+    $filename = "db_backup_table_{$tableName}_{$timestamp}.sql.gz";
+    $filepath = $cfg['backup_dir'] . '/' . $filename;
+
+    $logId = fm_insert('backup_logs', [
+        'backup_type' => 'table',
+        'table_name' => $tableName,
+        'filename' => $filename,
+        'file_path' => $filepath,
+        'status' => 'inprogress',
+        'created_by' => $createdBy,
+        'created_at' => date('Y-m-d H:i:s')
+    ]);
+
+    $mysqldump = trim(shell_exec('which mysqldump 2>/dev/null')) ?: '/usr/bin/mysqldump';
+
+    $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+    file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+
+    $cmd = sprintf(
+        '%s --defaults-extra-file=%s --single-transaction %s %s 2>&1 | gzip -c > %s',
+        escapeshellcmd($mysqldump),
+        escapeshellarg($tmpcnf),
+        escapeshellarg($dbName),
+        escapeshellarg($tableName),
+        escapeshellarg($filepath)
+    );
+
+    exec($cmd, $output, $returnCode);
+    @unlink($tmpcnf);
+
+    if ($returnCode === 0 && file_exists($filepath)) {
+        $size = filesize($filepath);
+        fm_update('backup_logs', [
+            'status' => 'completed',
+            'size' => $size,
+            'completed_at' => date('Y-m-d H:i:s')
+        ], ['id' => $logId]);
+
+        return ['success' => true, 'filename' => $filename, 'size' => $size];
+    }
+
+    fm_update('backup_logs', [
+        'status' => 'failed',
+        'error_message' => implode("\n", $output)
+    ], ['id' => $logId]);
+
+    return ['success' => false, 'message' => 'Table backup failed'];
+}
+
+function fm_restore_backup($filename, $restoredBy, $targetDb = null) {
+    $cfg = fm_get_config();
+    $filepath = $cfg['backup_dir'] . '/' . basename($filename);
+
+    if (!file_exists($filepath)) {
+        return ['success' => false, 'message' => 'Backup file not found'];
+    }
+
+    $dbUser = getenv('DB_USER') ?: '';
+    $dbPass = getenv('DB_PASSWORD') ?: '';
+    $dbName = $targetDb ?: (getenv('DB_NAME') ?: '');
+    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+
+    $restoreId = fm_insert('restore_history', [
+        'backup_filename' => $filename,
+        'restored_from' => 'local',
+        'target_database' => $dbName,
+        'status' => 'inprogress',
+        'restored_by' => $restoredBy,
+        'created_at' => date('Y-m-d H:i:s')
+    ]);
+
+    $mysql = trim(shell_exec('which mysql 2>/dev/null')) ?: '/usr/bin/mysql';
+
+    $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+    file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+
+    $cmd = sprintf(
+        'gunzip -c %s | %s --defaults-extra-file=%s %s 2>&1',
+        escapeshellarg($filepath),
+        escapeshellcmd($mysql),
+        escapeshellarg($tmpcnf),
+        escapeshellarg($dbName)
+    );
+
+    exec($cmd, $output, $returnCode);
+    @unlink($tmpcnf);
+
+    if ($returnCode === 0) {
+        fm_update('restore_history', [
+            'status' => 'completed',
+            'completed_at' => date('Y-m-d H:i:s')
+        ], ['id' => $restoreId]);
+
+        return ['success' => true, 'message' => 'Database restored successfully'];
+    }
+
+    fm_update('restore_history', [
+        'status' => 'failed',
+        'error_message' => implode("\n", $output)
+    ], ['id' => $restoreId]);
+
+    return ['success' => false, 'message' => 'Restore failed', 'output' => $output];
+}
+
+function fm_cleanup_old_backups() {
+    $cfg = fm_get_config();
+    $cutoffDate = date('Y-m-d H:i:s', strtotime('-' . $cfg['backup_retention_days'] . ' days'));
+
+    $oldBackups = fm_query("SELECT * FROM backup_logs WHERE created_at < ? AND status = 'completed'", [$cutoffDate]);
+
+    $deleted = 0;
+    foreach ($oldBackups as $backup) {
+        if ($backup['file_path'] && file_exists($backup['file_path'])) {
+            @unlink($backup['file_path']);
+            $deleted++;
+        }
+    }
+
+    return ['deleted' => $deleted];
+}
+
+// ============================================
+// Activity Logging
+// ============================================
+function fm_log_activity($userId, $fileId, $action, $details = []) {
+    return fm_insert('fm_activity_log', [
+        'user_id' => $userId,
+        'file_id' => $fileId,
+        'action' => $action,
+        'details' => json_encode($details),
+        'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
+        'created_at' => date('Y-m-d H:i:s')
+    ]);
+}
