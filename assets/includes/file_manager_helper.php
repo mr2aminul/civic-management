@@ -341,7 +341,7 @@ function fm_upload_file($userId, $fileData, $parentId = null) {
 
         if ($shouldAutoUpload) {
             $r2Key = 'files/' . date('Y/m/') . basename($destPath);
-            fm_enqueue_r2_upload($fileId, $destPath, $r2Key);
+            fm_enqueue_r2_upload($destPath, $r2Key, $fileId);
         }
 
         return ['success' => true, 'file_id' => $fileId, 'path' => $destPath];
@@ -436,7 +436,7 @@ function fm_empty_recycle_bin_auto() {
 // ============================================
 // R2 Upload Queue
 // ============================================
-function fm_enqueue_r2_upload($fileId, $localPath, $remoteKey) {
+function fm_enqueue_r2_upload($localPath, $remoteKey, $fileId = null) {
     return fm_insert('fm_upload_queue', [
         'file_id' => $fileId,
         'local_path' => $localPath,
@@ -548,13 +548,7 @@ function fm_create_full_backup($createdBy = 0) {
         ], ['id' => $logId]);
 
         $r2Key = 'backups/' . date('Y/m/') . $filename;
-        fm_insert('fm_upload_queue', [
-            'file_id' => null,
-            'local_path' => $filepath,
-            'remote_key' => $r2Key,
-            'status' => 'pending',
-            'created_at' => date('Y-m-d H:i:s')
-        ]);
+        fm_enqueue_r2_upload($filepath, $r2Key, null);
 
         return ['success' => true, 'filename' => $filename, 'size' => $size, 'log_id' => $logId];
     }
@@ -876,16 +870,6 @@ function fm_get_pending_uploads($limit = 100) {
 
 function fm_process_upload_queue_worker($limit = 20) {
     return fm_process_upload_queue($limit);
-}
-
-function fm_enqueue_r2_upload($localPath, $remoteKey) {
-    return fm_insert('fm_upload_queue', [
-        'file_id' => null,
-        'local_path' => $localPath,
-        'remote_key' => $remoteKey,
-        'status' => 'pending',
-        'created_at' => date('Y-m-d H:i:s')
-    ]);
 }
 
 // ============================================
