@@ -199,25 +199,35 @@ try {
         case 'download_local':
             if (!_fm_is_logged()) {
                 header('HTTP/1.1 403 Forbidden');
+                echo 'Login required';
                 exit;
             }
 
             $file = $_GET['file'] ?? $_POST['file'] ?? '';
             if (empty($file)) {
                 header('HTTP/1.1 400 Bad Request');
+                echo 'Missing file parameter';
                 exit;
             }
 
             $file = urldecode($file);
-            $info = fm_get_file_info($file);
+            $baseDir = fm_get_local_dir();
+            $fullPath = $baseDir . '/' . ltrim($file, '/');
 
-            if (empty($info)) {
+            if (!file_exists($fullPath) || !is_file($fullPath)) {
                 header('HTTP/1.1 404 Not Found');
+                echo 'File not found: ' . $file;
+                exit;
+            }
+
+            if (strpos(realpath($fullPath), realpath($baseDir)) !== 0) {
+                header('HTTP/1.1 403 Forbidden');
+                echo 'Access denied';
                 exit;
             }
 
             header_remove();
-            fm_stream_file_download($info['full_path'], $info['name']);
+            fm_stream_file_download($fullPath, basename($file));
             exit;
 
         // Delete file or folder
@@ -531,11 +541,103 @@ try {
 
         // Get environment configuration
         case 'get_env':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $envVars = [
+                'R2_ACCESS_KEY_ID' => getenv('R2_ACCESS_KEY_ID') ?: '',
+                'R2_SECRET_ACCESS_KEY' => getenv('R2_SECRET_ACCESS_KEY') ?: '',
+                'R2_BUCKET' => getenv('R2_BUCKET') ?: '',
+                'R2_ENDPOINT' => getenv('R2_ENDPOINT') ?: '',
+                'R2_ENDPOINT_DOMAIN' => getenv('R2_ENDPOINT_DOMAIN') ?: '',
+                'LOCAL_STORAGE_DIR' => getenv('LOCAL_STORAGE_DIR') ?: '',
+                'DB_BACKUP_LOCAL_DIR' => getenv('DB_BACKUP_LOCAL_DIR') ?: '',
+                'DEFAULT_USER_QUOTA_GB' => getenv('DEFAULT_USER_QUOTA_GB') ?: '1',
+                'AUTO_UPLOAD_TYPES' => getenv('AUTO_UPLOAD_TYPES') ?: 'sql,zip,xlsx,docx,pdf',
+                'AUTO_UPLOAD_PREFIXES' => getenv('AUTO_UPLOAD_PREFIXES') ?: 'db_,sys_',
+                'RECYCLE_RETENTION_DAYS' => getenv('RECYCLE_RETENTION_DAYS') ?: '30',
+                'BACKUP_RETENTION_DAYS' => getenv('BACKUP_RETENTION_DAYS') ?: '30',
+                'AUTO_BACKUP_ENABLED' => getenv('AUTO_BACKUP_ENABLED') ?: '0'
+            ];
+
             echo json_encode([
                 'status' => 200,
-                'r2_configured' => !empty(getenv('R2_ACCESS_KEY_ID')) && !empty(getenv('R2_SECRET_ACCESS_KEY')),
+                'env' => $envVars,
+                'r2_configured' => !empty($envVars['R2_ACCESS_KEY_ID']) && !empty($envVars['R2_SECRET_ACCESS_KEY']),
                 'local_storage' => fm_get_local_dir()
             ]);
+            exit;
+
+        // Save environment configuration
+        case 'save_env':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $envPath = __DIR__ . '/../.env';
+            if (!file_exists($envPath)) {
+                echo json_encode(['status' => 500, 'error' => '.env file not found']);
+                exit;
+            }
+
+            $allowedKeys = [
+                'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'R2_ENDPOINT',
+                'R2_ENDPOINT_DOMAIN', 'LOCAL_STORAGE_DIR', 'DB_BACKUP_LOCAL_DIR',
+                'DEFAULT_USER_QUOTA_GB', 'AUTO_UPLOAD_TYPES', 'AUTO_UPLOAD_PREFIXES',
+                'RECYCLE_RETENTION_DAYS', 'BACKUP_RETENTION_DAYS', 'AUTO_BACKUP_ENABLED'
+            ];
+
+            $envContent = file_get_contents($envPath);
+            $lines = explode("\n", $envContent);
+            $updated = [];
+            $existingKeys = [];
+
+            foreach ($lines as $line) {
+                $trimmed = trim($line);
+                if (empty($trimmed) || strpos($trimmed, '#') === 0) {
+                    $updated[] = $line;
+                    continue;
+                }
+
+                if (strpos($trimmed, '=') === false) {
+                    $updated[] = $line;
+                    continue;
+                }
+
+                list($key) = explode('=', $trimmed, 2);
+                $key = trim($key);
+
+                if (in_array($key, $allowedKeys) && isset($_POST[$key])) {
+                    $value = $_POST[$key];
+                    if (strpos($value, ' ') !== false || strpos($value, '#') !== false) {
+                        $value = '"' . str_replace('"', '\\"', $value) . '"';
+                    }
+                    $updated[] = $key . '=' . $value;
+                    $existingKeys[] = $key;
+                } else {
+                    $updated[] = $line;
+                }
+            }
+
+            foreach ($allowedKeys as $key) {
+                if (isset($_POST[$key]) && !in_array($key, $existingKeys)) {
+                    $value = $_POST[$key];
+                    if (strpos($value, ' ') !== false || strpos($value, '#') !== false) {
+                        $value = '"' . str_replace('"', '\\"', $value) . '"';
+                    }
+                    $updated[] = $key . '=' . $value;
+                }
+            }
+
+            if (file_put_contents($envPath, implode("\n", $updated))) {
+                fm_load_env($envPath);
+                echo json_encode(['status' => 200, 'message' => 'Configuration saved successfully']);
+            } else {
+                echo json_encode(['status' => 500, 'error' => 'Failed to write .env file']);
+            }
             exit;
 
         // Automated backup run (can be triggered by cron)

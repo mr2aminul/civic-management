@@ -1,6 +1,6 @@
 <?php
 Global $tab;
-if (! (Wo_IsAdmin() || Wo_IsModerator()) ) {
+if (! (Wo_IsAdmin() || Wo_IsModerator() || check_permission('manage-file-manager')) ) {
     echo Wo_LoadManagePage('permission-required/content');
     return;
 }
@@ -23,6 +23,7 @@ if ($tab == 'settings') {
   background: #f8f9fa;
   min-height: 100vh;
   padding: 0;
+  position: relative;
 }
 
 .fm-header {
@@ -152,6 +153,18 @@ if ($tab == 'settings') {
   flex: 1;
   overflow-y: auto;
   padding: 24px;
+  position: relative;
+}
+
+.fm-content-area.drag-over::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(59, 130, 246, 0.1);
+  border: 3px dashed #3b82f6;
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 10;
 }
 
 .fm-toolbar {
@@ -212,38 +225,6 @@ if ($tab == 'settings') {
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
-.fm-dropzone {
-  border: 2px dashed #d1d5db;
-  border-radius: 12px;
-  padding: 60px 40px;
-  text-align: center;
-  background: #fff;
-  transition: all 0.2s;
-  margin-bottom: 24px;
-}
-
-.fm-dropzone.dragover {
-  border-color: #3b82f6;
-  background: #eff6ff;
-}
-
-.fm-dropzone-icon {
-  font-size: 48px;
-  color: #9ca3af;
-  margin-bottom: 16px;
-}
-
-.fm-dropzone-text {
-  font-size: 16px;
-  color: #6b7280;
-  margin-bottom: 8px;
-}
-
-.fm-dropzone-hint {
-  font-size: 13px;
-  color: #9ca3af;
-}
-
 .fm-items-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -259,6 +240,7 @@ if ($tab == 'settings') {
   cursor: pointer;
   transition: all 0.2s;
   position: relative;
+  user-select: none;
 }
 
 .fm-item-card:hover {
@@ -328,6 +310,7 @@ if ($tab == 'settings') {
   align-items: center;
   cursor: pointer;
   transition: background 0.2s;
+  user-select: none;
 }
 
 .fm-list-item:hover {
@@ -359,7 +342,7 @@ if ($tab == 'settings') {
   box-shadow: 0 10px 25px rgba(0,0,0,0.1);
   padding: 8px 0;
   min-width: 200px;
-  z-index: 9999;
+  z-index: 99999;
   display: none;
 }
 
@@ -513,6 +496,15 @@ if ($tab == 'settings') {
   background: #b91c1c;
 }
 
+.fm-selection-rect {
+  position: fixed;
+  border: 2px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  pointer-events: none;
+  z-index: 100;
+  display: none;
+}
+
 @media (max-width: 768px) {
   .fm-sidebar { display: none; }
   .fm-items-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
@@ -557,6 +549,9 @@ if ($tab == 'settings') {
       <div class="fm-sidebar-item" data-view="documents">
         <i class="bi bi-file-text"></i> Documents
       </div>
+      <div class="fm-sidebar-item" data-view="trash">
+        <i class="bi bi-trash"></i> Recycle Bin
+      </div>
       <div class="fm-sidebar-section">Storage</div>
       <div class="fm-sidebar-item">
         <i class="bi bi-pie-chart"></i>
@@ -575,7 +570,7 @@ if ($tab == 'settings') {
       </div>
     </div>
 
-    <div class="fm-content-area">
+    <div class="fm-content-area" id="fm-content-area">
       <div class="fm-toolbar">
         <div class="fm-breadcrumb" id="fm-breadcrumb">
           <div class="fm-breadcrumb-item active" data-path="">
@@ -614,14 +609,6 @@ if ($tab == 'settings') {
         </div>
       </div>
 
-      <div class="fm-dropzone" id="fm-dropzone">
-        <div class="fm-dropzone-icon">
-          <i class="bi bi-cloud-arrow-up"></i>
-        </div>
-        <div class="fm-dropzone-text">Drag and drop files here</div>
-        <div class="fm-dropzone-hint">or click the Upload button</div>
-      </div>
-
       <div id="fm-items-container">
         <div id="fm-items-grid" class="fm-items-grid"></div>
         <div id="fm-items-list" class="fm-items-list" style="display:none"></div>
@@ -635,14 +622,8 @@ if ($tab == 'settings') {
   </div>
 </div>
 
-<div class="fm-context-menu" id="fm-context-menu">
-  <div class="fm-context-menu-item" data-action="preview"><i class="bi bi-eye"></i> Preview</div>
-  <div class="fm-context-menu-item" data-action="download"><i class="bi bi-download"></i> Download</div>
-  <div class="fm-context-menu-item" data-action="rename"><i class="bi bi-pencil"></i> Rename</div>
-  <div class="fm-context-menu-item" data-action="move"><i class="bi bi-folder-symlink"></i> Move</div>
-  <div class="fm-context-menu-item" data-action="upload_r2"><i class="bi bi-cloud-upload"></i> Upload to R2</div>
-  <div class="fm-context-menu-item danger" data-action="delete"><i class="bi bi-trash"></i> Delete</div>
-</div>
+<div class="fm-context-menu" id="fm-context-menu"></div>
+<div class="fm-selection-rect" id="fm-selection-rect"></div>
 
 <div class="fm-modal" id="fm-preview-modal">
   <div class="fm-modal-content">
@@ -660,10 +641,13 @@ jQuery(function($){
   let currentPath = '';
   let selected = new Set();
   let currentView = 'grid';
+  let currentFilter = 'all';
   let items = [];
   let ctxTarget = null;
+  let dragSelectStart = null;
 
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
   function formatSize(bytes){
     if (!bytes) return '0 B';
     const sizes = ['B','KB','MB','GB','TB'];
@@ -702,6 +686,12 @@ jQuery(function($){
   }
 
   function loadFolder(path){
+    if (currentFilter !== 'all') {
+      currentFilter = 'all';
+      $('.fm-sidebar-item').removeClass('active');
+      $('.fm-sidebar-item[data-view="all"]').addClass('active');
+    }
+
     $.get(API + '&s=list_local_folder', { path: path }, res => {
       if (!res || res.status !== 200) return;
       currentPath = path || '';
@@ -713,6 +703,35 @@ jQuery(function($){
       renderItems();
       updateStats();
     }, 'json');
+  }
+
+  function filterItems() {
+    let filtered = items.slice();
+
+    if (currentFilter === 'recent') {
+      filtered = filtered.filter(i => i.type === 'file').sort((a,b) => (b.mtime||0)-(a.mtime||0)).slice(0, 50);
+    } else if (currentFilter === 'images') {
+      const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'bmp'];
+      filtered = filtered.filter(i => {
+        if (i.type === 'folder') return false;
+        const ext = i.name.split('.').pop().toLowerCase();
+        return imgExts.includes(ext);
+      });
+    } else if (currentFilter === 'documents') {
+      const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'ppt', 'pptx'];
+      filtered = filtered.filter(i => {
+        if (i.type === 'folder') return false;
+        const ext = i.name.split('.').pop().toLowerCase();
+        return docExts.includes(ext);
+      });
+    }
+
+    const searchTerm = $('#fm-search').val().toLowerCase().trim();
+    if (searchTerm) {
+      filtered = filtered.filter(i => i.name.toLowerCase().includes(searchTerm));
+    }
+
+    return filtered;
   }
 
   function sortItems(items) {
@@ -727,13 +746,17 @@ jQuery(function($){
   }
 
   function renderItems() {
-    const sorted = sortItems(items);
+    const filtered = filterItems();
+    const sorted = sortItems(filtered);
+
     if (sorted.length === 0) {
       $('#fm-items-grid, #fm-items-list').empty().hide();
       $('#fm-empty-state').show();
       return;
     }
+
     $('#fm-empty-state').hide();
+
     if (currentView === 'grid') {
       $('#fm-items-list').hide();
       $('#fm-items-grid').show().empty();
@@ -800,9 +823,10 @@ jQuery(function($){
   }
 
   function updateStats() {
-    const folders = items.filter(i => i.type === 'folder').length;
-    const files = items.filter(i => i.type === 'file').length;
-    $('#stat-total').text(items.length);
+    const filtered = filterItems();
+    const folders = filtered.filter(i => i.type === 'folder').length;
+    const files = filtered.filter(i => i.type === 'file').length;
+    $('#stat-total').text(filtered.length);
     $('#stat-folders').text(folders);
     $('#stat-files').text(files);
     $('#stat-selected').text(selected.size);
@@ -824,12 +848,30 @@ jQuery(function($){
     window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
   });
 
-  $(document).on('change', '.fm-item-checkbox', function(){
+  $(document).on('change', '.fm-item-checkbox', function(e){
+    e.stopPropagation();
     const path = $(this).closest('[data-path]').data('path');
     if (this.checked) selected.add(path);
     else selected.delete(path);
     $(this).closest('[data-path]').toggleClass('selected', this.checked);
     updateStats();
+  });
+
+  $(document).on('click', '.fm-item-card[data-type="file"], .fm-list-item[data-type="file"]', function(e){
+    if ($(e.target).is('input, button')) return;
+    const path = $(this).data('path');
+
+    if (e.ctrlKey || e.metaKey) {
+      const isSelected = selected.has(path);
+      if (isSelected) {
+        selected.delete(path);
+        $(this).removeClass('selected').find('.fm-item-checkbox').prop('checked', false);
+      } else {
+        selected.add(path);
+        $(this).addClass('selected').find('.fm-item-checkbox').prop('checked', true);
+      }
+      updateStats();
+    }
   });
 
   $(document).on('click', '.fm-breadcrumb-item', function(){
@@ -845,18 +887,45 @@ jQuery(function($){
   });
 
   $('#fm-sort-select').on('change', () => renderItems());
+  $('#fm-search').on('input', () => renderItems());
+
+  $('.fm-sidebar-item[data-view]').on('click', function(){
+    const view = $(this).data('view');
+
+    if (view === 'trash') {
+      alert('Recycle Bin feature coming soon!');
+      return;
+    }
+
+    $('.fm-sidebar-item').removeClass('active');
+    $(this).addClass('active');
+    currentFilter = view;
+    renderItems();
+    updateStats();
+  });
 
   $('#fm-upload-btn').on('click', () => $('#fm-file-input').click());
+
   $('#fm-file-input').on('change', function(){
     if (this.files.length) uploadFiles(this.files);
   });
 
-  const dz = document.getElementById('fm-dropzone');
-  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-  dz.addEventListener('drop', e => {
+  const contentArea = document.getElementById('fm-content-area');
+
+  contentArea.addEventListener('dragover', e => {
     e.preventDefault();
-    dz.classList.remove('dragover');
+    contentArea.classList.add('drag-over');
+  });
+
+  contentArea.addEventListener('dragleave', e => {
+    if (e.target === contentArea) {
+      contentArea.classList.remove('drag-over');
+    }
+  });
+
+  contentArea.addEventListener('drop', e => {
+    e.preventDefault();
+    contentArea.classList.remove('drag-over');
     if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
   });
 
@@ -893,34 +962,89 @@ jQuery(function($){
   $(document).on('contextmenu', '.fm-item-card, .fm-list-item', function(e){
     e.preventDefault();
     ctxTarget = $(this);
-    $('#fm-context-menu').css({ left: e.pageX, top: e.pageY }).show();
+    showContextMenu(e, 'file');
   });
+
+  $(document).on('contextmenu', '#fm-content-area', function(e){
+    if ($(e.target).closest('.fm-item-card, .fm-list-item').length) return;
+    e.preventDefault();
+    ctxTarget = null;
+    showContextMenu(e, 'empty');
+  });
+
+  function showContextMenu(e, type) {
+    const $menu = $('#fm-context-menu').empty();
+
+    if (type === 'empty') {
+      $menu.append(`
+        <div class="fm-context-menu-item" data-action="new-file"><i class="bi bi-file-plus"></i> New File</div>
+        <div class="fm-context-menu-item" data-action="new-folder"><i class="bi bi-folder-plus"></i> New Folder</div>
+        <div class="fm-context-menu-item" data-action="upload"><i class="bi bi-cloud-upload"></i> Upload</div>
+      `);
+    } else {
+      const type = ctxTarget.data('type');
+      if (type === 'file') {
+        $menu.append(`
+          <div class="fm-context-menu-item" data-action="preview"><i class="bi bi-eye"></i> Preview</div>
+          <div class="fm-context-menu-item" data-action="download"><i class="bi bi-download"></i> Download</div>
+          <div class="fm-context-menu-item" data-action="rename"><i class="bi bi-pencil"></i> Rename</div>
+          <div class="fm-context-menu-item" data-action="move"><i class="bi bi-folder-symlink"></i> Move</div>
+          <div class="fm-context-menu-item" data-action="upload_r2"><i class="bi bi-cloud-upload"></i> Upload to R2</div>
+          <div class="fm-context-menu-item danger" data-action="delete"><i class="bi bi-trash"></i> Delete</div>
+        `);
+      } else {
+        $menu.append(`
+          <div class="fm-context-menu-item" data-action="open"><i class="bi bi-folder-open"></i> Open</div>
+          <div class="fm-context-menu-item" data-action="rename"><i class="bi bi-pencil"></i> Rename</div>
+          <div class="fm-context-menu-item danger" data-action="delete"><i class="bi bi-trash"></i> Delete</div>
+        `);
+      }
+    }
+
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+
+    $menu.css({
+      left: e.clientX + scrollLeft,
+      top: e.clientY + scrollTop
+    }).show();
+  }
 
   $(document).on('click', function(e){
     if (!$(e.target).closest('#fm-context-menu').length) $('#fm-context-menu').hide();
   });
 
-  $('.fm-context-menu-item').on('click', function(){
+  $(document).on('click', '.fm-context-menu-item', function(){
     const action = $(this).data('action');
     $('#fm-context-menu').hide();
-    if (!ctxTarget) return;
-    const path = ctxTarget.data('path');
-    const type = ctxTarget.data('type');
 
-    if (action === 'download' && type === 'file') {
-      window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
-    } else if (action === 'delete') {
-      if (!confirm('Delete ' + path + '?')) return;
-      $.post(API + '&s=delete_local', { path }, res => {
-        if (res && res.status === 200) loadFolder(currentPath);
-        else alert('Delete failed');
-      }, 'json');
-    } else if (action === 'upload_r2') {
-      $.post(API + '&s=upload_r2_from_local', { path, mode: 'enqueue' }, res => {
-        alert(res && res.status === 200 ? 'Enqueued for R2 upload' : 'Failed');
-      }, 'json');
-    } else if (action === 'preview' && type === 'file') {
-      openPreview(path);
+    if (action === 'upload' || action === 'new-file') {
+      $('#fm-file-input').click();
+    } else if (action === 'new-folder') {
+      $('#fm-new-folder-btn').click();
+    } else if (!ctxTarget) {
+      return;
+    } else {
+      const path = ctxTarget.data('path');
+      const type = ctxTarget.data('type');
+
+      if (action === 'open' && type === 'folder') {
+        loadFolder(path);
+      } else if (action === 'download' && type === 'file') {
+        window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
+      } else if (action === 'delete') {
+        if (!confirm('Delete ' + path + '?')) return;
+        $.post(API + '&s=delete_local', { path }, res => {
+          if (res && res.status === 200) loadFolder(currentPath);
+          else alert('Delete failed');
+        }, 'json');
+      } else if (action === 'upload_r2') {
+        $.post(API + '&s=upload_r2_from_local', { path, mode: 'enqueue' }, res => {
+          alert(res && res.status === 200 ? 'Enqueued for R2 upload' : 'Failed');
+        }, 'json');
+      } else if (action === 'preview' && type === 'file') {
+        openPreview(path);
+      }
     }
   });
 
@@ -938,6 +1062,36 @@ jQuery(function($){
       $('#fm-preview-area').html(`<p>Preview not available. <a href="${url}" target="_blank">Download file</a></p>`);
     }
   }
+
+  $(document).on('keydown', function(e){
+    if (e.key === 'Delete' && selected.size > 0) {
+      if (confirm(`Delete ${selected.size} selected item(s)?`)) {
+        const paths = Array.from(selected);
+        let completed = 0;
+        paths.forEach(path => {
+          $.post(API + '&s=delete_local', { path }, () => {
+            completed++;
+            if (completed === paths.length) {
+              selected.clear();
+              loadFolder(currentPath);
+            }
+          }, 'json');
+        });
+      }
+    } else if (e.ctrlKey && e.key === 'a') {
+      e.preventDefault();
+      $('.fm-item-card[data-type="file"], .fm-list-item[data-type="file"]').each(function(){
+        const path = $(this).data('path');
+        selected.add(path);
+        $(this).addClass('selected').find('.fm-item-checkbox').prop('checked', true);
+      });
+      updateStats();
+    } else if (e.key === 'Escape') {
+      selected.clear();
+      $('.fm-item-card, .fm-list-item').removeClass('selected').find('.fm-item-checkbox').prop('checked', false);
+      updateStats();
+    }
+  });
 
   loadFolder('');
   loadQuota();

@@ -23,11 +23,39 @@
 jQuery(function($){
   function loadEnv(){
     $.get(Wo_Ajax_Requests_File() + '?f=file_manager&s=get_env', function(res){
-      if(res.status!==200) return $('#env-msg').text('Failed to load');
-      Object.keys(res.env).forEach(function(k){ $('input[name="'+k+'"]').val(res.env[k]); });
-    }, 'json');
+      if(res.status!==200) {
+        $('#env-msg').text('Failed to load: ' + (res.error || 'Unknown error'));
+        return;
+      }
+      if (res.env) {
+        Object.keys(res.env).forEach(function(k){
+          const $field = $('input[name="'+k+'"], select[name="'+k+'"]');
+          if ($field.length) {
+            $field.val(res.env[k]);
+          }
+        });
+        $('#env-msg').text('Configuration loaded').css('color', '#10b981');
+      }
+    }, 'json').fail(function(){
+      $('#env-msg').text('Failed to connect to server').css('color', '#dc2626');
+    });
   }
-  $('#env-form').submit(function(e){ e.preventDefault(); var data = $(this).serialize(); $.post(Wo_Ajax_Requests_File() + '?f=file_manager&s=save_env', data, function(res){ $('#env-msg').text(res.status==200?'Saved':(res.error||'Error')); }, 'json'); });
+
+  $('#env-form').submit(function(e){
+    e.preventDefault();
+    $('#env-msg').text('Saving...').css('color', '#3b82f6');
+    var data = $(this).serialize();
+    $.post(Wo_Ajax_Requests_File() + '?f=file_manager&s=save_env', data, function(res){
+      if (res.status === 200) {
+        $('#env-msg').text('Configuration saved successfully!').css('color', '#10b981');
+      } else {
+        $('#env-msg').text('Error: ' + (res.error || 'Failed to save')).css('color', '#dc2626');
+      }
+    }, 'json').fail(function(){
+      $('#env-msg').text('Failed to connect to server').css('color', '#dc2626');
+    });
+  });
+
   loadEnv();
 });
 </script>
