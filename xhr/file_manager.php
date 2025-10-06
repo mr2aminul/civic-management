@@ -149,10 +149,30 @@ try {
 
                 if ($saveResult['success']) {
                     $relativePath = ltrim(($subdir !== '' ? trim($subdir, '/') . '/' : '') . $saveResult['filename'], '/');
+                    $fileSize = filesize($saveResult['path']);
+
+                    // Track file in database
+                    $fileData = [
+                        'user_id' => $userId,
+                        'filename' => $saveResult['filename'],
+                        'original_filename' => $file['name'],
+                        'path' => $relativePath,
+                        'file_type' => strtolower(pathinfo($file['name'], PATHINFO_EXTENSION)),
+                        'mime_type' => $file['type'] ?? 'application/octet-stream',
+                        'size' => $fileSize,
+                        'is_folder' => 0,
+                        'created_at' => date('Y-m-d H:i:s')
+                    ];
+                    $fileId = fm_insert('fm_files', $fileData);
+
+                    // Update user quota
+                    fm_update_user_quota($userId, $fileSize);
+
                     $results[] = [
                         'success' => true,
                         'path' => $relativePath,
-                        'size' => filesize($saveResult['path'])
+                        'size' => $fileSize,
+                        'file_id' => $fileId
                     ];
 
                     // Auto-upload logic
@@ -171,15 +191,21 @@ try {
                     if ($shouldAutoUpload) {
                         if (fm_init_s3()) {
                             $uploadResult = fm_upload_to_r2($saveResult['path'], $remoteKey);
-                            if (!$uploadResult['success']) {
-                                fm_enqueue_r2_upload($saveResult['path'], $remoteKey);
+                            if ($uploadResult['success'] && $fileId) {
+                                fm_update('fm_files', [
+                                    'r2_key' => $remoteKey,
+                                    'r2_uploaded' => 1,
+                                    'r2_uploaded_at' => date('Y-m-d H:i:s')
+                                ], ['id' => $fileId]);
+                            } else {
+                                fm_enqueue_r2_upload($saveResult['path'], $remoteKey, $fileId);
                             }
                         } else {
-                            fm_enqueue_r2_upload($saveResult['path'], $remoteKey);
+                            fm_enqueue_r2_upload($saveResult['path'], $remoteKey, $fileId);
                         }
-                    } elseif (filesize($saveResult['path']) > 20 * 1024 * 1024) {
+                    } elseif ($fileSize > 20 * 1024 * 1024) {
                         // Files over 20MB get queued
-                        fm_enqueue_r2_upload($saveResult['path'], $remoteKey);
+                        fm_enqueue_r2_upload($saveResult['path'], $remoteKey, $fileId);
                     }
                 } else {
                     $results[] = [
@@ -252,6 +278,32 @@ try {
             $results = [];
             $allSuccess = true;
             foreach ($paths as $path) {
+                // Get file info before deletion to update quota
+                $baseDir = fm_get_local_dir();
+                $fullPath = $baseDir . '/' . ltrim($path, '/');
+                $fileSize = 0;
+
+                if (file_exists($fullPath) && is_file($fullPath)) {
+                    $fileSize = filesize($fullPath);
+
+                    // Mark as deleted in database
+                    $fileRecord = fm_query(
+                        "SELECT id, user_id, size FROM fm_files WHERE path = ? OR filename = ? LIMIT 1",
+                        [$path, basename($path)]
+                    );
+
+                    if (!empty($fileRecord)) {
+                        fm_update('fm_files', [
+                            'is_deleted' => 1,
+                            'deleted_at' => date('Y-m-d H:i:s'),
+                            'deleted_by' => $userId
+                        ], ['id' => $fileRecord[0]['id']]);
+
+                        // Update user quota (subtract deleted file size)
+                        fm_update_user_quota($fileRecord[0]['user_id'], -$fileRecord[0]['size']);
+                    }
+                }
+
                 $success = fm_delete_local_recursive($path);
                 $results[] = ['path' => $path, 'success' => $success];
                 if (!$success) $allSuccess = false;
@@ -705,7 +757,47 @@ try {
             echo json_encode([
                 'status' => 200,
                 'quota' => $quota['quota'],
-                'used' => $quota['used']
+                'used' => $quota['used'],
+                'quota_formatted' => fm_format_bytes($quota['quota']),
+                'used_formatted' => fm_format_bytes($quota['used']),
+                'percentage' => $quota['quota'] > 0 ? round(($quota['used'] / $quota['quota']) * 100, 2) : 0
+            ]);
+            exit;
+
+        // Sync user quota (recalculate from disk)
+        case 'sync_user_quota':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $actualUsage = fm_sync_user_quota($userId);
+            $quota = fm_get_user_quota($userId);
+
+            echo json_encode([
+                'status' => 200,
+                'message' => 'Quota synchronized',
+                'quota' => $quota['quota'],
+                'used' => $quota['used'],
+                'quota_formatted' => fm_format_bytes($quota['quota']),
+                'used_formatted' => fm_format_bytes($quota['used'])
+            ]);
+            exit;
+
+        // Get total storage usage (admin only)
+        case 'get_total_storage':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $totalStorage = fm_calculate_total_storage();
+
+            echo json_encode([
+                'status' => 200,
+                'total_bytes' => $totalStorage,
+                'total_formatted' => fm_format_bytes($totalStorage)
             ]);
             exit;
 
@@ -770,5 +862,19 @@ if (!function_exists('fm_stream_file_download')) {
 
         readfile($fullPath);
         exit;
+    }
+}
+
+// Helper: Format bytes to human readable
+if (!function_exists('fm_format_bytes')) {
+    function fm_format_bytes($bytes, $precision = 2) {
+        if ($bytes <= 0) return '0 B';
+
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $base = 1024;
+        $exp = floor(log($bytes) / log($base));
+        $exp = min($exp, count($units) - 1);
+
+        return round($bytes / pow($base, $exp), $precision) . ' ' . $units[$exp];
     }
 }

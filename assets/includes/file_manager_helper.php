@@ -221,15 +221,18 @@ function fm_get_user_quota($userId) {
         return ['quota' => (int)$result[0]['quota_bytes'], 'used' => (int)$result[0]['used_bytes']];
     }
 
+    // Calculate actual disk usage for this user
     $cfg = fm_get_config();
+    $actualUsage = fm_calculate_user_disk_usage($userId);
+
     fm_insert('fm_user_quotas', [
         'user_id' => $userId,
         'quota_bytes' => $cfg['default_quota'],
-        'used_bytes' => 0,
+        'used_bytes' => $actualUsage,
         'updated_at' => date('Y-m-d H:i:s')
     ]);
 
-    return ['quota' => $cfg['default_quota'], 'used' => 0];
+    return ['quota' => $cfg['default_quota'], 'used' => $actualUsage];
 }
 
 function fm_update_user_quota($userId, $deltaBytes) {
@@ -437,13 +440,39 @@ function fm_empty_recycle_bin_auto() {
 // R2 Upload Queue
 // ============================================
 function fm_enqueue_r2_upload($localPath, $remoteKey, $fileId = null) {
-    return fm_insert('fm_upload_queue', [
+    // Check if already queued or completed
+    $existing = fm_query(
+        "SELECT id, status FROM fm_upload_queue WHERE local_path = ? AND remote_key = ? LIMIT 1",
+        [$localPath, $remoteKey]
+    );
+
+    if (!empty($existing)) {
+        $status = $existing[0]['status'];
+        if ($status === 'done') {
+            return true; // Already uploaded
+        } elseif ($status === 'pending' || $status === 'processing') {
+            return true; // Already queued
+        }
+        // If error status, re-queue by updating
+        fm_update('fm_upload_queue', [
+            'status' => 'pending',
+            'retry_count' => 0,
+            'message' => null,
+            'updated_at' => date('Y-m-d H:i:s')
+        ], ['id' => $existing[0]['id']]);
+        return true;
+    }
+
+    // Insert new queue item
+    $result = fm_insert('fm_upload_queue', [
         'file_id' => $fileId,
         'local_path' => $localPath,
         'remote_key' => $remoteKey,
         'status' => 'pending',
         'created_at' => date('Y-m-d H:i:s')
     ]);
+
+    return $result !== false;
 }
 
 function fm_process_upload_queue($limit = 20) {
@@ -1037,6 +1066,85 @@ function fm_cache_set($key, $value) {
 function fm_cache_delete($key) {
     global $_FM_CACHE;
     unset($_FM_CACHE[$key]);
+}
+
+// ============================================
+// Disk Usage Calculation
+// ============================================
+function fm_calculate_user_disk_usage($userId) {
+    $cfg = fm_get_config();
+    $localDir = $cfg['local_storage'];
+
+    // Get all files for this user from database
+    $files = fm_query(
+        "SELECT filename, size FROM fm_files WHERE user_id = ? AND is_deleted = 0 AND is_folder = 0",
+        [$userId]
+    );
+
+    $totalSize = 0;
+
+    if (!empty($files)) {
+        foreach ($files as $file) {
+            // Use database size first
+            if (!empty($file['size'])) {
+                $totalSize += (int)$file['size'];
+            } else {
+                // Fallback: check actual file on disk
+                $fullPath = $localDir . '/' . $file['filename'];
+                if (file_exists($fullPath) && is_file($fullPath)) {
+                    $totalSize += filesize($fullPath);
+                }
+            }
+        }
+    }
+
+    return $totalSize;
+}
+
+function fm_sync_user_quota($userId) {
+    $actualUsage = fm_calculate_user_disk_usage($userId);
+
+    $existing = fm_query("SELECT user_id FROM fm_user_quotas WHERE user_id = ?", [$userId]);
+
+    if (!empty($existing)) {
+        fm_update('fm_user_quotas', [
+            'used_bytes' => $actualUsage,
+            'updated_at' => date('Y-m-d H:i:s')
+        ], ['user_id' => $userId]);
+    } else {
+        $cfg = fm_get_config();
+        fm_insert('fm_user_quotas', [
+            'user_id' => $userId,
+            'quota_bytes' => $cfg['default_quota'],
+            'used_bytes' => $actualUsage,
+            'updated_at' => date('Y-m-d H:i:s')
+        ]);
+    }
+
+    return $actualUsage;
+}
+
+function fm_calculate_total_storage() {
+    $cfg = fm_get_config();
+    $localDir = $cfg['local_storage'];
+
+    if (!is_dir($localDir)) {
+        return 0;
+    }
+
+    $totalSize = 0;
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($localDir, RecursiveDirectoryIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $file) {
+        if ($file->isFile()) {
+            $totalSize += $file->getSize();
+        }
+    }
+
+    return $totalSize;
 }
 
 // ============================================
