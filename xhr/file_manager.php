@@ -78,11 +78,14 @@ try {
                     if ($doImmediate) {
                         if (fm_init_s3()) {
                             $r = fm_upload_to_r2($save['path'], $remote);
-                            if (!$r['success']) fm_enqueue_r2_upload($save['path'],$remote);
-                        } else fm_enqueue_r2_upload($save['path'],$remote);
+                            if (!$r['success']) fm_enqueue_r2_upload($save['path'], $remote);
+                        } else {
+                            fm_enqueue_r2_upload($save['path'], $remote);
+                        }
                     } else {
-                        // large-file rule: if size > 20MB, enqueue automatically
-                        if (filesize($save['path']) > 20*1024*1024) fm_enqueue_r2_upload($save['path'],$remote);
+                        if (filesize($save['path']) > 20*1024*1024) {
+                            fm_enqueue_r2_upload($save['path'], $remote);
+                        }
                     }
                 } else $results[] = ['success'=>false,'error'=>$save['message']];
             }
@@ -222,20 +225,24 @@ try {
             } catch (Exception $e) { echo json_encode(['status'=>500,'error'=>$e->getMessage()]); }
             exit;
 
-        // auto_backup_run (for cron) - uses token or admin
+        case 'get_env':
+            echo json_encode([
+                'status' => 200,
+                'r2_configured' => !empty(getenv('R2_ACCESS_KEY_ID')) && !empty(getenv('R2_SECRET_ACCESS_KEY')),
+                'local_storage' => fm_get_local_dir()
+            ]);
+            exit;
+
         case 'auto_backup_run':
-            // token from env AUTO_BACKUP_SECRET (set in .env)
             $token = $_GET['token'] ?? $_POST['token'] ?? '';
             $secret = getenv('AUTO_BACKUP_SECRET') ?: '';
             if (!(_fm_is_admin() || ($secret !== '' && $token === $secret))) { echo json_encode(['status'=>403,'error'=>'admin or valid token required']); exit; }
-            // full db dump + optional per-table dumps
             $r1 = fm_create_db_dump('db_backup');
             $enqueued = false;
             if ($r1['success']) {
                 $remote = 'backups/'.$r1['filename'];
-                $enqueued = fm_enqueue_r2_upload($r1['path'],$remote);
+                $enqueued = fm_enqueue_r2_upload($r1['path'], $remote);
             }
-            // rotate old backups
             $rot = fm_enforce_retention();
             echo json_encode(['status'=>200,'dump'=>$r1,'enqueued'=>$enqueued,'rotation'=>$rot]); exit;
 

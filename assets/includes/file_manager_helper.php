@@ -4,7 +4,11 @@
  * Advanced features: Drive-like interface, R2 storage, quotas, permissions, recycle bin
  */
 
-require_once __DIR__ . "/../libraries/aws-sdk-php/vendor/autoload.php";
+if (file_exists(__DIR__ . "/../libraries/aws-sdk-php/vendor/autoload.php")) {
+    require_once __DIR__ . "/../libraries/aws-sdk-php/vendor/autoload.php";
+} elseif (file_exists(__DIR__ . "/../../vendor/autoload.php")) {
+    require_once __DIR__ . "/../../vendor/autoload.php";
+}
 
 // Load environment variables
 if (!function_exists('fm_load_env')) {
@@ -30,6 +34,7 @@ fm_load_env();
 // Configuration
 // ============================================
 function fm_get_config() {
+    $autoUploadTypes = array_filter(array_map('trim', explode(',', getenv('AUTO_UPLOAD_TYPES') ?: 'sql,zip,xlsx,docx,pdf')));
     return [
         'local_storage' => getenv('LOCAL_STORAGE_DIR') ?: '/home/civicbd/civicgroup/storage',
         'backup_dir' => getenv('DB_BACKUP_LOCAL_DIR') ?: '/home/civicbd/civicgroup/backups',
@@ -39,7 +44,8 @@ function fm_get_config() {
         'r2_endpoint' => getenv('R2_ENDPOINT') ?: '',
         'r2_domain' => getenv('R2_ENDPOINT_DOMAIN') ?: '',
         'default_quota' => (int)((float)(getenv('DEFAULT_USER_QUOTA_GB') ?: 1) * 1024 * 1024 * 1024),
-        'auto_upload_types' => array_filter(array_map('trim', explode(',', getenv('AUTO_UPLOAD_TYPES') ?: 'sql,zip,xlsx,docx,pdf'))),
+        'auto_upload_types' => $autoUploadTypes,
+        'auto_upload_exts' => $autoUploadTypes,
         'auto_upload_prefixes' => array_filter(array_map('trim', explode(',', getenv('AUTO_UPLOAD_PREFIXES') ?: 'db_,sys_'))),
         'recycle_retention_days' => (int)(getenv('RECYCLE_RETENTION_DAYS') ?: 30),
         'backup_retention_days' => (int)(getenv('BACKUP_RETENTION_DAYS') ?: 30),
@@ -707,4 +713,344 @@ function fm_log_activity($userId, $fileId, $action, $details = []) {
         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
         'created_at' => date('Y-m-d H:i:s')
     ]);
+}
+
+// ============================================
+// Local File Operations
+// ============================================
+function fm_get_local_dir() {
+    $cfg = fm_get_config();
+    $dir = $cfg['local_storage'];
+    if (!file_exists($dir)) {
+        @mkdir($dir, 0755, true);
+    }
+    return $dir;
+}
+
+function fm_save_uploaded_local($fileData, $subdir = '') {
+    $localDir = fm_get_local_dir();
+    if ($subdir !== '') {
+        $localDir .= '/' . trim($subdir, '/');
+        if (!file_exists($localDir)) {
+            @mkdir($localDir, 0755, true);
+        }
+    }
+
+    if (!isset($fileData['tmp_name']) || !is_uploaded_file($fileData['tmp_name'])) {
+        return ['success' => false, 'message' => 'Invalid file upload'];
+    }
+
+    $safeName = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $fileData['name']);
+    $uniqueName = uniqid('file_') . '_' . $safeName;
+    $destPath = $localDir . '/' . $uniqueName;
+
+    if (!move_uploaded_file($fileData['tmp_name'], $destPath)) {
+        return ['success' => false, 'message' => 'Failed to move uploaded file'];
+    }
+
+    return ['success' => true, 'filename' => $uniqueName, 'path' => $destPath];
+}
+
+function fm_list_local_folder($relativePath = '') {
+    $baseDir = fm_get_local_dir();
+    $fullPath = $relativePath ? $baseDir . '/' . ltrim($relativePath, '/') : $baseDir;
+
+    if (!is_dir($fullPath)) {
+        return ['folders' => [], 'files' => []];
+    }
+
+    $folders = [];
+    $files = [];
+
+    $items = scandir($fullPath);
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $itemPath = $fullPath . '/' . $item;
+        $relPath = $relativePath ? trim($relativePath, '/') . '/' . $item : $item;
+
+        if (is_dir($itemPath)) {
+            $folders[] = [
+                'name' => $item,
+                'path' => $relPath,
+                'mtime' => filemtime($itemPath)
+            ];
+        } else {
+            $files[] = [
+                'name' => $item,
+                'path' => $relPath,
+                'size' => filesize($itemPath),
+                'mtime' => filemtime($itemPath)
+            ];
+        }
+    }
+
+    return ['folders' => $folders, 'files' => $files];
+}
+
+function fm_get_file_info($relativePath) {
+    $baseDir = fm_get_local_dir();
+    $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
+
+    if (!file_exists($fullPath)) {
+        return null;
+    }
+
+    return [
+        'name' => basename($fullPath),
+        'path' => $relativePath,
+        'full_path' => $fullPath,
+        'size' => filesize($fullPath),
+        'mtime' => filemtime($fullPath),
+        'is_dir' => is_dir($fullPath)
+    ];
+}
+
+function fm_delete_local_recursive($relativePath) {
+    $baseDir = fm_get_local_dir();
+    $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
+
+    if (!file_exists($fullPath)) {
+        return false;
+    }
+
+    if (is_dir($fullPath)) {
+        $items = scandir($fullPath);
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') continue;
+            $itemPath = $fullPath . '/' . $item;
+            $itemRelPath = ltrim($relativePath, '/') . '/' . $item;
+            fm_delete_local_recursive($itemRelPath);
+        }
+        return @rmdir($fullPath);
+    } else {
+        return @unlink($fullPath);
+    }
+}
+
+// ============================================
+// R2 List with Caching
+// ============================================
+function fm_list_r2_cached($prefix = '', $maxAge = 300) {
+    $cacheKey = 'r2_list_' . md5($prefix);
+    $cached = fm_cache_get($cacheKey);
+    if ($cached !== null && (time() - $cached['time']) < $maxAge) {
+        return $cached['data'];
+    }
+
+    $s3 = fm_init_s3();
+    if (!$s3) {
+        return [];
+    }
+
+    $cfg = fm_get_config();
+    try {
+        $result = $s3->listObjectsV2([
+            'Bucket' => $cfg['r2_bucket'],
+            'Prefix' => $prefix
+        ]);
+
+        $objects = [];
+        if (isset($result['Contents'])) {
+            foreach ($result['Contents'] as $obj) {
+                $objects[] = [
+                    'key' => $obj['Key'],
+                    'size' => $obj['Size'],
+                    'modified' => $obj['LastModified']->format('Y-m-d H:i:s')
+                ];
+            }
+        }
+
+        fm_cache_set($cacheKey, ['time' => time(), 'data' => $objects]);
+        return $objects;
+    } catch (Exception $e) {
+        return [];
+    }
+}
+
+// ============================================
+// Upload Queue Processing
+// ============================================
+function fm_get_pending_uploads($limit = 100) {
+    return fm_query("SELECT * FROM fm_upload_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?", [$limit]) ?: [];
+}
+
+function fm_process_upload_queue_worker($limit = 20) {
+    return fm_process_upload_queue($limit);
+}
+
+function fm_enqueue_r2_upload($localPath, $remoteKey) {
+    return fm_insert('fm_upload_queue', [
+        'file_id' => null,
+        'local_path' => $localPath,
+        'remote_key' => $remoteKey,
+        'status' => 'pending',
+        'created_at' => date('Y-m-d H:i:s')
+    ]);
+}
+
+// ============================================
+// Database Backup Functions
+// ============================================
+function fm_create_db_dump($prefix = 'db_backup') {
+    $cfg = fm_get_config();
+    @mkdir($cfg['backup_dir'], 0755, true);
+
+    $dbUser = getenv('DB_USER') ?: '';
+    $dbPass = getenv('DB_PASSWORD') ?: '';
+    $dbName = getenv('DB_NAME') ?: '';
+    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+
+    if (!$dbName) {
+        return ['success' => false, 'message' => 'DB_NAME not configured'];
+    }
+
+    $timestamp = date('Ymd_His');
+    $filename = "{$prefix}_{$timestamp}.sql.gz";
+    $filepath = $cfg['backup_dir'] . '/' . $filename;
+
+    $mysqldump = trim(shell_exec('which mysqldump 2>/dev/null'));
+    if (!$mysqldump) $mysqldump = '/usr/bin/mysqldump';
+
+    $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+    file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+
+    $cmd = sprintf(
+        '%s --defaults-extra-file=%s --single-transaction --quick --lock-tables=false %s 2>&1 | gzip -c > %s',
+        escapeshellcmd($mysqldump),
+        escapeshellarg($tmpcnf),
+        escapeshellarg($dbName),
+        escapeshellarg($filepath)
+    );
+
+    exec($cmd, $output, $returnCode);
+    @unlink($tmpcnf);
+
+    if ($returnCode === 0 && file_exists($filepath)) {
+        return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath)];
+    }
+
+    return ['success' => false, 'message' => 'Backup failed: ' . implode("\n", $output)];
+}
+
+function fm_create_table_dump($tableName, $prefix = 'table_backup') {
+    $cfg = fm_get_config();
+    @mkdir($cfg['backup_dir'], 0755, true);
+
+    $dbUser = getenv('DB_USER') ?: '';
+    $dbPass = getenv('DB_PASSWORD') ?: '';
+    $dbName = getenv('DB_NAME') ?: '';
+    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+
+    if (!$dbName || !$tableName) {
+        return ['success' => false, 'message' => 'Missing database name or table name'];
+    }
+
+    $timestamp = date('Ymd_His');
+    $filename = "{$prefix}_{$tableName}_{$timestamp}.sql.gz";
+    $filepath = $cfg['backup_dir'] . '/' . $filename;
+
+    $mysqldump = trim(shell_exec('which mysqldump 2>/dev/null')) ?: '/usr/bin/mysqldump';
+
+    $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+    file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+
+    $cmd = sprintf(
+        '%s --defaults-extra-file=%s --single-transaction %s %s 2>&1 | gzip -c > %s',
+        escapeshellcmd($mysqldump),
+        escapeshellarg($tmpcnf),
+        escapeshellarg($dbName),
+        escapeshellarg($tableName),
+        escapeshellarg($filepath)
+    );
+
+    exec($cmd, $output, $returnCode);
+    @unlink($tmpcnf);
+
+    if ($returnCode === 0 && file_exists($filepath)) {
+        return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath)];
+    }
+
+    return ['success' => false, 'message' => 'Table backup failed: ' . implode("\n", $output)];
+}
+
+function fm_restore_sql_gz_local($filepath, $targetDb = null) {
+    if (!file_exists($filepath)) {
+        return ['success' => false, 'message' => 'Backup file not found'];
+    }
+
+    $dbUser = getenv('DB_USER') ?: '';
+    $dbPass = getenv('DB_PASSWORD') ?: '';
+    $dbName = $targetDb ?: (getenv('DB_NAME') ?: '');
+    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+
+    if (!$dbName) {
+        return ['success' => false, 'message' => 'Target database not specified'];
+    }
+
+    $mysql = trim(shell_exec('which mysql 2>/dev/null')) ?: '/usr/bin/mysql';
+
+    $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+    file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+
+    $cmd = sprintf(
+        'gunzip -c %s | %s --defaults-extra-file=%s %s 2>&1',
+        escapeshellarg($filepath),
+        escapeshellcmd($mysql),
+        escapeshellarg($tmpcnf),
+        escapeshellarg($dbName)
+    );
+
+    exec($cmd, $output, $returnCode);
+    @unlink($tmpcnf);
+
+    if ($returnCode === 0) {
+        return ['success' => true, 'message' => 'Database restored successfully'];
+    }
+
+    return ['success' => false, 'message' => 'Restore failed: ' . implode("\n", $output)];
+}
+
+function fm_enforce_retention() {
+    $cfg = fm_get_config();
+    $backupDir = $cfg['backup_dir'];
+    $retentionDays = $cfg['backup_retention_days'];
+    $cutoffTime = time() - ($retentionDays * 86400);
+
+    $deleted = 0;
+    if (is_dir($backupDir)) {
+        $files = scandir($backupDir);
+        foreach ($files as $file) {
+            if ($file === '.' || $file === '..') continue;
+            $filePath = $backupDir . '/' . $file;
+            if (is_file($filePath) && filemtime($filePath) < $cutoffTime) {
+                if (@unlink($filePath)) {
+                    $deleted++;
+                }
+            }
+        }
+    }
+
+    fm_empty_recycle_bin_auto();
+
+    return ['deleted_backups' => $deleted];
+}
+
+// ============================================
+// Simple Cache System
+// ============================================
+$_FM_CACHE = [];
+
+function fm_cache_get($key) {
+    global $_FM_CACHE;
+    return $_FM_CACHE[$key] ?? null;
+}
+
+function fm_cache_set($key, $value) {
+    global $_FM_CACHE;
+    $_FM_CACHE[$key] = $value;
+}
+
+function fm_cache_delete($key) {
+    global $_FM_CACHE;
+    unset($_FM_CACHE[$key]);
 }
