@@ -271,6 +271,7 @@ try {
                 exit;
             }
 
+            $userId = _fm_user_id();
             $paths = [];
             if (isset($_POST['paths']) && is_array($_POST['paths'])) {
                 $paths = $_POST['paths'];
