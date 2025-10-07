@@ -677,6 +677,153 @@ function fm_restore_backup($filename, $restoredBy, $targetDb = null) {
     return ['success' => false, 'message' => 'Restore failed', 'output' => $output];
 }
 
+function fm_get_table_categories() {
+    return [
+        'Stock' => ['crm_stock_items', 'crm_stock_logs', 'crm_stock_adjustments', 'crm_stock_transfers'],
+        'Leads' => ['crm_leads', 'crm_leads_assigned', 'crm_leads_remarks', 'crm_leads_history'],
+        'Sales' => ['crm_sales', 'crm_sales_items', 'crm_sales_payments', 'crm_invoices'],
+        'Purchases' => ['crm_purchases', 'crm_purchase_items', 'crm_purchase_payments'],
+        'Customers' => ['crm_customers', 'crm_customer_contacts', 'crm_customer_addresses'],
+        'Products' => ['crm_products', 'crm_product_variants', 'crm_product_categories'],
+        'Users' => ['users', 'Wo_Users', 'user_sessions', 'user_permissions'],
+        'FileManager' => ['fm_files', 'fm_user_quotas', 'fm_permissions', 'fm_recycle_bin', 'fm_upload_queue', 'fm_activity_log'],
+        'Backups' => ['backup_logs', 'backup_schedules', 'restore_history']
+    ];
+}
+
+function fm_restore_selective_tables($backupFilepath, $tables, $targetDb = null) {
+    if (empty($tables) || !is_array($tables)) {
+        return ['success' => false, 'message' => 'No tables specified'];
+    }
+
+    $dbUser = getenv('DB_USER') ?: '';
+    $dbPass = getenv('DB_PASSWORD') ?: '';
+    $dbName = $targetDb ?: (getenv('DB_NAME') ?: '');
+    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+
+    if (!file_exists($backupFilepath)) {
+        return ['success' => false, 'message' => 'Backup file not found'];
+    }
+
+    $tempExtracted = tempnam(sys_get_temp_dir(), 'restore_') . '.sql';
+
+    $isGzipped = preg_match('/\.gz$/i', $backupFilepath);
+    if ($isGzipped) {
+        exec(sprintf('gunzip -c %s > %s', escapeshellarg($backupFilepath), escapeshellarg($tempExtracted)), $output, $code);
+        if ($code !== 0) {
+            @unlink($tempExtracted);
+            return ['success' => false, 'message' => 'Failed to extract backup file'];
+        }
+    } else {
+        copy($backupFilepath, $tempExtracted);
+    }
+
+    $tempFiltered = tempnam(sys_get_temp_dir(), 'filtered_') . '.sql';
+    $fp = fopen($tempExtracted, 'r');
+    $fw = fopen($tempFiltered, 'w');
+
+    if (!$fp || !$fw) {
+        @unlink($tempExtracted);
+        @unlink($tempFiltered);
+        return ['success' => false, 'message' => 'Failed to process backup file'];
+    }
+
+    $inTargetTable = false;
+    $currentTable = '';
+    $buffer = '';
+
+    while (($line = fgets($fp)) !== false) {
+        if (preg_match('/^-- Table structure for table [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
+            $currentTable = $matches[1];
+            $inTargetTable = in_array($currentTable, $tables);
+            $buffer = $line;
+        } elseif (preg_match('/^DROP TABLE IF EXISTS [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
+            $currentTable = $matches[1];
+            $inTargetTable = in_array($currentTable, $tables);
+            $buffer = $line;
+        } elseif (preg_match('/^CREATE TABLE [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
+            $currentTable = $matches[1];
+            $inTargetTable = in_array($currentTable, $tables);
+            $buffer .= $line;
+        } elseif (preg_match('/^INSERT INTO [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
+            $currentTable = $matches[1];
+            $inTargetTable = in_array($currentTable, $tables);
+            if ($inTargetTable) {
+                fwrite($fw, $buffer);
+                $buffer = '';
+                fwrite($fw, $line);
+            }
+        } else {
+            if ($inTargetTable) {
+                if (!empty($buffer)) {
+                    fwrite($fw, $buffer);
+                    $buffer = '';
+                }
+                fwrite($fw, $line);
+            } else {
+                $buffer .= $line;
+            }
+        }
+    }
+
+    fclose($fp);
+    fclose($fw);
+    @unlink($tempExtracted);
+
+    $mysql = trim(shell_exec('which mysql 2>/dev/null')) ?: '/usr/bin/mysql';
+    $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+    file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+
+    $cmd = sprintf(
+        '%s --defaults-extra-file=%s %s < %s 2>&1',
+        escapeshellcmd($mysql),
+        escapeshellarg($tmpcnf),
+        escapeshellarg($dbName),
+        escapeshellarg($tempFiltered)
+    );
+
+    exec($cmd, $output, $returnCode);
+    @unlink($tmpcnf);
+    @unlink($tempFiltered);
+
+    if ($returnCode === 0) {
+        return [
+            'success' => true,
+            'message' => 'Selective restore completed for ' . count($tables) . ' table(s)',
+            'tables' => $tables
+        ];
+    }
+
+    return [
+        'success' => false,
+        'message' => 'Restore failed',
+        'output' => implode("\n", $output)
+    ];
+}
+
+function fm_restore_by_category($backupFilepath, $categories, $targetDb = null) {
+    if (empty($categories) || !is_array($categories)) {
+        return ['success' => false, 'message' => 'No categories specified'];
+    }
+
+    $tableCategories = fm_get_table_categories();
+    $tables = [];
+
+    foreach ($categories as $category) {
+        if (isset($tableCategories[$category])) {
+            $tables = array_merge($tables, $tableCategories[$category]);
+        }
+    }
+
+    $tables = array_unique($tables);
+
+    if (empty($tables)) {
+        return ['success' => false, 'message' => 'No tables found for specified categories'];
+    }
+
+    return fm_restore_selective_tables($backupFilepath, $tables, $targetDb);
+}
+
 function fm_cleanup_old_backups() {
     $cfg = fm_get_config();
     $cutoffDate = date('Y-m-d H:i:s', strtotime('-' . $cfg['backup_retention_days'] . ' days'));

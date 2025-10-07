@@ -341,14 +341,22 @@ try {
                 exit;
             }
 
-            $fullPath = fm_get_local_dir() . '/' . ltrim($path, '/');
+            $backupDir = fm_get_backup_dir();
+            $localDir = fm_get_local_dir();
+
+            $fullPath = $localDir . '/' . ltrim($path, '/');
+
+            if (!file_exists($fullPath)) {
+                $fullPath = $backupDir . '/' . basename($path);
+            }
 
             if (!file_exists($fullPath)) {
                 echo json_encode(['status' => 404, 'error' => 'File not found']);
                 exit;
             }
 
-            $remoteKey = 'files/' . ltrim($path, '/');
+            $isBackup = strpos(realpath($fullPath), realpath($backupDir)) === 0;
+            $remoteKey = $isBackup ? 'backups/' . basename($path) : 'files/' . ltrim($path, '/');
 
             if ($mode === 'immediate') {
                 $result = fm_upload_to_r2($fullPath, $remoteKey);
@@ -522,16 +530,19 @@ try {
                 exit;
             }
 
+            $forceSync = isset($_GET['force_sync']) && $_GET['force_sync'] === '1';
             $metadataFile = fm_get_backup_dir() . '/r2_backups_metadata.json';
             $backups = [];
 
-            if (file_exists($metadataFile)) {
+            if (!$forceSync && file_exists($metadataFile)) {
                 $content = file_get_contents($metadataFile);
                 $data = json_decode($content, true);
                 if ($data && isset($data['backups'])) {
                     $backups = $data['backups'];
                 }
-            } else {
+            }
+
+            if ($forceSync || empty($backups)) {
                 $s3 = fm_init_s3();
                 if ($s3) {
                     try {
@@ -570,6 +581,55 @@ try {
             echo json_encode(['status' => 200, 'backups' => $backups]);
             exit;
 
+        case 'sync_r2_backups':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $s3 = fm_init_s3();
+            if (!$s3) {
+                echo json_encode(['status' => 500, 'error' => 'R2 not configured']);
+                exit;
+            }
+
+            try {
+                $cfg = fm_get_config();
+                $result = $s3->listObjectsV2([
+                    'Bucket' => $cfg['r2_bucket'],
+                    'Prefix' => 'backups/'
+                ]);
+
+                $backups = [];
+                if (isset($result['Contents'])) {
+                    foreach ($result['Contents'] as $obj) {
+                        if (preg_match('/\.(sql|sql\.gz)$/i', $obj['Key'])) {
+                            $backups[] = [
+                                'key' => $obj['Key'],
+                                'name' => basename($obj['Key']),
+                                'size' => $obj['Size'],
+                                'modified' => $obj['LastModified']->format('Y-m-d H:i:s')
+                            ];
+                        }
+                    }
+                }
+
+                usort($backups, function($a, $b) {
+                    return strtotime($b['modified']) - strtotime($a['modified']);
+                });
+
+                $metadataFile = fm_get_backup_dir() . '/r2_backups_metadata.json';
+                file_put_contents($metadataFile, json_encode([
+                    'updated_at' => date('Y-m-d H:i:s'),
+                    'backups' => $backups
+                ], JSON_PRETTY_PRINT));
+
+                echo json_encode(['status' => 200, 'message' => 'Synced successfully', 'count' => count($backups)]);
+            } catch (Exception $e) {
+                echo json_encode(['status' => 500, 'error' => $e->getMessage()]);
+            }
+            exit;
+
         // Restore database from local backup
         case 'restore_db_local':
             if (!_fm_is_admin()) {
@@ -582,6 +642,7 @@ try {
             $targetDb = $_POST['target_db'] ?? '';
             $mode = $_POST['mode'] ?? 'full';
             $tables = isset($_POST['tables']) ? (is_array($_POST['tables']) ? $_POST['tables'] : explode(',', $_POST['tables'])) : [];
+            $categories = isset($_POST['categories']) ? (is_array($_POST['categories']) ? $_POST['categories'] : explode(',', $_POST['categories'])) : [];
 
             if (empty($file)) {
                 echo json_encode(['status' => 400, 'error' => 'Missing file parameter']);
@@ -605,7 +666,9 @@ try {
 
             $snapshot = fm_create_db_dump('pre_restore_snapshot');
 
-            if ($mode === 'selective' && !empty($tables)) {
+            if ($mode === 'category' && !empty($categories)) {
+                $result = fm_restore_by_category($fullPath, $categories, $targetDb);
+            } elseif ($mode === 'selective' && !empty($tables)) {
                 $result = fm_restore_selective_tables($fullPath, $tables, $targetDb);
             } else {
                 $result = fm_restore_sql_gz_local($fullPath, $targetDb);
@@ -615,6 +678,55 @@ try {
                 echo json_encode(['status' => 200, 'message' => $result['message']]);
             } else {
                 echo json_encode(['status' => 500, 'error' => $result['message']]);
+            }
+            exit;
+
+        case 'get_table_categories':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $categories = fm_get_table_categories();
+            echo json_encode(['status' => 200, 'categories' => $categories]);
+            exit;
+
+        case 'save_file_content':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $path = $_POST['path'] ?? '';
+            $content = $_POST['content'] ?? '';
+
+            if (empty($path)) {
+                echo json_encode(['status' => 400, 'error' => 'Missing path parameter']);
+                exit;
+            }
+
+            $baseDir = fm_get_local_dir();
+            $fullPath = $baseDir . '/' . ltrim($path, '/');
+
+            if (!file_exists($fullPath)) {
+                echo json_encode(['status' => 404, 'error' => 'File not found']);
+                exit;
+            }
+
+            $baseDirReal = realpath($baseDir);
+            $fullPathReal = realpath($fullPath);
+
+            if (strpos($fullPathReal, $baseDirReal) !== 0) {
+                echo json_encode(['status' => 403, 'error' => 'Access denied']);
+                exit;
+            }
+
+            if (file_put_contents($fullPath, $content) !== false) {
+                $userId = _fm_user_id();
+                fm_log_activity($userId, null, 'edit', ['path' => $path, 'size' => strlen($content)]);
+                echo json_encode(['status' => 200, 'message' => 'File saved successfully']);
+            } else {
+                echo json_encode(['status' => 500, 'error' => 'Failed to save file']);
             }
             exit;
 

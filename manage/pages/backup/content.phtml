@@ -411,6 +411,11 @@ if (! (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) ) { echo "permission denie
           <div class="backup-action-title">Run Auto Backup</div>
           <div class="backup-action-desc">Execute the automated backup process</div>
         </button>
+        <button class="backup-action-card" id="btn-sync-r2" style="background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);">
+          <div class="backup-action-icon"><i class="bi bi-cloud-arrow-down"></i></div>
+          <div class="backup-action-title">Sync R2 Backups</div>
+          <div class="backup-action-desc">Refresh backup list from R2 cloud storage</div>
+        </button>
         <button class="backup-action-card warning" id="btn-cleanup">
           <div class="backup-action-icon"><i class="bi bi-trash3"></i></div>
           <div class="backup-action-title">Cleanup Old Backups</div>
@@ -630,15 +635,148 @@ jQuery(function($){
 
   $(document).on('click', '.btn-restore', function(){
     const file = $(this).data('file');
-    if (!confirm('CAUTION: This will restore the database from this backup.\n\nFile: ' + file + '\n\nA snapshot of the current database will be created before restoration. Continue?')) return;
+    showRestoreModal(file);
+  });
 
-    $.post(API + '&s=restore_db_local', { file: file, confirm_token: 'RESTORE_NOW' }, function(res){
-      if (res.status==200) {
-        alert('Database restored successfully!\n\n' + (res.message || ''));
-      } else {
-        alert('Restore failed: ' + (res.error || 'Unknown error'));
+  function showRestoreModal(file) {
+    $.get(API + '&s=get_table_categories', function(res){
+      if (res.status !== 200) {
+        alert('Failed to load categories');
+        return;
       }
+
+      const categories = res.categories || {};
+      let categoriesHtml = '';
+
+      Object.keys(categories).forEach(function(cat){
+        const tables = categories[cat];
+        categoriesHtml += `
+          <div style="margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" class="restore-category" data-category="${cat}" style="width:18px;height:18px">
+              <span style="font-weight:500">${cat}</span>
+              <span style="color:#6b7280;font-size:12px">(${tables.length} tables)</span>
+            </label>
+            <div style="margin-left:26px;font-size:12px;color:#9ca3af">${tables.join(', ')}</div>
+          </div>
+        `;
+      });
+
+      const modal = `
+        <div id="restore-modal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000">
+          <div style="background:#fff;border-radius:12px;padding:24px;max-width:700px;width:90%;max-height:90vh;overflow-y:auto">
+            <h3 style="margin:0 0 20px 0;font-size:20px;font-weight:600">Restore Database</h3>
+            <div style="margin-bottom:20px;padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b">
+              <strong>⚠ Warning:</strong> This will restore data from the backup. A pre-restore snapshot will be created automatically.
+            </div>
+            <div style="margin-bottom:16px">
+              <strong>Backup File:</strong> ${file}
+            </div>
+            <div style="margin-bottom:20px">
+              <label style="display:block;margin-bottom:12px;font-weight:500">Restore Mode:</label>
+              <select id="restore-mode" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px">
+                <option value="full">Full Restore (All Tables)</option>
+                <option value="category">Category-Based Restore</option>
+              </select>
+            </div>
+            <div id="category-selection" style="display:none;margin-bottom:20px;border:1px solid #e5e7eb;border-radius:8px;padding:16px;max-height:300px;overflow-y:auto">
+              <div style="margin-bottom:12px;display:flex;gap:8px">
+                <button id="select-all-categories" class="backup-btn">Select All</button>
+                <button id="deselect-all-categories" class="backup-btn">Deselect All</button>
+              </div>
+              ${categoriesHtml}
+            </div>
+            <div style="display:flex;gap:12px;justify-content:flex-end">
+              <button id="cancel-restore" class="backup-btn">Cancel</button>
+              <button id="confirm-restore" class="backup-btn backup-btn-warning">Restore Database</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      $('body').append(modal);
+
+      $('#restore-mode').on('change', function(){
+        if ($(this).val() === 'category') {
+          $('#category-selection').show();
+        } else {
+          $('#category-selection').hide();
+        }
+      });
+
+      $('#select-all-categories').on('click', function(){
+        $('.restore-category').prop('checked', true);
+      });
+
+      $('#deselect-all-categories').on('click', function(){
+        $('.restore-category').prop('checked', false);
+      });
+
+      $('#cancel-restore').on('click', function(){
+        $('#restore-modal').remove();
+      });
+
+      $('#confirm-restore').on('click', function(){
+        const mode = $('#restore-mode').val();
+        const selectedCategories = [];
+
+        if (mode === 'category') {
+          $('.restore-category:checked').each(function(){
+            selectedCategories.push($(this).data('category'));
+          });
+
+          if (selectedCategories.length === 0) {
+            alert('Please select at least one category');
+            return;
+          }
+        }
+
+        if (!confirm('FINAL CONFIRMATION: Restore database now?')) return;
+
+        const postData = {
+          file: file,
+          confirm_token: 'RESTORE_NOW',
+          mode: mode
+        };
+
+        if (mode === 'category') {
+          postData.categories = selectedCategories;
+        }
+
+        $('#confirm-restore').prop('disabled', true).text('Restoring...');
+
+        $.post(API + '&s=restore_db_local', postData, function(res){
+          $('#restore-modal').remove();
+          if (res.status == 200) {
+            alert('Database restored successfully!\n\n' + (res.message || ''));
+            fetchBackups();
+          } else {
+            alert('Restore failed: ' + (res.error || 'Unknown error'));
+          }
+        }, 'json').fail(function(){
+          $('#restore-modal').remove();
+          alert('Network error occurred');
+        });
+      });
     }, 'json');
+  }
+
+  $('#btn-sync-r2').click(function(){
+    if (!confirm('Sync backup list from R2 cloud storage? This will fetch the latest backup list.')) return;
+    $(this).prop('disabled', true);
+
+    $.post(API + '&s=sync_r2_backups', {}, function(res){
+      $('#btn-sync-r2').prop('disabled', false);
+      if (res.status == 200) {
+        alert('Synced successfully! Found ' + (res.count || 0) + ' backup(s)');
+        fetchBackups();
+      } else {
+        alert('Sync failed: ' + (res.error || 'Unknown error'));
+      }
+    }, 'json').fail(function(){
+      $('#btn-sync-r2').prop('disabled', false);
+      alert('Network error occurred');
+    });
   });
 
   let searchTimeout;

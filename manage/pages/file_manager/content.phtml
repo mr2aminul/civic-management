@@ -879,6 +879,8 @@ if ($tab == 'settings') {
 
 <div id="fm-notifications-container" style="position:fixed;top:80px;right:24px;z-index:10001"></div>
 
+<?php include __DIR__ . '/file_preview_editor.phtml'; ?>
+
 <script>
 jQuery(function($){
   const API = Wo_Ajax_Requests_File() + '?f=file_manager';
@@ -1435,7 +1437,13 @@ jQuery(function($){
           }
         }, 'json');
       } else if (action === 'preview' && type === 'file') {
-        openPreview(path);
+        const fileName = path.split('/').pop();
+        window.fileManagerAPI = API;
+        if (typeof window.openFilePreview === 'function') {
+          window.openFilePreview(path, fileName);
+        } else {
+          openPreview(path);
+        }
       }
     }
   });
