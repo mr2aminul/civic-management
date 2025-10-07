@@ -278,10 +278,24 @@
       body.innerHTML = '<iframe class="fpe-iframe" src="' + url + '"></iframe>';
     }
     else if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
-      const officeViewerUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(url);
-      body.innerHTML = '<iframe class="fpe-iframe" src="' + officeViewerUrl + '"></iframe>';
-      editBtn.style.display = 'inline-flex';
-      editBtn.onclick = () => openGoogleDocsEditor(url, ext);
+      // Use Google Docs Viewer for embedded preview
+      const googleViewerUrl = 'https://docs.google.com/viewer?url=' + encodeURIComponent(url) + '&embedded=true';
+      body.innerHTML = '<iframe class="fpe-iframe" src="' + googleViewerUrl + '"></iframe>';
+
+      // Show edit button for supported formats
+      if (['xlsx', 'xls'].includes(ext)) {
+        editBtn.style.display = 'inline-flex';
+        editBtn.textContent = 'Edit in Google Sheets';
+        editBtn.onclick = () => openInGoogleEditor(url, 'sheets');
+      } else if (['docx', 'doc'].includes(ext)) {
+        editBtn.style.display = 'inline-flex';
+        editBtn.textContent = 'Edit in Google Docs';
+        editBtn.onclick = () => openInGoogleEditor(url, 'docs');
+      } else if (['pptx', 'ppt'].includes(ext)) {
+        editBtn.style.display = 'inline-flex';
+        editBtn.textContent = 'Edit in Google Slides';
+        editBtn.onclick = () => openInGoogleEditor(url, 'slides');
+      }
     }
     else if (['txt', 'json', 'js', 'html', 'css', 'php', 'xml', 'md', 'sql', 'log'].includes(ext)) {
       fetch(url)
@@ -377,21 +391,34 @@
     });
   }
 
-  function openGoogleDocsEditor(fileUrl, ext) {
-    const editorMap = {
-      'doc': 'https://docs.google.com/document/create',
-      'docx': 'https://docs.google.com/document/create',
-      'xls': 'https://sheets.google.com/create',
-      'xlsx': 'https://sheets.google.com/create',
-      'ppt': 'https://slides.google.com/create',
-      'pptx': 'https://slides.google.com/create'
+  function openInGoogleEditor(fileUrl, editorType) {
+    // Google Docs/Sheets/Slides can open files via special URLs
+    const baseUrls = {
+      'docs': 'https://docs.google.com/document/d/',
+      'sheets': 'https://docs.google.com/spreadsheets/d/',
+      'slides': 'https://docs.google.com/presentation/d/'
     };
 
-    const editorUrl = editorMap[ext];
-    if (editorUrl) {
-      window.open(editorUrl, '_blank');
-      alert('File will be downloaded. Open it in the Google editor that just opened.');
-      window.location = currentUrl;
+    // For external files, Google provides an "open" URL that imports the file
+    const openUrl = `https://drive.google.com/viewerng/viewer?url=${encodeURIComponent(fileUrl)}`;
+
+    // Open in new window/tab
+    const editorWindow = window.open(openUrl, '_blank');
+
+    if (!editorWindow) {
+      alert('Please allow popups to edit files in Google ' + editorType.charAt(0).toUpperCase() + editorType.slice(1));
+    } else {
+      // Show message about how to edit
+      const message = document.createElement('div');
+      message.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#4CAF50;color:white;padding:16px 24px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:30000;max-width:400px;font-size:14px;';
+      message.innerHTML = `<strong>Editing in Google ${editorType.charAt(0).toUpperCase() + editorType.slice(1)}</strong><br>
+      The document has been opened. To edit:<br>
+      1. Click "Open with Google ${editorType.charAt(0).toUpperCase() + editorType.slice(1)}"<br>
+      2. Make your changes<br>
+      3. Download and re-upload the file`;
+
+      document.body.appendChild(message);
+      setTimeout(() => message.remove(), 8000);
     }
   }
 
