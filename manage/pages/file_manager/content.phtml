@@ -511,9 +511,227 @@ if ($tab == 'settings') {
   .fm-list-item { grid-template-columns: 40px 1fr 80px; }
   .fm-list-item > div:nth-child(4), .fm-list-item > div:nth-child(5) { display: none; }
   .fm-list-header > div:nth-child(4), .fm-list-header > div:nth-child(5) { display: none; }
+  .fm-upload-popup { bottom: 70px !important; right: 10px !important; max-width: 90% !important; }
 }
 .wrapper .page-content {
     padding: 0rem !important;
+}
+
+.fm-upload-popup {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 380px;
+  max-height: 500px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  z-index: 10000;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.3s ease;
+}
+
+.fm-upload-popup.active {
+  display: flex;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.fm-upload-popup-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f9fafb;
+}
+
+.fm-upload-popup-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fm-upload-popup-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.fm-upload-popup-btn {
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.fm-upload-popup-btn:hover {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+.fm-upload-popup-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.fm-upload-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f9fafb;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+}
+
+.fm-upload-item.completed {
+  background: #ecfdf5;
+}
+
+.fm-upload-item.error {
+  background: #fef2f2;
+}
+
+.fm-upload-item-icon {
+  font-size: 24px;
+  color: #3b82f6;
+}
+
+.fm-upload-item.completed .fm-upload-item-icon {
+  color: #10b981;
+}
+
+.fm-upload-item.error .fm-upload-item-icon {
+  color: #ef4444;
+}
+
+.fm-upload-item-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.fm-upload-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fm-upload-item-progress {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+.fm-upload-item-bar {
+  width: 100%;
+  height: 4px;
+  background: #e5e7eb;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.fm-upload-item-bar-fill {
+  height: 100%;
+  background: #3b82f6;
+  transition: width 0.3s ease;
+}
+
+.fm-upload-item.completed .fm-upload-item-bar-fill {
+  background: #10b981;
+}
+
+.fm-upload-item.error .fm-upload-item-bar-fill {
+  background: #ef4444;
+}
+
+.fm-notification {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  min-width: 320px;
+  max-width: 400px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  z-index: 10001;
+  animation: slideInRight 0.3s ease;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(400px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.fm-notification.success {
+  border-left: 4px solid #10b981;
+}
+
+.fm-notification.error {
+  border-left: 4px solid #ef4444;
+}
+
+.fm-notification-icon {
+  font-size: 20px;
+  margin-top: 2px;
+}
+
+.fm-notification.success .fm-notification-icon {
+  color: #10b981;
+}
+
+.fm-notification.error .fm-notification-icon {
+  color: #ef4444;
+}
+
+.fm-notification-content {
+  flex: 1;
+}
+
+.fm-notification-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 4px;
+}
+
+.fm-notification-message {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.fm-notification-close {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.fm-notification-close:hover {
+  color: #1f2937;
 }
 </style>
 
@@ -637,6 +855,29 @@ if ($tab == 'settings') {
     <div id="fm-preview-area"></div>
   </div>
 </div>
+
+<div class="fm-upload-popup" id="fm-upload-popup">
+  <div class="fm-upload-popup-header">
+    <div class="fm-upload-popup-title">
+      <i class="bi bi-cloud-upload"></i>
+      <span id="fm-upload-popup-count">0 uploads</span>
+    </div>
+    <div class="fm-upload-popup-actions">
+      <button class="fm-upload-popup-btn" id="fm-upload-minimize" title="Minimize">
+        <i class="bi bi-dash"></i>
+      </button>
+      <button class="fm-upload-popup-btn" id="fm-upload-clear" title="Clear completed">
+        <i class="bi bi-x-circle"></i>
+      </button>
+      <button class="fm-upload-popup-btn" id="fm-upload-close" title="Close">
+        <i class="bi bi-x"></i>
+      </button>
+    </div>
+  </div>
+  <div class="fm-upload-popup-body" id="fm-upload-popup-body"></div>
+</div>
+
+<div id="fm-notifications-container" style="position:fixed;top:80px;right:24px;z-index:10001"></div>
 
 <script>
 jQuery(function($){
@@ -932,33 +1173,172 @@ jQuery(function($){
     if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
   });
 
+  let uploadQueue = [];
+  let uploadCounter = 0;
+
+  function showNotification(message, type = 'success') {
+    const id = 'notif-' + Date.now();
+    const $notif = $(`
+      <div class="fm-notification ${type}" id="${id}">
+        <div class="fm-notification-icon">
+          <i class="bi ${type === 'success' ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}"></i>
+        </div>
+        <div class="fm-notification-content">
+          <div class="fm-notification-message">${message}</div>
+        </div>
+        <button class="fm-notification-close">&times;</button>
+      </div>
+    `);
+
+    $('#fm-notifications-container').append($notif);
+
+    $notif.find('.fm-notification-close').on('click', function(){
+      $notif.remove();
+    });
+
+    setTimeout(() => $notif.remove(), 5000);
+  }
+
+  function pos5_success_noti(message) { showNotification(message, 'success'); }
+  function pos4_error_noti(message) { showNotification(message, 'error'); }
+
+  function showUploadPopup() {
+    $('#fm-upload-popup').addClass('active');
+  }
+
+  function hideUploadPopup() {
+    $('#fm-upload-popup').removeClass('active');
+  }
+
+  function updateUploadCount() {
+    const total = uploadQueue.length;
+    const completed = uploadQueue.filter(u => u.status === 'completed' || u.status === 'error').length;
+    $('#fm-upload-popup-count').text(completed + ' / ' + total + ' complete');
+  }
+
+  function addUploadItem(file) {
+    const id = 'upload-' + (++uploadCounter);
+    const item = {
+      id: id,
+      file: file,
+      status: 'pending',
+      progress: 0
+    };
+
+    uploadQueue.push(item);
+
+    const $item = $(`
+      <div class="fm-upload-item" id="${id}">
+        <div class="fm-upload-item-icon">
+          <i class="bi bi-file-earmark"></i>
+        </div>
+        <div class="fm-upload-item-details">
+          <div class="fm-upload-item-name">${escapeHtml(file.name)}</div>
+          <div class="fm-upload-item-progress">Preparing...</div>
+          <div class="fm-upload-item-bar">
+            <div class="fm-upload-item-bar-fill" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    `);
+
+    $('#fm-upload-popup-body').append($item);
+    showUploadPopup();
+    updateUploadCount();
+
+    return item;
+  }
+
+  function updateUploadItem(id, status, progress, message) {
+    const $item = $('#' + id);
+    const item = uploadQueue.find(u => u.id === id);
+
+    if (item) {
+      item.status = status;
+      item.progress = progress;
+    }
+
+    $item.removeClass('pending completed error').addClass(status);
+    $item.find('.fm-upload-item-progress').text(message || '');
+    $item.find('.fm-upload-item-bar-fill').css('width', progress + '%');
+
+    updateUploadCount();
+  }
+
   function uploadFiles(files){
+    const fileArray = Array.from(files);
+
+    fileArray.forEach(file => {
+      const item = addUploadItem(file);
+      uploadSingleFile(item);
+    });
+  }
+
+  function uploadSingleFile(item) {
     const form = new FormData();
-    Array.from(files).forEach(f => form.append('files[]', f));
+    form.append('files[]', item.file);
     form.append('subdir', currentPath);
+
+    updateUploadItem(item.id, 'pending', 10, 'Uploading...');
+
     $.ajax({
       url: API + '&s=upload_local',
       type: 'POST',
       data: form,
       processData: false,
       contentType: false,
+      xhr: function() {
+        const xhr = new window.XMLHttpRequest();
+        xhr.upload.addEventListener('progress', function(e){
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 90) + 10;
+            updateUploadItem(item.id, 'pending', percent, 'Uploading...');
+          }
+        });
+        return xhr;
+      },
       success: res => {
         if (res && res.status === 200) {
-          alert('Upload successful!');
-          loadFolder(currentPath);
-          loadQuota();
-        } else alert('Upload failed');
+          updateUploadItem(item.id, 'completed', 100, 'Complete');
+
+          const allCompleted = uploadQueue.every(u => u.status === 'completed' || u.status === 'error');
+          if (allCompleted) {
+            pos5_success_noti('All uploads completed');
+            loadFolder(currentPath);
+            loadQuota();
+          }
+        } else {
+          updateUploadItem(item.id, 'error', 100, 'Failed');
+          pos4_error_noti('Upload failed: ' + item.file.name);
+        }
+      },
+      error: () => {
+        updateUploadItem(item.id, 'error', 100, 'Failed');
+        pos4_error_noti('Upload failed: ' + item.file.name);
       }
     });
   }
+
+  $('#fm-upload-close').on('click', hideUploadPopup);
+
+  $('#fm-upload-clear').on('click', function(){
+    uploadQueue = uploadQueue.filter(u => u.status === 'pending');
+    $('.fm-upload-item.completed, .fm-upload-item.error').remove();
+    updateUploadCount();
+    if (uploadQueue.length === 0) hideUploadPopup();
+  });
 
   $('#fm-new-folder-btn').on('click', function(){
     const name = prompt('Enter folder name:');
     if (!name) return;
     const path = currentPath ? currentPath + '/' + name : name;
     $.post(API + '&s=create_folder', { path }, res => {
-      if (res && res.status === 200) loadFolder(currentPath);
-      else alert('Failed to create folder');
+      if (res && res.status === 200) {
+        pos5_success_noti('Folder created successfully');
+        loadFolder(currentPath);
+      } else {
+        pos4_error_noti('Failed to create folder');
+      }
     }, 'json');
   });
 
@@ -1035,15 +1415,24 @@ jQuery(function($){
         loadFolder(path);
       } else if (action === 'download' && type === 'file') {
         window.location = API + '&s=download_local&file=' + encodeURIComponent(path);
+        pos5_success_noti('Download started');
       } else if (action === 'delete') {
         if (!confirm('Delete ' + path + '?')) return;
         $.post(API + '&s=delete_local', { path }, res => {
-          if (res && res.status === 200) loadFolder(currentPath);
-          else alert('Delete failed');
+          if (res && res.status === 200) {
+            pos5_success_noti(res.message || 'Deleted successfully');
+            loadFolder(currentPath);
+          } else {
+            pos4_error_noti(res.error || 'Delete failed');
+          }
         }, 'json');
       } else if (action === 'upload_r2') {
         $.post(API + '&s=upload_r2_from_local', { path, mode: 'enqueue' }, res => {
-          alert(res && res.status === 200 ? 'Enqueued for R2 upload' : 'Failed');
+          if (res && res.status === 200) {
+            pos5_success_noti(res.message || 'Queued for R2 upload');
+          } else {
+            pos4_error_noti(res.error || 'Failed to queue upload');
+          }
         }, 'json');
       } else if (action === 'preview' && type === 'file') {
         openPreview(path);

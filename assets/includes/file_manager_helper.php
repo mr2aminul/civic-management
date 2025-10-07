@@ -1330,6 +1330,65 @@ function fm_restore_sql_gz_local($filepath, $targetDb = null) {
     return fm_restore_sql_gz_local_php($filepath, $targetDb);
 }
 
+function fm_restore_selective_tables($filepath, $tableNames, $targetDb = null) {
+    global $db;
+    if (!file_exists($filepath)) return ['success' => false, 'message' => 'Backup file not found'];
+
+    $mysqli = (isset($db) && method_exists($db, 'mysqli')) ? $db->mysqli() : null;
+    if (!$mysqli) return ['success' => false, 'message' => 'No mysqli connection available'];
+
+    $dbName = $targetDb ?: (isset($db) && method_exists($db, 'getDbName') ? $db->getDbName() : (getenv('DB_NAME') ?: ''));
+    if (!$dbName) return ['success' => false, 'message' => 'Target database not specified'];
+
+    $gz = gzopen($filepath, 'rb');
+    if (!$gz) return ['success' => false, 'message' => 'Unable to open backup file'];
+
+    $currentTable = null;
+    $inTargetTable = false;
+    $tableData = [];
+    $buffer = '';
+
+    while (!gzeof($gz)) {
+        $line = gzgets($gz);
+        if ($line === false) break;
+
+        $buffer .= $line;
+
+        if (preg_match('/^DROP TABLE IF EXISTS `([^`]+)`/', $line, $matches)) {
+            $currentTable = $matches[1];
+            $inTargetTable = in_array($currentTable, $tableNames);
+            if ($inTargetTable) {
+                $tableData[$currentTable] = $line;
+            }
+        } elseif ($inTargetTable) {
+            $tableData[$currentTable] .= $line;
+        }
+
+        if (strlen($buffer) > 1024 * 1024) {
+            $buffer = '';
+        }
+    }
+    gzclose($gz);
+
+    $errors = [];
+    foreach ($tableData as $table => $sql) {
+        $sql = "USE `" . $mysqli->real_escape_string($dbName) . "`;\n" . $sql;
+        if (!$mysqli->multi_query($sql)) {
+            $errors[] = "Failed to restore table {$table}: " . $mysqli->error;
+            while ($mysqli->more_results() && $mysqli->next_result()) {}
+        } else {
+            do {
+                if ($res = $mysqli->store_result()) { $res->free(); }
+            } while ($mysqli->more_results() && $mysqli->next_result());
+        }
+    }
+
+    if (empty($errors)) {
+        return ['success' => true, 'message' => 'Selected tables restored successfully'];
+    }
+    return ['success' => false, 'message' => 'Restore completed with errors', 'errors' => $errors];
+}
+
 // ============================================
 // retention enforcement (unchanged behavior)
 // ============================================
@@ -1408,6 +1467,63 @@ function fm_get_file_url($relativePath) {
     return ['location' => 'local', 'url' => null];
 }
 
+function fm_stream_file_download($fullPath, $downloadName = '') {
+    if (!file_exists($fullPath)) {
+        header('HTTP/1.1 404 Not Found');
+        exit;
+    }
+
+    $fileName = $downloadName ?: basename($fullPath);
+
+    header('Content-Description: File Transfer');
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . basename($fileName) . '"');
+    header('Content-Length: ' . filesize($fullPath));
+    header('Cache-Control: must-revalidate');
+    header('Pragma: public');
+
+    readfile($fullPath);
+    exit;
+}
+
+function fm_sync_user_quota($userId) {
+    $baseDir = fm_get_local_dir();
+    $totalSize = 0;
+
+    $files = fm_query("SELECT filename, size FROM fm_files WHERE user_id = ? AND is_deleted = 0", [$userId]);
+    foreach ($files as $file) {
+        $path = $baseDir . '/' . $file['filename'];
+        if (file_exists($path)) {
+            $totalSize += filesize($path);
+        }
+    }
+
+    fm_update('fm_user_quotas', [
+        'used_bytes' => $totalSize,
+        'updated_at' => date('Y-m-d H:i:s')
+    ], ['user_id' => $userId]);
+
+    return $totalSize;
+}
+
+function fm_calculate_total_storage() {
+    $baseDir = fm_get_local_dir();
+    $totalSize = 0;
+
+    if (is_dir($baseDir)) {
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($baseDir, RecursiveDirectoryIterator::SKIP_DOTS)
+        );
+
+        foreach ($iterator as $file) {
+            if ($file->isFile()) {
+                $totalSize += $file->getSize();
+            }
+        }
+    }
+
+    return $totalSize;
+}
 
 if (!function_exists('fm_format_bytes')) {
     function fm_format_bytes($bytes, $precision = 2) {

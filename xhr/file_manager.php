@@ -237,7 +237,13 @@ try {
             }
 
             $baseDir = fm_get_local_dir();
+            $backupDir = fm_get_backup_dir();
+
             $fullPath = $baseDir . '/' . ltrim($file, '/');
+
+            if (!file_exists($fullPath) || !is_file($fullPath)) {
+                $fullPath = $backupDir . '/' . basename($file);
+            }
 
             if (!file_exists($fullPath) || !is_file($fullPath)) {
                 header('HTTP/1.1 404 Not Found');
@@ -245,7 +251,11 @@ try {
                 exit;
             }
 
-            if (strpos(realpath($fullPath), realpath($baseDir)) !== 0) {
+            $baseDirReal = realpath($baseDir);
+            $backupDirReal = realpath($backupDir);
+            $fullPathReal = realpath($fullPath);
+
+            if (strpos($fullPathReal, $baseDirReal) !== 0 && strpos($fullPathReal, $backupDirReal) !== 0) {
                 header('HTTP/1.1 403 Forbidden');
                 echo 'Access denied';
                 exit;
@@ -506,6 +516,60 @@ try {
             echo json_encode(['status' => 200, 'files' => $backups]);
             exit;
 
+        case 'list_r2_backups':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $metadataFile = fm_get_backup_dir() . '/r2_backups_metadata.json';
+            $backups = [];
+
+            if (file_exists($metadataFile)) {
+                $content = file_get_contents($metadataFile);
+                $data = json_decode($content, true);
+                if ($data && isset($data['backups'])) {
+                    $backups = $data['backups'];
+                }
+            } else {
+                $s3 = fm_init_s3();
+                if ($s3) {
+                    try {
+                        $cfg = fm_get_config();
+                        $result = $s3->listObjectsV2([
+                            'Bucket' => $cfg['r2_bucket'],
+                            'Prefix' => 'backups/'
+                        ]);
+
+                        if (isset($result['Contents'])) {
+                            foreach ($result['Contents'] as $obj) {
+                                if (preg_match('/\.(sql|sql\.gz)$/i', $obj['Key'])) {
+                                    $backups[] = [
+                                        'key' => $obj['Key'],
+                                        'name' => basename($obj['Key']),
+                                        'size' => $obj['Size'],
+                                        'modified' => $obj['LastModified']->format('Y-m-d H:i:s')
+                                    ];
+                                }
+                            }
+                        }
+
+                        usort($backups, function($a, $b) {
+                            return strtotime($b['modified']) - strtotime($a['modified']);
+                        });
+
+                        file_put_contents($metadataFile, json_encode([
+                            'updated_at' => date('Y-m-d H:i:s'),
+                            'backups' => $backups
+                        ], JSON_PRETTY_PRINT));
+                    } catch (Exception $e) {
+                    }
+                }
+            }
+
+            echo json_encode(['status' => 200, 'backups' => $backups]);
+            exit;
+
         // Restore database from local backup
         case 'restore_db_local':
             if (!_fm_is_admin()) {
@@ -516,6 +580,8 @@ try {
             $file = $_POST['file'] ?? '';
             $confirmToken = $_POST['confirm_token'] ?? '';
             $targetDb = $_POST['target_db'] ?? '';
+            $mode = $_POST['mode'] ?? 'full';
+            $tables = isset($_POST['tables']) ? (is_array($_POST['tables']) ? $_POST['tables'] : explode(',', $_POST['tables'])) : [];
 
             if (empty($file)) {
                 echo json_encode(['status' => 400, 'error' => 'Missing file parameter']);
@@ -537,10 +603,13 @@ try {
                 exit;
             }
 
-            // Create pre-restore snapshot
             $snapshot = fm_create_db_dump('pre_restore_snapshot');
 
-            $result = fm_restore_sql_gz_local($fullPath, $targetDb);
+            if ($mode === 'selective' && !empty($tables)) {
+                $result = fm_restore_selective_tables($fullPath, $tables, $targetDb);
+            } else {
+                $result = fm_restore_sql_gz_local($fullPath, $targetDb);
+            }
 
             if ($result['success']) {
                 echo json_encode(['status' => 200, 'message' => $result['message']]);
@@ -843,29 +912,6 @@ try {
     exit;
 }
 
-// Helper: Stream file download
-if (!function_exists('fm_stream_file_download')) {
-    function fm_stream_file_download($fullPath, $downloadName = '') {
-        if (!file_exists($fullPath)) {
-            header('HTTP/1.1 404 Not Found');
-            exit;
-        }
-
-        $fileName = $downloadName ?: basename($fullPath);
-
-        header('Content-Description: File Transfer');
-        header('Content-Type: application/octet-stream');
-        header('Content-Disposition: attachment; filename="' . basename($fileName) . '"');
-        header('Content-Length: ' . filesize($fullPath));
-        header('Cache-Control: must-revalidate');
-        header('Pragma: public');
-
-        readfile($fullPath);
-        exit;
-    }
-}
-
-// Helper: Format bytes to human readable
 if (!function_exists('fm_format_bytes')) {
     function fm_format_bytes($bytes, $precision = 2) {
         if ($bytes <= 0) return '0 B';
