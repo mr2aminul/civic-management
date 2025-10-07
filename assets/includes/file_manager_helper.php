@@ -56,13 +56,45 @@ function fm_get_config() {
 // Database Helpers
 // ============================================
 function fm_get_db() {
-    global $db, $sqlConnect;
+    global $db, $sqlConnect, $_FM_DB_CONNECTION;
+
+    // Check for JoshCam MysqliDb wrapper
     if (isset($db) && method_exists($db, 'where')) {
         return ['type' => 'joshcam', 'db' => $db];
     }
+
+    // Check for global mysqli connection
     if (isset($sqlConnect) && $sqlConnect instanceof mysqli) {
         return ['type' => 'mysqli', 'db' => $sqlConnect];
     }
+
+    // Check for cached connection
+    if (isset($_FM_DB_CONNECTION) && $_FM_DB_CONNECTION instanceof mysqli) {
+        return ['type' => 'mysqli', 'db' => $_FM_DB_CONNECTION];
+    }
+
+    // Create fallback connection using environment variables
+    $host = getenv('DB_HOST') ?: 'localhost';
+    $user = getenv('DB_USER') ?: '';
+    $pass = getenv('DB_PASSWORD') ?: '';
+    $name = getenv('DB_NAME') ?: '';
+
+    if ($user && $name) {
+        try {
+            $mysqli = new mysqli($host, $user, $pass, $name);
+            if ($mysqli->connect_error) {
+                fm_log_error('Database connection failed: ' . $mysqli->connect_error);
+                return null;
+            }
+            $mysqli->set_charset('utf8mb4');
+            $_FM_DB_CONNECTION = $mysqli;
+            return ['type' => 'mysqli', 'db' => $mysqli];
+        } catch (Exception $e) {
+            fm_log_error('Database exception: ' . $e->getMessage());
+            return null;
+        }
+    }
+
     return null;
 }
 
@@ -1689,6 +1721,64 @@ if (!function_exists('fm_format_bytes')) {
         $bytes /= (1 << (10 * $pow));
 
         return round($bytes, $precision) . ' ' . $units[$pow];
+    }
+}
+
+// ============================================
+// Error Logging
+// ============================================
+if (!function_exists('fm_log_error')) {
+    function fm_log_error($message, $context = []) {
+        $logDir = __DIR__ . '/../../logs';
+        if (!file_exists($logDir)) {
+            @mkdir($logDir, 0755, true);
+        }
+
+        $logFile = $logDir . '/file_manager_' . date('Y-m-d') . '.log';
+        $timestamp = date('Y-m-d H:i:s');
+        $contextStr = !empty($context) ? ' | Context: ' . json_encode($context) : '';
+        $logMessage = "[{$timestamp}] ERROR: {$message}{$contextStr}\n";
+
+        @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
+
+        // Also log to PHP error log if available
+        if (function_exists('error_log')) {
+            error_log("FM_ERROR: {$message}");
+        }
+    }
+}
+
+if (!function_exists('fm_log_info')) {
+    function fm_log_info($message, $context = []) {
+        $logDir = __DIR__ . '/../../logs';
+        if (!file_exists($logDir)) {
+            @mkdir($logDir, 0755, true);
+        }
+
+        $logFile = $logDir . '/file_manager_' . date('Y-m-d') . '.log';
+        $timestamp = date('Y-m-d H:i:s');
+        $contextStr = !empty($context) ? ' | Context: ' . json_encode($context) : '';
+        $logMessage = "[{$timestamp}] INFO: {$message}{$contextStr}\n";
+
+        @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
+    }
+}
+
+if (!function_exists('fm_log_debug')) {
+    function fm_log_debug($message, $context = []) {
+        if (getenv('FM_DEBUG') !== '1') return;
+
+        $logDir = __DIR__ . '/../../logs';
+        if (!file_exists($logDir)) {
+            @mkdir($logDir, 0755, true);
+        }
+
+        $logFile = $logDir . '/file_manager_debug_' . date('Y-m-d') . '.log';
+        $timestamp = date('Y-m-d H:i:s');
+        $contextStr = !empty($context) ? ' | Context: ' . json_encode($context) : '';
+        $logMessage = "[{$timestamp}] DEBUG: {$message}{$contextStr}\n";
+
+        @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
     }
 }
 

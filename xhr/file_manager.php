@@ -29,13 +29,29 @@ function _fm_user_id() {
     return isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
 }
 
+// Enable detailed error reporting for debugging
+if (getenv('FM_DEBUG') === '1') {
+    ini_set('display_errors', 1);
+    ini_set('display_startup_errors', 1);
+    error_reporting(E_ALL);
+}
+
 // Include helper
 $helper = __DIR__ . '/../assets/includes/file_manager_helper.php';
 if (!file_exists($helper)) {
-    echo json_encode(['status' => 500, 'error' => 'Helper file not found: ' . $helper]);
+    $error = 'Helper file not found: ' . $helper;
+    error_log($error);
+    echo json_encode(['status' => 500, 'error' => $error]);
     exit;
 }
 require_once $helper;
+
+// Log API call
+fm_log_debug('API Call', [
+    'action' => $_GET['s'] ?? $_POST['s'] ?? 'unknown',
+    'method' => $_SERVER['REQUEST_METHOD'] ?? 'unknown',
+    'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
+]);
 
 // Get action
 $action = $_GET['s'] ?? $_POST['s'] ?? '';
@@ -1018,10 +1034,26 @@ try {
             exit;
     }
 } catch (Exception $e) {
-    echo json_encode([
+    $errorDetails = [
+        'message' => $e->getMessage(),
+        'file' => $e->getFile(),
+        'line' => $e->getLine(),
+        'trace' => $e->getTraceAsString()
+    ];
+
+    fm_log_error('API Exception', $errorDetails);
+
+    $response = [
         'status' => 500,
         'error' => 'Server error: ' . $e->getMessage()
-    ]);
+    ];
+
+    // Include debug info if FM_DEBUG is enabled
+    if (getenv('FM_DEBUG') === '1') {
+        $response['debug'] = $errorDetails;
+    }
+
+    echo json_encode($response);
     exit;
 }
 
