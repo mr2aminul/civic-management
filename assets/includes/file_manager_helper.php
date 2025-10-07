@@ -114,7 +114,12 @@ function fm_insert($table, $data) {
     $values = array_values($data);
     $placeholders = implode(',', array_fill(0, count($keys), '?'));
     $sql = "INSERT INTO `$table` (`" . implode('`, `', $keys) . "`) VALUES ($placeholders)";
-    return fm_query($sql, $values);
+    $result = fm_query($sql, $values);
+
+    if (is_array($result) && isset($result['insert_id'])) {
+        return $result['insert_id'];
+    }
+    return $result;
 }
 
 function fm_update($table, $data, $where) {
