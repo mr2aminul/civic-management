@@ -8,7 +8,7 @@ if (!defined('ROOT_DIR')) {
     define('ROOT_DIR', __DIR__ . '/');
 }
 
-require_once ROOT_DIR . 'assets/includes/file_manager_helper.php';
+require_once ROOT_DIR . 'assets/init.php';
 
 echo "[" . date('Y-m-d H:i:s') . "] Starting cleanup tasks...\n";
 

@@ -1,14 +1,14 @@
 <?php
 /**
  * Cron Job: Automated Database Backup
- * Run every 6 hours: 0 */6 * * *
+ * Run every 6 hours: 
  */
 
 if (!defined('ROOT_DIR')) {
     define('ROOT_DIR', __DIR__ . '/');
 }
 
-require_once ROOT_DIR . 'assets/includes/file_manager_helper.php';
+require_once ROOT_DIR . 'assets/init.php';
 
 echo "[" . date('Y-m-d H:i:s') . "] Starting automated backup...\n";
 

@@ -3,13 +3,19 @@ R2_SECRET_ACCESS_KEY=d24621ce0729f68776d155a3ead711679c249baafffd5a5dc581ddcf185
 R2_BUCKET=civic-management
 R2_ENDPOINT=https://90f483339efd91e1a8819e04ba6e31e6.r2.cloudflarestorage.com
 R2_ENDPOINT_DOMAIN=https://cdn.civicgroubd.com
-DB_BACKUP_LOCAL_DIR=/home/civicbd/civicgroup/backups
+
+DB_HOST=127.0.0.1
+DB_USER=civicbd_group
+DB_PASSWORD=?wjgo8;k=L~_QXPi8r
+DB_NAME=civicbd_group
+
 LOCAL_STORAGE_DIR=/home/civicbd/civicgroup/storage
+DB_BACKUP_LOCAL_DIR=/home/civicbd/civicgroup/backups
 DEFAULT_USER_QUOTA_GB=1
 AUTO_UPLOAD_TYPES=sql,zip,xlsx,docx,pdf
 AUTO_UPLOAD_PREFIXES=db_,sys_
-AUTO_BACKUP_TABLES=
-AUTO_BACKUP_ENABLED=0
+RECYCLE_RETENTION_DAYS=30
+BACKUP_RETENTION_DAYS=30
 
 
 

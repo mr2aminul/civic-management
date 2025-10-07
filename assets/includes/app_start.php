@@ -5,8 +5,8 @@ error_reporting(1);
 @ini_set("max_execution_time", 0);
 @ini_set("memory_limit", "-1");
 @set_time_limit(0);
-require_once 'config.php';
-require_once "assets/libraries/DB/vendor/autoload.php";
+require_once ROOT_DIR . '/config.php';
+require_once LIBS_DIR . "/DB/vendor/autoload.php";
 
 
 
@@ -399,7 +399,7 @@ $wo["marker"]                   = "?";
 if ($wo["config"]["seoLink"] == 0) {
     $wo["marker"] = "&";
 }
-require_once "assets/includes/data.php";
+require_once INCLUDES_DIR . "/data.php";
 $wo["emo"]                           = $emo;
 $wo["profile_picture_width_crop"]    = 150;
 $wo["profile_picture_height_crop"]   = 150;

@@ -1,14 +1,14 @@
 <?php
 /**
  * Cron Job: Process R2 Upload Queue
- * Run every 15 minutes: */15 * * * *
+ * Run every 15 minutes: 
  */
 
 if (!defined('ROOT_DIR')) {
     define('ROOT_DIR', __DIR__ . '/');
 }
 
-require_once ROOT_DIR . 'assets/includes/file_manager_helper.php';
+require_once ROOT_DIR . 'assets/init.php';
 
 echo "[" . date('Y-m-d H:i:s') . "] Processing R2 upload queue...\n";
 
