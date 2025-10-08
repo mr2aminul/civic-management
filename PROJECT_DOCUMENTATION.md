@@ -174,8 +174,6 @@ Background upload queue for R2 cloud storage.
 
 ### Database Migrations
 - `/migrations/001_file_manager_and_backup_system.sql` - Core tables
-- `/migrations/002_enhanced_file_manager_features.sql` - Enhanced features
-- `/migrations/003_complete_file_manager_enhancements.sql` - Complete enhancements
 - `/migrations/004_advanced_file_manager_features.sql` - Advanced features (Latest)
 
 ## Security Features
