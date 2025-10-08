@@ -1,61 +1,69 @@
 <!-- views/file_manager_api_setup.phtml -->
 <div class="card">
-  <div class="card-body">
-    <h4>API / R2 Configuration</h4>
-    <form id="env-form">
-      <div class="mb-2"><label>R2 Access Key</label><input name="R2_ACCESS_KEY_ID" class="form-control"></div>
-      <div class="mb-2"><label>R2 Secret Key</label><input name="R2_SECRET_ACCESS_KEY" class="form-control"></div>
-      <div class="mb-2"><label>R2 Bucket</label><input name="R2_BUCKET" class="form-control"></div>
-      <div class="mb-2"><label>R2 Endpoint</label><input name="R2_ENDPOINT" class="form-control"></div>
-      <div class="mb-2"><label>BACKUP_LOCAL_DIR</label><input name="BACKUP_LOCAL_DIR" class="form-control"></div>
-      <div class="mb-2"><label>DEFAULT_USER_QUOTA_GB</label><input name="DEFAULT_USER_QUOTA_GB" class="form-control"></div>
-      <div class="mb-2"><label>AUTO_UPLOAD_TYPES (comma)</label><input name="AUTO_UPLOAD_TYPES" class="form-control"></div>
-      <div class="mb-2"><label>AUTO_UPLOAD_PREFIXES (comma)</label><input name="AUTO_UPLOAD_PREFIXES" class="form-control"></div>
-      <div class="mb-2"><label>AUTO_BACKUP_TABLES (comma)</label><input name="AUTO_BACKUP_TABLES" class="form-control"></div>
-      <div class="mb-2"><label>AUTO_BACKUP_ENABLED</label><select name="AUTO_BACKUP_ENABLED" class="form-control"><option value="1" >Enabled</option><option value="0">Disabled</option></select></div>
-      <button class="btn btn-primary" type="submit">Save .env</button>
-    </form>
-    <div id="env-msg" class="mt-2 text-muted"></div>
-  </div>
+    <div class="card-body">
+        <h4>API / R2 Configuration</h4>
+        <form id="env-form">
+            <div class="mb-2"><label>R2 Access Key</label><input name="R2_ACCESS_KEY_ID" class="form-control"></div>
+            <div class="mb-2"><label>R2 Secret Key</label><input name="R2_SECRET_ACCESS_KEY" class="form-control"></div>
+            <div class="mb-2"><label>R2 Bucket</label><input name="R2_BUCKET" class="form-control"></div>
+            <div class="mb-2"><label>R2 Endpoint</label><input name="R2_ENDPOINT" class="form-control"></div>
+            <div class="mb-2"><label>BACKUP_LOCAL_DIR</label><input name="BACKUP_LOCAL_DIR" class="form-control"></div>
+            <div class="mb-2"><label>DEFAULT_USER_QUOTA_GB</label><input name="DEFAULT_USER_QUOTA_GB"
+                    class="form-control"></div>
+            <div class="mb-2"><label>AUTO_UPLOAD_TYPES (comma)</label><input name="AUTO_UPLOAD_TYPES"
+                    class="form-control"></div>
+            <div class="mb-2"><label>AUTO_UPLOAD_PREFIXES (comma)</label><input name="AUTO_UPLOAD_PREFIXES"
+                    class="form-control"></div>
+            <div class="mb-2"><label>AUTO_BACKUP_TABLES (comma)</label><input name="AUTO_BACKUP_TABLES"
+                    class="form-control"></div>
+            <div class="mb-2"><label>AUTO_BACKUP_ENABLED</label><select name="AUTO_BACKUP_ENABLED" class="form-control">
+                    <option value="1">Enabled</option>
+                    <option value="0">Disabled</option>
+                </select></div>
+            <button class="btn btn-primary" type="submit">Save .env</button>
+        </form>
+        <div id="env-msg" class="mt-2 text-muted"></div>
+    </div>
 </div>
 
 <script>
-jQuery(function($){
-  function loadEnv(){
-    $.get(Wo_Ajax_Requests_File() + '?f=file_manager&s=get_env', function(res){
-      if(res.status!==200) {
-        $('#env-msg').text('Failed to load: ' + (res.error || 'Unknown error'));
-        return;
-      }
-      if (res.env) {
-        Object.keys(res.env).forEach(function(k){
-          const $field = $('input[name="'+k+'"], select[name="'+k+'"]');
-          if ($field.length) {
-            $field.val(res.env[k]);
-          }
+jQuery(function($) {
+    function loadEnv() {
+        $.get(Wo_Ajax_Requests_File() + '?f=file_manager&s=get_env', function(res) {
+            if (res.status !== 200) {
+                $('#env-msg').text('Failed to load: ' + (res.error || 'Unknown error'));
+                return;
+            }
+            if (res.env) {
+                Object.keys(res.env).forEach(function(k) {
+                    const $field = $('input[name="' + k + '"], select[name="' + k + '"]');
+                    if ($field.length) {
+                        $field.val(res.env[k]);
+                    }
+                });
+                $('#env-msg').text('Configuration loaded').css('color', '#10b981');
+            }
+        }, 'json').fail(function() {
+            $('#env-msg').text('Failed to connect to server').css('color', '#dc2626');
         });
-        $('#env-msg').text('Configuration loaded').css('color', '#10b981');
-      }
-    }, 'json').fail(function(){
-      $('#env-msg').text('Failed to connect to server').css('color', '#dc2626');
-    });
-  }
+    }
 
-  $('#env-form').submit(function(e){
-    e.preventDefault();
-    $('#env-msg').text('Saving...').css('color', '#3b82f6');
-    var data = $(this).serialize();
-    $.post(Wo_Ajax_Requests_File() + '?f=file_manager&s=save_env', data, function(res){
-      if (res.status === 200) {
-        $('#env-msg').text('Configuration saved successfully!').css('color', '#10b981');
-      } else {
-        $('#env-msg').text('Error: ' + (res.error || 'Failed to save')).css('color', '#dc2626');
-      }
-    }, 'json').fail(function(){
-      $('#env-msg').text('Failed to connect to server').css('color', '#dc2626');
+    $('#env-form').submit(function(e) {
+        e.preventDefault();
+        $('#env-msg').text('Saving...').css('color', '#3b82f6');
+        var data = $(this).serialize();
+        $.post(Wo_Ajax_Requests_File() + '?f=file_manager&s=save_env', data, function(res) {
+            if (res.status === 200) {
+                $('#env-msg').text('Configuration saved successfully!').css('color', '#10b981');
+            } else {
+                $('#env-msg').text('Error: ' + (res.error || 'Failed to save')).css('color',
+                    '#dc2626');
+            }
+        }, 'json').fail(function() {
+            $('#env-msg').text('Failed to connect to server').css('color', '#dc2626');
+        });
     });
-  });
 
-  loadEnv();
+    loadEnv();
 });
 </script>

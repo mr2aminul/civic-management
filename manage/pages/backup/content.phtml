@@ -1,532 +1,543 @@
 <?php
-if (! (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) ) { echo "permission denied"; return; }
+if (! (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) ) { echo Wo_LoadManagePage('permission-required/content'); return; }
 ?>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
 
 <style>
 .backup-container {
-  max-width: 100%;
-  margin: 0 auto;
-  background: #f8f9fa;
-  min-height: 100vh;
-  padding: 0;
+    max-width: 100%;
+    margin: 0 auto;
+    background: #f8f9fa;
+    min-height: 100vh;
+    padding: 0;
 }
 
 .backup-header {
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 24px;
-  position: sticky;
-  top: 0;
-  z-index: 15;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    background: #fff;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 24px;
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .backup-header-title {
-  font-size: 24px;
-  font-weight: 600;
-  color: #1f2937;
-  margin: 0 0 8px 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
+    font-size: 24px;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0 0 8px 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 .backup-header-subtitle {
-  color: #6b7280;
-  font-size: 14px;
+    color: #6b7280;
+    font-size: 14px;
 }
 
 .backup-body {
-  padding: 24px;
+    padding: 24px;
 }
 
 .backup-actions {
-  background: #fff;
-  border-radius: 12px;
-  padding: 24px;
-  margin-bottom: 24px;
-  border: 1px solid #e5e7eb;
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+    border: 1px solid #e5e7eb;
 }
 
 .backup-actions-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 16px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+    margin-bottom: 16px;
 }
 
 .backup-actions-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 16px;
 }
 
 .backup-action-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff;
-  border-radius: 8px;
-  padding: 20px;
-  cursor: pointer;
-  transition: all 0.2s;
-  border: none;
-  text-align: left;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    text-align: left;
 }
 
 .backup-action-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
 }
 
 .backup-action-card.secondary {
-  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
 }
 
 .backup-action-card.warning {
-  background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%);
-  color: #2d3436;
+    background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%);
+    color: #2d3436;
 }
 
 .backup-action-icon {
-  font-size: 32px;
-  margin-bottom: 12px;
+    font-size: 32px;
+    margin-bottom: 12px;
 }
 
 .backup-action-title {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 4px;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
 }
 
 .backup-action-desc {
-  font-size: 13px;
-  opacity: 0.9;
+    font-size: 13px;
+    opacity: 0.9;
 }
 
 .backup-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
 }
 
 .backup-stat-card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 20px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 20px;
 }
 
 .backup-stat-label {
-  font-size: 12px;
-  color: #6b7280;
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .backup-stat-value {
-  font-size: 28px;
-  font-weight: 700;
-  color: #1f2937;
+    font-size: 28px;
+    font-weight: 700;
+    color: #1f2937;
 }
 
 .backup-list-container {
-  background: #fff;
-  border-radius: 12px;
-  padding: 24px;
-  border: 1px solid #e5e7eb;
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    border: 1px solid #e5e7eb;
 }
 
 .backup-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
 }
 
 .backup-list-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1f2937;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1f2937;
 }
 
 .backup-search {
-  position: relative;
-  max-width: 300px;
+    position: relative;
+    max-width: 300px;
 }
 
 .backup-search input {
-  width: 100%;
-  padding: 10px 16px 10px 40px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  font-size: 14px;
-  transition: all 0.2s;
+    width: 100%;
+    padding: 10px 16px 10px 40px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: all 0.2s;
 }
 
 .backup-search input:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    outline: none;
 }
 
 .backup-search i {
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #9ca3af;
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #9ca3af;
 }
 
 .backup-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
 }
 
 .backup-table thead {
-  background: #f9fafb;
-  border-radius: 8px;
+    background: #f9fafb;
+    border-radius: 8px;
 }
 
 .backup-table th {
-  padding: 12px 16px;
-  text-align: left;
-  font-size: 12px;
-  font-weight: 600;
-  color: #6b7280;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-bottom: 1px solid #e5e7eb;
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #e5e7eb;
 }
 
 .backup-table td {
-  padding: 16px;
-  border-bottom: 1px solid #f3f4f6;
+    padding: 16px;
+    border-bottom: 1px solid #f3f4f6;
 }
 
 .backup-table tbody tr {
-  transition: background 0.2s;
+    transition: background 0.2s;
 }
 
 .backup-table tbody tr:hover {
-  background: #f9fafb;
+    background: #f9fafb;
 }
 
 .backup-table tbody tr:last-child td {
-  border-bottom: none;
+    border-bottom: none;
 }
 
 .backup-file-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 .backup-file-icon {
-  width: 40px;
-  height: 40px;
-  background: #eff6ff;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #3b82f6;
-  font-size: 20px;
+    width: 40px;
+    height: 40px;
+    background: #eff6ff;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #3b82f6;
+    font-size: 20px;
 }
 
 .backup-file-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1f2937;
-  margin-bottom: 2px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #1f2937;
+    margin-bottom: 2px;
 }
 
 .backup-file-size {
-  font-size: 12px;
-  color: #9ca3af;
+    font-size: 12px;
+    color: #9ca3af;
 }
 
 .backup-file-date {
-  font-size: 13px;
-  color: #6b7280;
+    font-size: 13px;
+    color: #6b7280;
 }
 
 .backup-actions-btns {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
 }
 
 .backup-btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  border: 1px solid #d1d5db;
-  background: #fff;
-  color: #374151;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: #374151;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .backup-btn:hover {
-  background: #f9fafb;
-  border-color: #9ca3af;
+    background: #f9fafb;
+    border-color: #9ca3af;
 }
 
 .backup-btn-primary {
-  background: #3b82f6;
-  color: #fff;
-  border-color: #3b82f6;
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
 }
 
 .backup-btn-primary:hover {
-  background: #2563eb;
+    background: #2563eb;
 }
 
 .backup-btn-success {
-  background: #10b981;
-  color: #fff;
-  border-color: #10b981;
+    background: #10b981;
+    color: #fff;
+    border-color: #10b981;
 }
 
 .backup-btn-success:hover {
-  background: #059669;
+    background: #059669;
 }
 
 .backup-btn-warning {
-  background: #f59e0b;
-  color: #fff;
-  border-color: #f59e0b;
+    background: #f59e0b;
+    color: #fff;
+    border-color: #f59e0b;
 }
 
 .backup-btn-warning:hover {
-  background: #d97706;
+    background: #d97706;
 }
 
 .backup-empty-state {
-  text-align: center;
-  padding: 60px 20px;
+    text-align: center;
+    padding: 60px 20px;
 }
 
 .backup-empty-icon {
-  font-size: 64px;
-  color: #d1d5db;
-  margin-bottom: 16px;
+    font-size: 64px;
+    color: #d1d5db;
+    margin-bottom: 16px;
 }
 
 .backup-empty-text {
-  font-size: 16px;
-  color: #6b7280;
-  margin-bottom: 8px;
+    font-size: 16px;
+    color: #6b7280;
+    margin-bottom: 8px;
 }
 
 .backup-empty-hint {
-  font-size: 14px;
-  color: #9ca3af;
+    font-size: 14px;
+    color: #9ca3af;
 }
 
 .backup-loading {
-  text-align: center;
-  padding: 40px;
-  color: #6b7280;
+    text-align: center;
+    padding: 40px;
+    color: #6b7280;
 }
 
 .backup-spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid #f3f4f6;
-  border-top-color: #3b82f6;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 16px;
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f4f6;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 16px;
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 @media (max-width: 768px) {
-  .backup-actions-grid {
-    grid-template-columns: 1fr;
-  }
-  .backup-stats {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .backup-table {
-    font-size: 13px;
-  }
-  .backup-actions-btns {
-    flex-direction: column;
-  }
-  .backup-btn {
-    width: 100%;
-  }
+    .backup-actions-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .backup-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .backup-table {
+        font-size: 13px;
+    }
+
+    .backup-actions-btns {
+        flex-direction: column;
+    }
+
+    .backup-btn {
+        width: 100%;
+    }
 }
 </style>
 
 <div class="backup-container">
-  <div class="backup-header">
-    <h1 class="backup-header-title">
-      <i class="bi bi-shield-check"></i>
-      Database Backups
-    </h1>
-    <p class="backup-header-subtitle">Manage and restore your database backups</p>
-  </div>
-
-  <div class="backup-body">
-    <div class="backup-stats" id="backup-stats">
-      <div class="backup-stat-card">
-        <div class="backup-stat-label">Total Backups</div>
-        <div class="backup-stat-value" id="stat-total">0</div>
-      </div>
-      <div class="backup-stat-card">
-        <div class="backup-stat-label">Total Size</div>
-        <div class="backup-stat-value" id="stat-size">0 MB</div>
-      </div>
-      <div class="backup-stat-card">
-        <div class="backup-stat-label">Latest Backup</div>
-        <div class="backup-stat-value" id="stat-latest" style="font-size:16px">Never</div>
-      </div>
-      <div class="backup-stat-card">
-        <div class="backup-stat-label">R2 Status</div>
-        <div class="backup-stat-value" id="stat-r2" style="font-size:16px">Checking...</div>
-      </div>
+    <div class="backup-header">
+        <h1 class="backup-header-title">
+            <i class="bi bi-shield-check"></i>
+            Database Backups
+        </h1>
+        <p class="backup-header-subtitle">Manage and restore your database backups</p>
     </div>
 
-    <div class="backup-actions">
-      <div class="backup-actions-title">Quick Actions</div>
-      <div class="backup-actions-grid">
-        <button class="backup-action-card" id="btn-create-full">
-          <div class="backup-action-icon"><i class="bi bi-database-fill-add"></i></div>
-          <div class="backup-action-title">Create Full Backup</div>
-          <div class="backup-action-desc">Create a complete database backup now</div>
-        </button>
-        <button class="backup-action-card secondary" id="btn-auto-backup">
-          <div class="backup-action-icon"><i class="bi bi-arrow-repeat"></i></div>
-          <div class="backup-action-title">Run Auto Backup</div>
-          <div class="backup-action-desc">Execute the automated backup process</div>
-        </button>
-        <button class="backup-action-card" id="btn-sync-r2" style="background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);">
-          <div class="backup-action-icon"><i class="bi bi-cloud-arrow-down"></i></div>
-          <div class="backup-action-title">Sync R2 Backups</div>
-          <div class="backup-action-desc">Refresh backup list from R2 cloud storage</div>
-        </button>
-        <button class="backup-action-card warning" id="btn-cleanup">
-          <div class="backup-action-icon"><i class="bi bi-trash3"></i></div>
-          <div class="backup-action-title">Cleanup Old Backups</div>
-          <div class="backup-action-desc">Remove backups exceeding retention policy</div>
-        </button>
-      </div>
-    </div>
-
-    <div class="backup-list-container">
-      <div class="backup-list-header">
-        <div class="backup-list-title">Backup Files</div>
-        <div class="backup-search">
-          <i class="bi bi-search"></i>
-          <input type="text" id="backup-filter" placeholder="Search backups...">
+    <div class="backup-body">
+        <div class="backup-stats" id="backup-stats">
+            <div class="backup-stat-card">
+                <div class="backup-stat-label">Total Backups</div>
+                <div class="backup-stat-value" id="stat-total">0</div>
+            </div>
+            <div class="backup-stat-card">
+                <div class="backup-stat-label">Total Size</div>
+                <div class="backup-stat-value" id="stat-size">0 MB</div>
+            </div>
+            <div class="backup-stat-card">
+                <div class="backup-stat-label">Latest Backup</div>
+                <div class="backup-stat-value" id="stat-latest" style="font-size:16px">Never</div>
+            </div>
+            <div class="backup-stat-card">
+                <div class="backup-stat-label">R2 Status</div>
+                <div class="backup-stat-value" id="stat-r2" style="font-size:16px">Checking...</div>
+            </div>
         </div>
-      </div>
 
-      <div id="backup-loading" class="backup-loading" style="display:none">
-        <div class="backup-spinner"></div>
-        <div>Loading backups...</div>
-      </div>
+        <div class="backup-actions">
+            <div class="backup-actions-title">Quick Actions</div>
+            <div class="backup-actions-grid">
+                <button class="backup-action-card" id="btn-create-full">
+                    <div class="backup-action-icon"><i class="bi bi-database-fill-add"></i></div>
+                    <div class="backup-action-title">Create Full Backup</div>
+                    <div class="backup-action-desc">Create a complete database backup now</div>
+                </button>
+                <button class="backup-action-card secondary" id="btn-auto-backup">
+                    <div class="backup-action-icon"><i class="bi bi-arrow-repeat"></i></div>
+                    <div class="backup-action-title">Run Auto Backup</div>
+                    <div class="backup-action-desc">Execute the automated backup process</div>
+                </button>
+                <button class="backup-action-card" id="btn-sync-r2"
+                    style="background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);">
+                    <div class="backup-action-icon"><i class="bi bi-cloud-arrow-down"></i></div>
+                    <div class="backup-action-title">Sync R2 Backups</div>
+                    <div class="backup-action-desc">Refresh backup list from R2 cloud storage</div>
+                </button>
+                <button class="backup-action-card warning" id="btn-cleanup">
+                    <div class="backup-action-icon"><i class="bi bi-trash3"></i></div>
+                    <div class="backup-action-title">Cleanup Old Backups</div>
+                    <div class="backup-action-desc">Remove backups exceeding retention policy</div>
+                </button>
+            </div>
+        </div>
 
-      <div id="backup-empty" class="backup-empty-state" style="display:none">
-        <div class="backup-empty-icon"><i class="bi bi-inbox"></i></div>
-        <div class="backup-empty-text">No backups found</div>
-        <div class="backup-empty-hint">Create your first backup using the quick actions above</div>
-      </div>
+        <div class="backup-list-container">
+            <div class="backup-list-header">
+                <div class="backup-list-title">Backup Files</div>
+                <div class="backup-search">
+                    <i class="bi bi-search"></i>
+                    <input type="text" id="backup-filter" placeholder="Search backups...">
+                </div>
+            </div>
 
-      <table class="backup-table" id="backup-table" style="display:none">
-        <thead>
-          <tr>
-            <th>Backup File</th>
-            <th>Created</th>
-            <th style="text-align:right">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="backup-list"></tbody>
-      </table>
+            <div id="backup-loading" class="backup-loading" style="display:none">
+                <div class="backup-spinner"></div>
+                <div>Loading backups...</div>
+            </div>
+
+            <div id="backup-empty" class="backup-empty-state" style="display:none">
+                <div class="backup-empty-icon"><i class="bi bi-inbox"></i></div>
+                <div class="backup-empty-text">No backups found</div>
+                <div class="backup-empty-hint">Create your first backup using the quick actions above</div>
+            </div>
+
+            <table class="backup-table" id="backup-table" style="display:none">
+                <thead>
+                    <tr>
+                        <th>Backup File</th>
+                        <th>Created</th>
+                        <th style="text-align:right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="backup-list"></tbody>
+            </table>
+        </div>
     </div>
-  </div>
 </div>
 
 <script>
-jQuery(function($){
-  const API = Wo_Ajax_Requests_File() + '?f=file_manager';
+jQuery(function($) {
+    const API = Wo_Ajax_Requests_File() + '?f=file_manager';
 
-  function formatSize(bytes){
-    if (!bytes) return '0 B';
-    const sizes = ['B','KB','MB','GB','TB'];
-    let i = Math.floor(Math.log(bytes)/Math.log(1024));
-    if (isNaN(i) || !isFinite(i)) i = 0;
-    if (i<0) i=0; if (i>4) i=4;
-    return (bytes/Math.pow(1024,i)).toFixed(1) + ' ' + sizes[i];
-  }
+    function formatSize(bytes) {
+        if (!bytes) return '0 B';
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = Math.floor(Math.log(bytes) / Math.log(1024));
+        if (isNaN(i) || !isFinite(i)) i = 0;
+        if (i < 0) i = 0;
+        if (i > 4) i = 4;
+        return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
+    }
 
-  function formatDate(timestamp) {
-    const date = new Date(timestamp * 1000);
-    const now = new Date();
-    const diff = Math.floor((now - date) / 1000);
+    function formatDate(timestamp) {
+        const date = new Date(timestamp * 1000);
+        const now = new Date();
+        const diff = Math.floor((now - date) / 1000);
 
-    if (diff < 60) return 'Just now';
-    if (diff < 3600) return Math.floor(diff / 60) + ' min ago';
-    if (diff < 86400) return Math.floor(diff / 3600) + ' hours ago';
-    if (diff < 604800) return Math.floor(diff / 86400) + ' days ago';
+        if (diff < 60) return 'Just now';
+        if (diff < 3600) return Math.floor(diff / 60) + ' min ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + ' hours ago';
+        if (diff < 604800) return Math.floor(diff / 86400) + ' days ago';
 
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-  }
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    }
 
-  function checkR2Status() {
-    $.get(API + '&s=ping', res => {
-      if (res && res.status === 200) {
-        $('#stat-r2').text(res.r2_enabled ? 'Connected' : 'Not Setup').css('color', res.r2_enabled ? '#10b981' : '#9ca3af');
-      }
-    }, 'json').fail(() => $('#stat-r2').text('Error').css('color', '#ef4444'));
-  }
+    function checkR2Status() {
+        $.get(API + '&s=ping', res => {
+            if (res && res.status === 200) {
+                $('#stat-r2').text(res.r2_enabled ? 'Connected' : 'Not Setup').css('color', res
+                    .r2_enabled ? '#10b981' : '#9ca3af');
+            }
+        }, 'json').fail(() => $('#stat-r2').text('Error').css('color', '#ef4444'));
+    }
 
-  function updateStats(files) {
-    const total = files.length;
-    const totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
-    const latest = files.length > 0 ? files[0] : null;
+    function updateStats(files) {
+        const total = files.length;
+        const totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
+        const latest = files.length > 0 ? files[0] : null;
 
-    $('#stat-total').text(total);
-    $('#stat-size').text(formatSize(totalSize));
-    $('#stat-latest').text(latest ? formatDate(latest.mtime) : 'Never');
-  }
+        $('#stat-total').text(total);
+        $('#stat-size').text(formatSize(totalSize));
+        $('#stat-latest').text(latest ? formatDate(latest.mtime) : 'Never');
+    }
 
-  function fetchBackups(q) {
-    $('#backup-loading').show();
-    $('#backup-empty, #backup-table').hide();
+    function fetchBackups(q) {
+        $('#backup-loading').show();
+        $('#backup-empty, #backup-table').hide();
 
-    $.get(API + '&s=list_db_backups', { q: q || '' }, function(res){
-      $('#backup-loading').hide();
+        $.get(API + '&s=list_db_backups', {
+            q: q || ''
+        }, function(res) {
+            $('#backup-loading').hide();
 
-      if (res.status != 200) {
-        $('#backup-empty').show();
-        return;
-      }
+            if (res.status != 200) {
+                $('#backup-empty').show();
+                return;
+            }
 
-      const files = res.files || [];
-      updateStats(files);
+            const files = res.files || [];
+            updateStats(files);
 
-      if (files.length === 0) {
-        $('#backup-empty').show();
-        return;
-      }
+            if (files.length === 0) {
+                $('#backup-empty').show();
+                return;
+            }
 
-      $('#backup-table').show();
-      const $list = $('#backup-list').empty();
+            $('#backup-table').show();
+            const $list = $('#backup-list').empty();
 
-      files.forEach(function(f){
-        const $row = $(`
+            files.forEach(function(f) {
+                const $row = $(`
           <tr>
             <td>
               <div class="backup-file-info">
@@ -557,100 +568,110 @@ jQuery(function($){
             </td>
           </tr>
         `);
-        $list.append($row);
-      });
-    }, 'json').fail(function(){
-      $('#backup-loading').hide();
-      $('#backup-empty').show();
+                $list.append($row);
+            });
+        }, 'json').fail(function() {
+            $('#backup-loading').hide();
+            $('#backup-empty').show();
+        });
+    }
+
+    $('#btn-create-full').click(function() {
+        if (!confirm('Create a full database backup now? This may take a few moments.')) return;
+        $(this).prop('disabled', true).html(
+            '<div class="backup-action-icon"><i class="bi bi-hourglass-split"></i></div><div class="backup-action-title">Creating Backup...</div><div class="backup-action-desc">Please wait</div>'
+            );
+
+        $.post(API + '&s=create_full_backup', {}, function(res) {
+            $('#btn-create-full').prop('disabled', false).html(
+                '<div class="backup-action-icon"><i class="bi bi-database-fill-add"></i></div><div class="backup-action-title">Create Full Backup</div><div class="backup-action-desc">Create a complete database backup now</div>'
+                );
+
+            if (res.status == 200) {
+                alert('Backup created successfully: ' + res.filename);
+                fetchBackups();
+            } else {
+                alert('Create failed: ' + (res.error || 'Unknown error'));
+            }
+        }, 'json').fail(function() {
+            $('#btn-create-full').prop('disabled', false).html(
+                '<div class="backup-action-icon"><i class="bi bi-database-fill-add"></i></div><div class="backup-action-title">Create Full Backup</div><div class="backup-action-desc">Create a complete database backup now</div>'
+                );
+            alert('Network error occurred');
+        });
     });
-  }
 
-  $('#btn-create-full').click(function(){
-    if (!confirm('Create a full database backup now? This may take a few moments.')) return;
-    $(this).prop('disabled', true).html('<div class="backup-action-icon"><i class="bi bi-hourglass-split"></i></div><div class="backup-action-title">Creating Backup...</div><div class="backup-action-desc">Please wait</div>');
+    $('#btn-auto-backup').click(function() {
+        if (!confirm('Run automated backup process now?')) return;
+        $(this).prop('disabled', true);
 
-    $.post(API + '&s=create_full_backup', {}, function(res){
-      $('#btn-create-full').prop('disabled', false).html('<div class="backup-action-icon"><i class="bi bi-database-fill-add"></i></div><div class="backup-action-title">Create Full Backup</div><div class="backup-action-desc">Create a complete database backup now</div>');
-
-      if (res.status==200) {
-        alert('Backup created successfully: ' + res.filename);
-        fetchBackups();
-      } else {
-        alert('Create failed: ' + (res.error || 'Unknown error'));
-      }
-    }, 'json').fail(function(){
-      $('#btn-create-full').prop('disabled', false).html('<div class="backup-action-icon"><i class="bi bi-database-fill-add"></i></div><div class="backup-action-title">Create Full Backup</div><div class="backup-action-desc">Create a complete database backup now</div>');
-      alert('Network error occurred');
+        $.post(API + '&s=auto_backup_run', {}, function(res) {
+            $('#btn-auto-backup').prop('disabled', false);
+            if (res.status == 200) {
+                alert('Auto backup completed successfully');
+                fetchBackups();
+            } else {
+                alert('Auto backup failed');
+            }
+        }, 'json').fail(function() {
+            $('#btn-auto-backup').prop('disabled', false);
+            alert('Network error occurred');
+        });
     });
-  });
 
-  $('#btn-auto-backup').click(function(){
-    if (!confirm('Run automated backup process now?')) return;
-    $(this).prop('disabled', true);
+    $('#btn-cleanup').click(function() {
+        if (!confirm('Remove backups exceeding retention policy? This action cannot be undone.'))
+    return;
+        $(this).prop('disabled', true);
 
-    $.post(API + '&s=auto_backup_run', {}, function(res){
-      $('#btn-auto-backup').prop('disabled', false);
-      if (res.status==200) {
-        alert('Auto backup completed successfully');
-        fetchBackups();
-      } else {
-        alert('Auto backup failed');
-      }
-    }, 'json').fail(function(){
-      $('#btn-auto-backup').prop('disabled', false);
-      alert('Network error occurred');
+        $.post(API + '&s=enforce_retention', {}, function(res) {
+            $('#btn-cleanup').prop('disabled', false);
+            if (res.status == 200) {
+                alert('Cleanup completed');
+                fetchBackups();
+            } else {
+                alert('Cleanup failed');
+            }
+        }, 'json').fail(function() {
+            $('#btn-cleanup').prop('disabled', false);
+            alert('Network error occurred');
+        });
     });
-  });
 
-  $('#btn-cleanup').click(function(){
-    if (!confirm('Remove backups exceeding retention policy? This action cannot be undone.')) return;
-    $(this).prop('disabled', true);
+    $(document).on('click', '.btn-upload-r2', function() {
+        const file = $(this).data('file');
+        if (!confirm('Upload backup to R2 cloud storage?\n\nFile: ' + file)) return;
 
-    $.post(API + '&s=enforce_retention', {}, function(res){
-      $('#btn-cleanup').prop('disabled', false);
-      if (res.status==200) {
-        alert('Cleanup completed');
-        fetchBackups();
-      } else {
-        alert('Cleanup failed');
-      }
-    }, 'json').fail(function(){
-      $('#btn-cleanup').prop('disabled', false);
-      alert('Network error occurred');
+        $.post(API + '&s=upload_r2_from_local', {
+            path: file,
+            mode: 'enqueue'
+        }, function(res) {
+            if (res.status == 200) {
+                alert('Backup enqueued for upload to R2');
+            } else {
+                alert('Upload failed: ' + (res.error || 'Unknown error'));
+            }
+        }, 'json');
     });
-  });
 
-  $(document).on('click', '.btn-upload-r2', function(){
-    const file = $(this).data('file');
-    if (!confirm('Upload backup to R2 cloud storage?\n\nFile: ' + file)) return;
+    $(document).on('click', '.btn-restore', function() {
+        const file = $(this).data('file');
+        showRestoreModal(file);
+    });
 
-    $.post(API + '&s=upload_r2_from_local', { path: file, mode: 'enqueue' }, function(res){
-      if (res.status==200) {
-        alert('Backup enqueued for upload to R2');
-      } else {
-        alert('Upload failed: ' + (res.error || 'Unknown error'));
-      }
-    }, 'json');
-  });
+    function showRestoreModal(file) {
+        $.get(API + '&s=get_table_categories', function(res) {
+            if (res.status !== 200) {
+                alert('Failed to load categories');
+                return;
+            }
 
-  $(document).on('click', '.btn-restore', function(){
-    const file = $(this).data('file');
-    showRestoreModal(file);
-  });
+            const categories = res.categories || {};
+            let categoriesHtml = '';
 
-  function showRestoreModal(file) {
-    $.get(API + '&s=get_table_categories', function(res){
-      if (res.status !== 200) {
-        alert('Failed to load categories');
-        return;
-      }
-
-      const categories = res.categories || {};
-      let categoriesHtml = '';
-
-      Object.keys(categories).forEach(function(cat){
-        const tables = categories[cat];
-        categoriesHtml += `
+            Object.keys(categories).forEach(function(cat) {
+                const tables = categories[cat];
+                categoriesHtml += `
           <div style="margin-bottom:12px">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
               <input type="checkbox" class="restore-category" data-category="${cat}" style="width:18px;height:18px">
@@ -660,9 +681,9 @@ jQuery(function($){
             <div style="margin-left:26px;font-size:12px;color:#9ca3af">${tables.join(', ')}</div>
           </div>
         `;
-      });
+            });
 
-      const modal = `
+            const modal = `
         <div id="restore-modal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000">
           <div style="background:#fff;border-radius:12px;padding:24px;max-width:700px;width:90%;max-height:90vh;overflow-y:auto">
             <h3 style="margin:0 0 20px 0;font-size:20px;font-weight:600">Restore Database</h3>
@@ -694,99 +715,101 @@ jQuery(function($){
         </div>
       `;
 
-      $('body').append(modal);
+            $('body').append(modal);
 
-      $('#restore-mode').on('change', function(){
-        if ($(this).val() === 'category') {
-          $('#category-selection').show();
-        } else {
-          $('#category-selection').hide();
-        }
-      });
+            $('#restore-mode').on('change', function() {
+                if ($(this).val() === 'category') {
+                    $('#category-selection').show();
+                } else {
+                    $('#category-selection').hide();
+                }
+            });
 
-      $('#select-all-categories').on('click', function(){
-        $('.restore-category').prop('checked', true);
-      });
+            $('#select-all-categories').on('click', function() {
+                $('.restore-category').prop('checked', true);
+            });
 
-      $('#deselect-all-categories').on('click', function(){
-        $('.restore-category').prop('checked', false);
-      });
+            $('#deselect-all-categories').on('click', function() {
+                $('.restore-category').prop('checked', false);
+            });
 
-      $('#cancel-restore').on('click', function(){
-        $('#restore-modal').remove();
-      });
+            $('#cancel-restore').on('click', function() {
+                $('#restore-modal').remove();
+            });
 
-      $('#confirm-restore').on('click', function(){
-        const mode = $('#restore-mode').val();
-        const selectedCategories = [];
+            $('#confirm-restore').on('click', function() {
+                const mode = $('#restore-mode').val();
+                const selectedCategories = [];
 
-        if (mode === 'category') {
-          $('.restore-category:checked').each(function(){
-            selectedCategories.push($(this).data('category'));
-          });
+                if (mode === 'category') {
+                    $('.restore-category:checked').each(function() {
+                        selectedCategories.push($(this).data('category'));
+                    });
 
-          if (selectedCategories.length === 0) {
-            alert('Please select at least one category');
+                    if (selectedCategories.length === 0) {
+                        alert('Please select at least one category');
+                        return;
+                    }
+                }
+
+                if (!confirm('FINAL CONFIRMATION: Restore database now?')) return;
+
+                const postData = {
+                    file: file,
+                    confirm_token: 'RESTORE_NOW',
+                    mode: mode
+                };
+
+                if (mode === 'category') {
+                    postData.categories = selectedCategories;
+                }
+
+                $('#confirm-restore').prop('disabled', true).text('Restoring...');
+
+                $.post(API + '&s=restore_db_local', postData, function(res) {
+                    $('#restore-modal').remove();
+                    if (res.status == 200) {
+                        alert('Database restored successfully!\n\n' + (res.message ||
+                            ''));
+                        fetchBackups();
+                    } else {
+                        alert('Restore failed: ' + (res.error || 'Unknown error'));
+                    }
+                }, 'json').fail(function() {
+                    $('#restore-modal').remove();
+                    alert('Network error occurred');
+                });
+            });
+        }, 'json');
+    }
+
+    $('#btn-sync-r2').click(function() {
+        if (!confirm('Sync backup list from R2 cloud storage? This will fetch the latest backup list.'))
             return;
-          }
-        }
+        $(this).prop('disabled', true);
 
-        if (!confirm('FINAL CONFIRMATION: Restore database now?')) return;
-
-        const postData = {
-          file: file,
-          confirm_token: 'RESTORE_NOW',
-          mode: mode
-        };
-
-        if (mode === 'category') {
-          postData.categories = selectedCategories;
-        }
-
-        $('#confirm-restore').prop('disabled', true).text('Restoring...');
-
-        $.post(API + '&s=restore_db_local', postData, function(res){
-          $('#restore-modal').remove();
-          if (res.status == 200) {
-            alert('Database restored successfully!\n\n' + (res.message || ''));
-            fetchBackups();
-          } else {
-            alert('Restore failed: ' + (res.error || 'Unknown error'));
-          }
-        }, 'json').fail(function(){
-          $('#restore-modal').remove();
-          alert('Network error occurred');
+        $.post(API + '&s=sync_r2_backups', {}, function(res) {
+            $('#btn-sync-r2').prop('disabled', false);
+            if (res.status == 200) {
+                alert('Synced successfully! Found ' + (res.count || 0) + ' backup(s)');
+                fetchBackups();
+            } else {
+                alert('Sync failed: ' + (res.error || 'Unknown error'));
+            }
+        }, 'json').fail(function() {
+            $('#btn-sync-r2').prop('disabled', false);
+            alert('Network error occurred');
         });
-      });
-    }, 'json');
-  }
-
-  $('#btn-sync-r2').click(function(){
-    if (!confirm('Sync backup list from R2 cloud storage? This will fetch the latest backup list.')) return;
-    $(this).prop('disabled', true);
-
-    $.post(API + '&s=sync_r2_backups', {}, function(res){
-      $('#btn-sync-r2').prop('disabled', false);
-      if (res.status == 200) {
-        alert('Synced successfully! Found ' + (res.count || 0) + ' backup(s)');
-        fetchBackups();
-      } else {
-        alert('Sync failed: ' + (res.error || 'Unknown error'));
-      }
-    }, 'json').fail(function(){
-      $('#btn-sync-r2').prop('disabled', false);
-      alert('Network error occurred');
     });
-  });
 
-  let searchTimeout;
-  $('#backup-filter').on('keyup', function(){
-    clearTimeout(searchTimeout);
-    const query = $(this).val();
-    searchTimeout = setTimeout(() => fetchBackups(query), 300);
-  });
+    let searchTimeout;
+    $('#backup-filter').on('keyup', function() {
+        clearTimeout(searchTimeout);
+        const query = $(this).val();
+        searchTimeout = setTimeout(() => fetchBackups(query), 300);
+    });
 
-  fetchBackups();
-  checkR2Status();
+    fetchBackups();
+    checkR2Status();
 });
 </script>

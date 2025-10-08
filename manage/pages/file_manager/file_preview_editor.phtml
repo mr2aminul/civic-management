@@ -1,445 +1,465 @@
 <!-- File Preview and Editor Modal -->
 <style>
+.fpe-modal.active~body {
+    overflow: hidden !important;
+}
+
 .fpe-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0,0,0,0.7);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 20000;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 20000;
 }
 
 .fpe-modal.active {
-  display: flex;
+    display: flex;
 }
 
 .fpe-modal-content {
-  background: #fff;
-  border-radius: 12px;
-  max-width: 95vw;
-  max-height: 95vh;
-  width: 1400px;
-  height: 90vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+    background: #fff;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
 }
 
 .fpe-header {
-  padding: 16px 24px;
-  border-bottom: 1px solid #e5e7eb;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #f9fafb;
+    padding: 16px 24px;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #f9fafb;
 }
 
 .fpe-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1f2937;
-  display: flex;
-  align-items: center;
-  gap: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 .fpe-actions {
-  display: flex;
-  gap: 8px;
+    display: flex;
+    gap: 8px;
 }
 
 .fpe-btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  border: 1px solid #d1d5db;
-  background: #fff;
-  color: #374151;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: #374151;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
 }
 
 .fpe-btn:hover {
-  background: #f9fafb;
+    background: #f9fafb;
 }
 
 .fpe-btn-primary {
-  background: #3b82f6;
-  color: #fff;
-  border-color: #3b82f6;
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
 }
 
 .fpe-btn-primary:hover {
-  background: #2563eb;
+    background: #2563eb;
 }
 
 .fpe-close-btn {
-  background: none;
-  border: none;
-  font-size: 24px;
-  color: #9ca3af;
-  cursor: pointer;
-  padding: 0 8px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: #9ca3af;
+    cursor: pointer;
+    padding: 0 8px;
 }
 
 .fpe-close-btn:hover {
-  color: #1f2937;
+    color: #1f2937;
 }
 
 .fpe-body {
-  flex: 1;
-  overflow: hidden;
-  position: relative;
+    flex: 1;
+    overflow: hidden;
+    position: relative;
 }
 
 .fpe-iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
+    width: 100%;
+    height: 100%;
+    border: none;
 }
 
 .fpe-editor {
-  width: 100%;
-  height: 100%;
+    width: 100%;
+    height: 100%;
 }
 
 .fpe-image-viewer {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
 }
 
 .fpe-image-viewer img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
 }
 
 .fpe-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: #6b7280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #6b7280;
 }
 
 .fpe-spinner {
-  width: 48px;
-  height: 48px;
-  border: 4px solid #f3f4f6;
-  border-top-color: #3b82f6;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
+    width: 48px;
+    height: 48px;
+    border: 4px solid #f3f4f6;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
 }
 
 .fpe-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 8px 24px 0;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f9fafb;
+    display: flex;
+    gap: 4px;
+    padding: 8px 24px 0;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
 }
 
 .fpe-tab {
-  padding: 8px 16px;
-  border: none;
-  background: transparent;
-  color: #6b7280;
-  cursor: pointer;
-  border-radius: 6px 6px 0 0;
-  transition: all 0.2s;
-  font-size: 14px;
+    padding: 8px 16px;
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    cursor: pointer;
+    border-radius: 6px 6px 0 0;
+    transition: all 0.2s;
+    font-size: 14px;
 }
 
 .fpe-tab.active {
-  background: #fff;
-  color: #1f2937;
-  font-weight: 500;
-  border-bottom: 2px solid #3b82f6;
+    background: #fff;
+    color: #1f2937;
+    font-weight: 500;
+    border-bottom: 2px solid #3b82f6;
 }
 
 .fpe-tab:hover:not(.active) {
-  background: #f3f4f6;
+    background: #f3f4f6;
+}
+
+#fpe-filename {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    max-width: calc(100vw - 190px);
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 </style>
 
 <div class="fpe-modal" id="fpe-modal">
-  <div class="fpe-modal-content">
-    <div class="fpe-header">
-      <div class="fpe-title">
-        <i class="bi bi-file-earmark" id="fpe-icon"></i>
-        <span id="fpe-filename">File Preview</span>
-      </div>
-      <div class="fpe-actions">
-        <button class="fpe-btn" id="fpe-download-btn">
-          <i class="bi bi-download"></i> Download
-        </button>
-        <button class="fpe-btn fpe-btn-primary" id="fpe-edit-btn" style="display:none">
-          <i class="bi bi-pencil"></i> Edit Online
-        </button>
-        <button class="fpe-close-btn" id="fpe-close">&times;</button>
-      </div>
-    </div>
+    <div class="fpe-modal-content">
+        <div class="fpe-header">
+            <div class="fpe-title">
+                <i class="bi bi-file-earmark" id="fpe-icon"></i>
+                <span id="fpe-filename">File Preview</span>
+            </div>
+            <div class="fpe-actions">
+                <button class="fpe-btn" id="fpe-download-btn">
+                    <i class="bi bi-download"></i> <span>Download</span>
+                </button>
+                <button class="fpe-btn fpe-btn-primary" id="fpe-edit-btn" style="display:none">
+                    <i class="bi bi-pencil"></i> <span>Edit Online</span>
+                </button>
+                <button class="fpe-close-btn" id="fpe-close">&times;</button>
+            </div>
+        </div>
 
-    <div class="fpe-tabs" id="fpe-tabs" style="display:none">
-      <button class="fpe-tab active" data-tab="preview">Preview</button>
-      <button class="fpe-tab" data-tab="editor">Edit</button>
-    </div>
+        <div class="fpe-tabs" id="fpe-tabs" style="display:none">
+            <button class="fpe-tab active" data-tab="preview">Preview</button>
+            <button class="fpe-tab" data-tab="editor">Edit</button>
+        </div>
 
-    <div class="fpe-body" id="fpe-body">
-      <div class="fpe-loading" id="fpe-loading">
-        <div class="fpe-spinner"></div>
-      </div>
+        <div class="fpe-body" id="fpe-body">
+            <div class="fpe-loading" id="fpe-loading">
+                <div class="fpe-spinner"></div>
+            </div>
+        </div>
     </div>
-  </div>
 </div>
 
 <script>
-(function(){
-  const modal = document.getElementById('fpe-modal');
-  const body = document.getElementById('fpe-body');
-  const loading = document.getElementById('fpe-loading');
-  const filename = document.getElementById('fpe-filename');
-  const icon = document.getElementById('fpe-icon');
-  const closeBtn = document.getElementById('fpe-close');
-  const downloadBtn = document.getElementById('fpe-download-btn');
-  const editBtn = document.getElementById('fpe-edit-btn');
-  const tabs = document.getElementById('fpe-tabs');
+(function() {
+    const modal = document.getElementById('fpe-modal');
+    const body = document.getElementById('fpe-body');
+    const loading = document.getElementById('fpe-loading');
+    const filename = document.getElementById('fpe-filename');
+    const icon = document.getElementById('fpe-icon');
+    const closeBtn = document.getElementById('fpe-close');
+    const downloadBtn = document.getElementById('fpe-download-btn');
+    const editBtn = document.getElementById('fpe-edit-btn');
+    const tabs = document.getElementById('fpe-tabs');
 
-  let currentFile = null;
-  let currentUrl = null;
-  let aceEditor = null;
+    let currentFile = null;
+    let currentUrl = null;
+    let aceEditor = null;
 
-  window.openFilePreview = function(filePath, fileName) {
-    currentFile = filePath;
-    filename.textContent = fileName || filePath.split('/').pop();
+    window.openFilePreview = function(filePath, fileName) {
+        currentFile = filePath;
+        filename.textContent = fileName || filePath.split('/').pop();
 
-    const ext = fileName.split('.').pop().toLowerCase();
-    updateIcon(ext);
+        const ext = fileName.split('.').pop().toLowerCase();
+        updateIcon(ext);
 
-    modal.classList.add('active');
-    body.innerHTML = '<div class="fpe-loading" id="fpe-loading"><div class="fpe-spinner"></div></div>';
-    tabs.style.display = 'none';
-    editBtn.style.display = 'none';
+        modal.classList.add('active');
+        body.innerHTML = '<div class="fpe-loading" id="fpe-loading"><div class="fpe-spinner"></div></div>';
+        tabs.style.display = 'none';
+        editBtn.style.display = 'none';
 
-    currentUrl = window.fileManagerAPI + '&s=download_local&file=' + encodeURIComponent(filePath);
-    downloadBtn.onclick = () => window.location = currentUrl;
+        currentUrl = window.fileManagerAPI + '&s=download_local&file=' + encodeURIComponent(filePath);
+        downloadBtn.onclick = () => window.location = currentUrl;
 
-    renderPreview(ext, currentUrl);
-  };
-
-  function updateIcon(ext) {
-    const iconMap = {
-      'pdf': 'bi-file-pdf',
-      'doc': 'bi-file-word',
-      'docx': 'bi-file-word',
-      'xls': 'bi-file-excel',
-      'xlsx': 'bi-file-excel',
-      'ppt': 'bi-file-ppt',
-      'pptx': 'bi-file-ppt',
-      'txt': 'bi-file-text',
-      'jpg': 'bi-file-image',
-      'jpeg': 'bi-file-image',
-      'png': 'bi-file-image',
-      'gif': 'bi-file-image',
-      'svg': 'bi-file-image',
-      'mp4': 'bi-file-play',
-      'mp3': 'bi-file-music',
-      'zip': 'bi-file-zip',
-      'js': 'bi-file-code',
-      'html': 'bi-file-code',
-      'css': 'bi-file-code',
-      'php': 'bi-file-code',
-      'json': 'bi-file-code'
+        renderPreview(ext, currentUrl);
     };
 
-    icon.className = 'bi ' + (iconMap[ext] || 'bi-file-earmark');
-  }
+    function updateIcon(ext) {
+        const iconMap = {
+            'pdf': 'bi-file-pdf',
+            'doc': 'bi-file-word',
+            'docx': 'bi-file-word',
+            'xls': 'bi-file-excel',
+            'xlsx': 'bi-file-excel',
+            'ppt': 'bi-file-ppt',
+            'pptx': 'bi-file-ppt',
+            'txt': 'bi-file-text',
+            'jpg': 'bi-file-image',
+            'jpeg': 'bi-file-image',
+            'png': 'bi-file-image',
+            'gif': 'bi-file-image',
+            'svg': 'bi-file-image',
+            'mp4': 'bi-file-play',
+            'mp3': 'bi-file-music',
+            'zip': 'bi-file-zip',
+            'js': 'bi-file-code',
+            'html': 'bi-file-code',
+            'css': 'bi-file-code',
+            'php': 'bi-file-code',
+            'json': 'bi-file-code'
+        };
 
-  function renderPreview(ext, url) {
-    body.innerHTML = '';
-
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
-      body.innerHTML = '<div class="fpe-image-viewer"><img src="' + url + '"></div>';
+        icon.className = 'bi ' + (iconMap[ext] || 'bi-file-earmark');
     }
-    else if (ext === 'pdf') {
-      body.innerHTML = '<iframe class="fpe-iframe" src="' + url + '"></iframe>';
+
+    function renderPreview(ext, url) {
+        body.innerHTML = '';
+
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
+            body.innerHTML = '<div class="fpe-image-viewer"><img src="' + url + '"></div>';
+        } else if (ext === 'pdf') {
+            body.innerHTML = '<iframe class="fpe-iframe" src="' + url + '"></iframe>';
+        } else if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
+            // Use Google Docs Viewer for embedded preview
+            const googleViewerUrl = 'https://docs.google.com/viewer?url=' + encodeURIComponent(url) +
+                '&embedded=true';
+            body.innerHTML = '<iframe class="fpe-iframe" src="' + googleViewerUrl + '"></iframe>';
+
+            // Show edit button for supported formats
+            if (['xlsx', 'xls'].includes(ext)) {
+                editBtn.style.display = 'inline-flex';
+                editBtn.textContent = 'Edit in Google Sheets';
+                editBtn.onclick = () => openInGoogleEditor(url, 'sheets');
+            } else if (['docx', 'doc'].includes(ext)) {
+                editBtn.style.display = 'inline-flex';
+                editBtn.textContent = 'Edit in Google Docs';
+                editBtn.onclick = () => openInGoogleEditor(url, 'docs');
+            } else if (['pptx', 'ppt'].includes(ext)) {
+                editBtn.style.display = 'inline-flex';
+                editBtn.textContent = 'Edit in Google Slides';
+                editBtn.onclick = () => openInGoogleEditor(url, 'slides');
+            }
+        } else if (['txt', 'json', 'js', 'html', 'css', 'php', 'xml', 'md', 'sql', 'log'].includes(ext)) {
+            fetch(url)
+                .then(r => r.text())
+                .then(text => {
+                    body.innerHTML = '<div class="fpe-editor" id="fpe-ace-editor"></div>';
+                    if (typeof ace !== 'undefined') {
+                        aceEditor = ace.edit('fpe-ace-editor');
+                        aceEditor.setTheme('ace/theme/monokai');
+                        aceEditor.session.setMode('ace/mode/' + getModeForExt(ext));
+                        aceEditor.setValue(text, -1);
+                        aceEditor.setReadOnly(true);
+                    } else {
+                        body.innerHTML = '<pre style="padding:20px;overflow:auto;height:100%">' + escapeHtml(
+                            text) + '</pre>';
+                    }
+                    tabs.style.display = 'flex';
+                    editBtn.style.display = 'inline-flex';
+                    editBtn.onclick = () => enableEditing();
+                })
+                .catch(err => {
+                    body.innerHTML =
+                        '<div style="padding:40px;text-align:center;color:#6b7280">Failed to load file</div>';
+                });
+        } else if (['mp4', 'webm', 'ogg'].includes(ext)) {
+            body.innerHTML = '<video controls style="width:100%;height:100%"><source src="' + url +
+                '" type="video/' + ext + '"></video>';
+        } else if (['mp3', 'wav', 'ogg'].includes(ext)) {
+            body.innerHTML =
+                '<div style="display:flex;align-items:center;justify-content:center;height:100%"><audio controls><source src="' +
+                url + '" type="audio/' + ext + '"></audio></div>';
+        } else {
+            body.innerHTML =
+                '<div style="padding:40px;text-align:center;color:#6b7280"><i class="bi bi-file-earmark" style="font-size:64px;display:block;margin-bottom:16px"></i>Preview not available for this file type<br><a href="' +
+                url +
+                '" class="fpe-btn fpe-btn-primary" style="margin-top:16px;display:inline-block">Download File</a></div>';
+        }
     }
-    else if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
-      // Use Google Docs Viewer for embedded preview
-      const googleViewerUrl = 'https://docs.google.com/viewer?url=' + encodeURIComponent(url) + '&embedded=true';
-      body.innerHTML = '<iframe class="fpe-iframe" src="' + googleViewerUrl + '"></iframe>';
 
-      // Show edit button for supported formats
-      if (['xlsx', 'xls'].includes(ext)) {
-        editBtn.style.display = 'inline-flex';
-        editBtn.textContent = 'Edit in Google Sheets';
-        editBtn.onclick = () => openInGoogleEditor(url, 'sheets');
-      } else if (['docx', 'doc'].includes(ext)) {
-        editBtn.style.display = 'inline-flex';
-        editBtn.textContent = 'Edit in Google Docs';
-        editBtn.onclick = () => openInGoogleEditor(url, 'docs');
-      } else if (['pptx', 'ppt'].includes(ext)) {
-        editBtn.style.display = 'inline-flex';
-        editBtn.textContent = 'Edit in Google Slides';
-        editBtn.onclick = () => openInGoogleEditor(url, 'slides');
-      }
+    function getModeForExt(ext) {
+        const modes = {
+            'js': 'javascript',
+            'json': 'json',
+            'html': 'html',
+            'css': 'css',
+            'php': 'php',
+            'xml': 'xml',
+            'sql': 'sql',
+            'md': 'markdown',
+            'txt': 'text',
+            'log': 'text'
+        };
+        return modes[ext] || 'text';
     }
-    else if (['txt', 'json', 'js', 'html', 'css', 'php', 'xml', 'md', 'sql', 'log'].includes(ext)) {
-      fetch(url)
-        .then(r => r.text())
-        .then(text => {
-          body.innerHTML = '<div class="fpe-editor" id="fpe-ace-editor"></div>';
-          if (typeof ace !== 'undefined') {
-            aceEditor = ace.edit('fpe-ace-editor');
-            aceEditor.setTheme('ace/theme/monokai');
-            aceEditor.session.setMode('ace/mode/' + getModeForExt(ext));
-            aceEditor.setValue(text, -1);
-            aceEditor.setReadOnly(true);
-          } else {
-            body.innerHTML = '<pre style="padding:20px;overflow:auto;height:100%">' + escapeHtml(text) + '</pre>';
-          }
-          tabs.style.display = 'flex';
-          editBtn.style.display = 'inline-flex';
-          editBtn.onclick = () => enableEditing();
-        })
-        .catch(err => {
-          body.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280">Failed to load file</div>';
-        });
+
+    function enableEditing() {
+        if (aceEditor) {
+            aceEditor.setReadOnly(false);
+            editBtn.textContent = 'Save';
+            editBtn.onclick = () => saveFile();
+        }
     }
-    else if (['mp4', 'webm', 'ogg'].includes(ext)) {
-      body.innerHTML = '<video controls style="width:100%;height:100%"><source src="' + url + '" type="video/' + ext + '"></video>';
+
+    function saveFile() {
+        if (!aceEditor) return;
+
+        const content = aceEditor.getValue();
+        const formData = new FormData();
+        formData.append('path', currentFile);
+        formData.append('content', content);
+
+        editBtn.disabled = true;
+        editBtn.textContent = 'Saving...';
+
+        fetch(window.fileManagerAPI + '&s=save_file_content', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.status === 200) {
+                    editBtn.textContent = 'Saved';
+                    aceEditor.setReadOnly(true);
+                    setTimeout(() => {
+                        editBtn.textContent = 'Edit Online';
+                        editBtn.onclick = () => enableEditing();
+                    }, 2000);
+                } else {
+                    alert('Failed to save: ' + (res.error || 'Unknown error'));
+                    editBtn.textContent = 'Edit Online';
+                }
+                editBtn.disabled = false;
+            })
+            .catch(err => {
+                alert('Save failed: ' + err.message);
+                editBtn.disabled = false;
+                editBtn.textContent = 'Edit Online';
+            });
     }
-    else if (['mp3', 'wav', 'ogg'].includes(ext)) {
-      body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%"><audio controls><source src="' + url + '" type="audio/' + ext + '"></audio></div>';
-    }
-    else {
-      body.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280"><i class="bi bi-file-earmark" style="font-size:64px;display:block;margin-bottom:16px"></i>Preview not available for this file type<br><a href="' + url + '" class="fpe-btn fpe-btn-primary" style="margin-top:16px;display:inline-block">Download File</a></div>';
-    }
-  }
 
-  function getModeForExt(ext) {
-    const modes = {
-      'js': 'javascript',
-      'json': 'json',
-      'html': 'html',
-      'css': 'css',
-      'php': 'php',
-      'xml': 'xml',
-      'sql': 'sql',
-      'md': 'markdown',
-      'txt': 'text',
-      'log': 'text'
-    };
-    return modes[ext] || 'text';
-  }
+    function openInGoogleEditor(fileUrl, editorType) {
+        // Google Docs/Sheets/Slides can open files via special URLs
+        const baseUrls = {
+            'docs': 'https://docs.google.com/document/d/',
+            'sheets': 'https://docs.google.com/spreadsheets/d/',
+            'slides': 'https://docs.google.com/presentation/d/'
+        };
 
-  function enableEditing() {
-    if (aceEditor) {
-      aceEditor.setReadOnly(false);
-      editBtn.textContent = 'Save';
-      editBtn.onclick = () => saveFile();
-    }
-  }
+        // For external files, Google provides an "open" URL that imports the file
+        const openUrl = `https://drive.google.com/viewerng/viewer?url=${encodeURIComponent(fileUrl)}`;
 
-  function saveFile() {
-    if (!aceEditor) return;
+        // Open in new window/tab
+        const editorWindow = window.open(openUrl, '_blank');
 
-    const content = aceEditor.getValue();
-    const formData = new FormData();
-    formData.append('path', currentFile);
-    formData.append('content', content);
-
-    editBtn.disabled = true;
-    editBtn.textContent = 'Saving...';
-
-    fetch(window.fileManagerAPI + '&s=save_file_content', {
-      method: 'POST',
-      body: formData
-    })
-    .then(r => r.json())
-    .then(res => {
-      if (res.status === 200) {
-        editBtn.textContent = 'Saved';
-        aceEditor.setReadOnly(true);
-        setTimeout(() => {
-          editBtn.textContent = 'Edit Online';
-          editBtn.onclick = () => enableEditing();
-        }, 2000);
-      } else {
-        alert('Failed to save: ' + (res.error || 'Unknown error'));
-        editBtn.textContent = 'Edit Online';
-      }
-      editBtn.disabled = false;
-    })
-    .catch(err => {
-      alert('Save failed: ' + err.message);
-      editBtn.disabled = false;
-      editBtn.textContent = 'Edit Online';
-    });
-  }
-
-  function openInGoogleEditor(fileUrl, editorType) {
-    // Google Docs/Sheets/Slides can open files via special URLs
-    const baseUrls = {
-      'docs': 'https://docs.google.com/document/d/',
-      'sheets': 'https://docs.google.com/spreadsheets/d/',
-      'slides': 'https://docs.google.com/presentation/d/'
-    };
-
-    // For external files, Google provides an "open" URL that imports the file
-    const openUrl = `https://drive.google.com/viewerng/viewer?url=${encodeURIComponent(fileUrl)}`;
-
-    // Open in new window/tab
-    const editorWindow = window.open(openUrl, '_blank');
-
-    if (!editorWindow) {
-      alert('Please allow popups to edit files in Google ' + editorType.charAt(0).toUpperCase() + editorType.slice(1));
-    } else {
-      // Show message about how to edit
-      const message = document.createElement('div');
-      message.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#4CAF50;color:white;padding:16px 24px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:30000;max-width:400px;font-size:14px;';
-      message.innerHTML = `<strong>Editing in Google ${editorType.charAt(0).toUpperCase() + editorType.slice(1)}</strong><br>
+        if (!editorWindow) {
+            alert('Please allow popups to edit files in Google ' + editorType.charAt(0).toUpperCase() + editorType
+                .slice(1));
+        } else {
+            // Show message about how to edit
+            const message = document.createElement('div');
+            message.style.cssText =
+                'position:fixed;bottom:20px;right:20px;background:#4CAF50;color:white;padding:16px 24px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:30000;max-width:400px;font-size:14px;';
+            message.innerHTML = `<strong>Editing in Google ${editorType.charAt(0).toUpperCase() + editorType.slice(1)}</strong><br>
       The document has been opened. To edit:<br>
       1. Click "Open with Google ${editorType.charAt(0).toUpperCase() + editorType.slice(1)}"<br>
       2. Make your changes<br>
       3. Download and re-upload the file`;
 
-      document.body.appendChild(message);
-      setTimeout(() => message.remove(), 8000);
+            document.body.appendChild(message);
+            setTimeout(() => message.remove(), 8000);
+        }
     }
-  }
 
-  function escapeHtml(text) {
-    const map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'};
-    return text.replace(/[&<>"']/g, m => map[m]);
-  }
-
-  closeBtn.onclick = () => modal.classList.remove('active');
-
-  document.addEventListener('click', '.fpe-tab', function(e) {
-    if (e.target.classList.contains('fpe-tab')) {
-      document.querySelectorAll('.fpe-tab').forEach(t => t.classList.remove('active'));
-      e.target.classList.add('active');
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
     }
-  });
 
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' && modal.classList.contains('active')) {
-      modal.classList.remove('active');
-    }
-  });
+    closeBtn.onclick = () => modal.classList.remove('active');
+
+    document.addEventListener('click', '.fpe-tab', function(e) {
+        if (e.target.classList.contains('fpe-tab')) {
+            document.querySelectorAll('.fpe-tab').forEach(t => t.classList.remove('active'));
+            e.target.classList.add('active');
+        }
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && modal.classList.contains('active')) {
+            modal.classList.remove('active');
+        }
+    });
 })();
 </script>

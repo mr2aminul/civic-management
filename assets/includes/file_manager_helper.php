@@ -4,16 +4,8 @@
  * Advanced features: Drive-like interface, R2 storage, quotas, permissions, recycle bin
  */
 
-// Prevent multiple inclusion of this file to avoid function redeclaration errors
-if (defined('FM_HELPER_LOADED')) {
-    return;
-}
-define('FM_HELPER_LOADED', true);
-
-if (file_exists(__DIR__ . "/../libraries/aws-sdk-php/vendor/autoload.php")) {
-    require_once __DIR__ . "/../libraries/aws-sdk-php/vendor/autoload.php";
-} elseif (file_exists(__DIR__ . "/../../vendor/autoload.php")) {
-    require_once __DIR__ . "/../../vendor/autoload.php";
+if (file_exists(LIBS_DIR . "/aws-sdk-php/vendor/autoload.php")) {
+    require_once LIBS_DIR . "/aws-sdk-php/vendor/autoload.php";
 }
 
 // Load environment variables
@@ -39,7 +31,6 @@ fm_load_env();
 // ============================================
 // Configuration
 // ============================================
-if (!function_exists('fm_get_config')) {
 function fm_get_config() {
     $autoUploadTypes = array_filter(array_map('trim', explode(',', getenv('AUTO_UPLOAD_TYPES') ?: 'sql,zip,xlsx,docx,pdf')));
     return [
@@ -58,12 +49,10 @@ function fm_get_config() {
         'backup_retention_days' => (int)(getenv('BACKUP_RETENTION_DAYS') ?: 30),
     ];
 }
-}
 
 // ============================================
 // Database Helpers
 // ============================================
-if (!function_exists('fm_get_db')) {
 function fm_get_db() {
     global $db, $sqlConnect, $_FM_DB_CONNECTION;
 
@@ -737,341 +726,367 @@ function fm_get_table_categories() {
     ];
 }
 
-function fm_restore_selective_tables($backupFilepath, $tables, $targetDb = null) {
-    if (empty($tables) || !is_array($tables)) {
-        return ['success' => false, 'message' => 'No tables specified'];
-    }
-
-    $dbUser = getenv('DB_USER') ?: '';
-    $dbPass = getenv('DB_PASSWORD') ?: '';
-    $dbName = $targetDb ?: (getenv('DB_NAME') ?: '');
-    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
-
-    if (!file_exists($backupFilepath)) {
-        return ['success' => false, 'message' => 'Backup file not found'];
-    }
-
-    $tempExtracted = tempnam(sys_get_temp_dir(), 'restore_') . '.sql';
-
-    $isGzipped = preg_match('/\.gz$/i', $backupFilepath);
-    if ($isGzipped) {
-        exec(sprintf('gunzip -c %s > %s', escapeshellarg($backupFilepath), escapeshellarg($tempExtracted)), $output, $code);
-        if ($code !== 0) {
-            @unlink($tempExtracted);
-            return ['success' => false, 'message' => 'Failed to extract backup file'];
+if (!function_exists('fm_restore_selective_tables')) {
+    function fm_restore_selective_tables($backupFilepath, $tables, $targetDb = null) {
+        if (empty($tables) || !is_array($tables)) {
+            return ['success' => false, 'message' => 'No tables specified'];
         }
-    } else {
-        copy($backupFilepath, $tempExtracted);
-    }
-
-    $tempFiltered = tempnam(sys_get_temp_dir(), 'filtered_') . '.sql';
-    $fp = fopen($tempExtracted, 'r');
-    $fw = fopen($tempFiltered, 'w');
-
-    if (!$fp || !$fw) {
-        @unlink($tempExtracted);
-        @unlink($tempFiltered);
-        return ['success' => false, 'message' => 'Failed to process backup file'];
-    }
-
-    $inTargetTable = false;
-    $currentTable = '';
-    $buffer = '';
-
-    while (($line = fgets($fp)) !== false) {
-        if (preg_match('/^-- Table structure for table [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
-            $currentTable = $matches[1];
-            $inTargetTable = in_array($currentTable, $tables);
-            $buffer = $line;
-        } elseif (preg_match('/^DROP TABLE IF EXISTS [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
-            $currentTable = $matches[1];
-            $inTargetTable = in_array($currentTable, $tables);
-            $buffer = $line;
-        } elseif (preg_match('/^CREATE TABLE [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
-            $currentTable = $matches[1];
-            $inTargetTable = in_array($currentTable, $tables);
-            $buffer .= $line;
-        } elseif (preg_match('/^INSERT INTO [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
-            $currentTable = $matches[1];
-            $inTargetTable = in_array($currentTable, $tables);
-            if ($inTargetTable) {
-                fwrite($fw, $buffer);
-                $buffer = '';
-                fwrite($fw, $line);
+    
+        $dbUser = getenv('DB_USER') ?: '';
+        $dbPass = getenv('DB_PASSWORD') ?: '';
+        $dbName = $targetDb ?: (getenv('DB_NAME') ?: '');
+        $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+    
+        if (!file_exists($backupFilepath)) {
+            return ['success' => false, 'message' => 'Backup file not found'];
+        }
+    
+        $tempExtracted = tempnam(sys_get_temp_dir(), 'restore_') . '.sql';
+    
+        $isGzipped = preg_match('/\.gz$/i', $backupFilepath);
+        if ($isGzipped) {
+            exec(sprintf('gunzip -c %s > %s', escapeshellarg($backupFilepath), escapeshellarg($tempExtracted)), $output, $code);
+            if ($code !== 0) {
+                @unlink($tempExtracted);
+                return ['success' => false, 'message' => 'Failed to extract backup file'];
             }
         } else {
-            if ($inTargetTable) {
-                if (!empty($buffer)) {
+            copy($backupFilepath, $tempExtracted);
+        }
+    
+        $tempFiltered = tempnam(sys_get_temp_dir(), 'filtered_') . '.sql';
+        $fp = fopen($tempExtracted, 'r');
+        $fw = fopen($tempFiltered, 'w');
+    
+        if (!$fp || !$fw) {
+            @unlink($tempExtracted);
+            @unlink($tempFiltered);
+            return ['success' => false, 'message' => 'Failed to process backup file'];
+        }
+    
+        $inTargetTable = false;
+        $currentTable = '';
+        $buffer = '';
+    
+        while (($line = fgets($fp)) !== false) {
+            if (preg_match('/^-- Table structure for table [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
+                $currentTable = $matches[1];
+                $inTargetTable = in_array($currentTable, $tables);
+                $buffer = $line;
+            } elseif (preg_match('/^DROP TABLE IF EXISTS [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
+                $currentTable = $matches[1];
+                $inTargetTable = in_array($currentTable, $tables);
+                $buffer = $line;
+            } elseif (preg_match('/^CREATE TABLE [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
+                $currentTable = $matches[1];
+                $inTargetTable = in_array($currentTable, $tables);
+                $buffer .= $line;
+            } elseif (preg_match('/^INSERT INTO [`\'"]?(\w+)[`\'"]?/i', $line, $matches)) {
+                $currentTable = $matches[1];
+                $inTargetTable = in_array($currentTable, $tables);
+                if ($inTargetTable) {
                     fwrite($fw, $buffer);
                     $buffer = '';
+                    fwrite($fw, $line);
                 }
-                fwrite($fw, $line);
             } else {
-                $buffer .= $line;
+                if ($inTargetTable) {
+                    if (!empty($buffer)) {
+                        fwrite($fw, $buffer);
+                        $buffer = '';
+                    }
+                    fwrite($fw, $line);
+                } else {
+                    $buffer .= $line;
+                }
             }
         }
-    }
-
-    fclose($fp);
-    fclose($fw);
-    @unlink($tempExtracted);
-
-    $mysql = trim(shell_exec('which mysql 2>/dev/null')) ?: '/usr/bin/mysql';
-    $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
-    file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
-
-    $cmd = sprintf(
-        '%s --defaults-extra-file=%s %s < %s 2>&1',
-        escapeshellcmd($mysql),
-        escapeshellarg($tmpcnf),
-        escapeshellarg($dbName),
-        escapeshellarg($tempFiltered)
-    );
-
-    exec($cmd, $output, $returnCode);
-    @unlink($tmpcnf);
-    @unlink($tempFiltered);
-
-    if ($returnCode === 0) {
+    
+        fclose($fp);
+        fclose($fw);
+        @unlink($tempExtracted);
+    
+        $mysql = trim(shell_exec('which mysql 2>/dev/null')) ?: '/usr/bin/mysql';
+        $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+        file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+    
+        $cmd = sprintf(
+            '%s --defaults-extra-file=%s %s < %s 2>&1',
+            escapeshellcmd($mysql),
+            escapeshellarg($tmpcnf),
+            escapeshellarg($dbName),
+            escapeshellarg($tempFiltered)
+        );
+    
+        exec($cmd, $output, $returnCode);
+        @unlink($tmpcnf);
+        @unlink($tempFiltered);
+    
+        if ($returnCode === 0) {
+            return [
+                'success' => true,
+                'message' => 'Selective restore completed for ' . count($tables) . ' table(s)',
+                'tables' => $tables
+            ];
+        }
+    
         return [
-            'success' => true,
-            'message' => 'Selective restore completed for ' . count($tables) . ' table(s)',
-            'tables' => $tables
+            'success' => false,
+            'message' => 'Restore failed',
+            'output' => implode("\n", $output)
         ];
     }
-
-    return [
-        'success' => false,
-        'message' => 'Restore failed',
-        'output' => implode("\n", $output)
-    ];
 }
 
-function fm_restore_by_category($backupFilepath, $categories, $targetDb = null) {
-    if (empty($categories) || !is_array($categories)) {
-        return ['success' => false, 'message' => 'No categories specified'];
-    }
-
-    $tableCategories = fm_get_table_categories();
-    $tables = [];
-
-    foreach ($categories as $category) {
-        if (isset($tableCategories[$category])) {
-            $tables = array_merge($tables, $tableCategories[$category]);
+if (!function_exists('fm_restore_by_category')) {
+    function fm_restore_by_category($backupFilepath, $categories, $targetDb = null) {
+        if (empty($categories) || !is_array($categories)) {
+            return ['success' => false, 'message' => 'No categories specified'];
         }
+    
+        $tableCategories = fm_get_table_categories();
+        $tables = [];
+    
+        foreach ($categories as $category) {
+            if (isset($tableCategories[$category])) {
+                $tables = array_merge($tables, $tableCategories[$category]);
+            }
+        }
+    
+        $tables = array_unique($tables);
+    
+        if (empty($tables)) {
+            return ['success' => false, 'message' => 'No tables found for specified categories'];
+        }
+    
+        return fm_restore_selective_tables($backupFilepath, $tables, $targetDb);
     }
-
-    $tables = array_unique($tables);
-
-    if (empty($tables)) {
-        return ['success' => false, 'message' => 'No tables found for specified categories'];
-    }
-
-    return fm_restore_selective_tables($backupFilepath, $tables, $targetDb);
 }
 
-function fm_cleanup_old_backups() {
-    $cfg = fm_get_config();
-    $cutoffDate = date('Y-m-d H:i:s', strtotime('-' . $cfg['backup_retention_days'] . ' days'));
-
-    $oldBackups = fm_query("SELECT * FROM backup_logs WHERE created_at < ? AND status = 'completed'", [$cutoffDate]);
-
-    $deleted = 0;
-    foreach ($oldBackups as $backup) {
-        if ($backup['file_path'] && file_exists($backup['file_path'])) {
-            @unlink($backup['file_path']);
-            $deleted++;
+if (!function_exists('fm_cleanup_old_backups')) {
+    function fm_cleanup_old_backups() {
+        $cfg = fm_get_config();
+        $cutoffDate = date('Y-m-d H:i:s', strtotime('-' . $cfg['backup_retention_days'] . ' days'));
+    
+        $oldBackups = fm_query("SELECT * FROM backup_logs WHERE created_at < ? AND status = 'completed'", [$cutoffDate]);
+    
+        $deleted = 0;
+        foreach ($oldBackups as $backup) {
+            if ($backup['file_path'] && file_exists($backup['file_path'])) {
+                @unlink($backup['file_path']);
+                $deleted++;
+            }
         }
+    
+        return ['deleted' => $deleted];
     }
-
-    return ['deleted' => $deleted];
 }
 
 // ============================================
 // Activity Logging
 // ============================================
-function fm_log_activity($userId, $fileId, $action, $details = []) {
-    return fm_insert('fm_activity_log', [
-        'user_id' => $userId,
-        'file_id' => $fileId,
-        'action' => $action,
-        'details' => json_encode($details),
-        'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
-        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
-        'created_at' => date('Y-m-d H:i:s')
-    ]);
+if (!function_exists('fm_log_activity')) {
+    function fm_log_activity($userId, $fileId, $action, $details = []) {
+        return fm_insert('fm_activity_log', [
+            'user_id' => $userId,
+            'file_id' => $fileId,
+            'action' => $action,
+            'details' => json_encode($details),
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
+            'created_at' => date('Y-m-d H:i:s')
+        ]);
+    }
 }
 
 // ============================================
 // Local File Operations
 // ============================================
-function fm_get_local_dir() {
-    $cfg = fm_get_config();
-    $dir = $cfg['local_storage'];
-    if (!file_exists($dir)) {
-        @mkdir($dir, 0755, true);
-    }
-    return $dir;
-}
-
-function fm_get_backup_dir() {
-    $cfg = fm_get_config();
-    $dir = $cfg['backup_dir'];
-    if (!file_exists($dir)) {
-        @mkdir($dir, 0755, true);
-    }
-    return $dir;
-}
-
-function fm_save_uploaded_local($fileData, $subdir = '') {
-    $localDir = fm_get_local_dir();
-    if ($subdir !== '') {
-        $localDir .= '/' . trim($subdir, '/');
-        if (!file_exists($localDir)) {
-            @mkdir($localDir, 0755, true);
+if (!function_exists('fm_get_local_dir')) {
+    function fm_get_local_dir() {
+        $cfg = fm_get_config();
+        $dir = $cfg['local_storage'];
+        if (!file_exists($dir)) {
+            @mkdir($dir, 0755, true);
         }
+        return $dir;
     }
-
-    if (!isset($fileData['tmp_name']) || !is_uploaded_file($fileData['tmp_name'])) {
-        return ['success' => false, 'message' => 'Invalid file upload'];
-    }
-
-    $safeName = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $fileData['name']);
-    $uniqueName = uniqid('file_') . '_' . $safeName;
-    $destPath = $localDir . '/' . $uniqueName;
-
-    if (!move_uploaded_file($fileData['tmp_name'], $destPath)) {
-        return ['success' => false, 'message' => 'Failed to move uploaded file'];
-    }
-
-    return ['success' => true, 'filename' => $uniqueName, 'path' => $destPath];
 }
 
-function fm_list_local_folder($relativePath = '') {
-    $baseDir = fm_get_local_dir();
-    $fullPath = $relativePath ? $baseDir . '/' . ltrim($relativePath, '/') : $baseDir;
-
-    if (!is_dir($fullPath)) {
-        return ['folders' => [], 'files' => []];
-    }
-
-    $folders = [];
-    $files = [];
-
-    $items = scandir($fullPath);
-    foreach ($items as $item) {
-        if ($item === '.' || $item === '..') continue;
-        $itemPath = $fullPath . '/' . $item;
-        $relPath = $relativePath ? trim($relativePath, '/') . '/' . $item : $item;
-
-        if (is_dir($itemPath)) {
-            $folders[] = [
-                'name' => $item,
-                'path' => $relPath,
-                'mtime' => filemtime($itemPath)
-            ];
-        } else {
-            $files[] = [
-                'name' => $item,
-                'path' => $relPath,
-                'size' => filesize($itemPath),
-                'mtime' => filemtime($itemPath)
-            ];
+if (!function_exists('fm_get_backup_dir')) {
+    function fm_get_backup_dir() {
+        $cfg = fm_get_config();
+        $dir = $cfg['backup_dir'];
+        if (!file_exists($dir)) {
+            @mkdir($dir, 0755, true);
         }
+        return $dir;
     }
-
-    return ['folders' => $folders, 'files' => $files];
 }
 
-function fm_get_file_info($relativePath) {
-    $baseDir = fm_get_local_dir();
-    $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
-
-    if (!file_exists($fullPath)) {
-        return null;
+if (!function_exists('fm_save_uploaded_local')) {
+    function fm_save_uploaded_local($fileData, $subdir = '') {
+        $localDir = fm_get_local_dir();
+        if ($subdir !== '') {
+            $localDir .= '/' . trim($subdir, '/');
+            if (!file_exists($localDir)) {
+                @mkdir($localDir, 0755, true);
+            }
+        }
+    
+        if (!isset($fileData['tmp_name']) || !is_uploaded_file($fileData['tmp_name'])) {
+            return ['success' => false, 'message' => 'Invalid file upload'];
+        }
+    
+        $safeName = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $fileData['name']);
+        $uniqueName = uniqid('file_') . '_' . $safeName;
+        $destPath = $localDir . '/' . $uniqueName;
+    
+        if (!move_uploaded_file($fileData['tmp_name'], $destPath)) {
+            return ['success' => false, 'message' => 'Failed to move uploaded file'];
+        }
+    
+        return ['success' => true, 'filename' => $uniqueName, 'path' => $destPath];
     }
-
-    return [
-        'name' => basename($fullPath),
-        'path' => $relativePath,
-        'full_path' => $fullPath,
-        'size' => filesize($fullPath),
-        'mtime' => filemtime($fullPath),
-        'is_dir' => is_dir($fullPath)
-    ];
 }
 
-function fm_delete_local_recursive($relativePath) {
-    $baseDir = fm_get_local_dir();
-    $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
-
-    if (!file_exists($fullPath)) {
-        return false;
-    }
-
-    if (is_dir($fullPath)) {
+if (!function_exists('fm_list_local_folder')) {
+    function fm_list_local_folder($relativePath = '') {
+        $baseDir = fm_get_local_dir();
+        $fullPath = $relativePath ? $baseDir . '/' . ltrim($relativePath, '/') : $baseDir;
+    
+        if (!is_dir($fullPath)) {
+            return ['folders' => [], 'files' => []];
+        }
+    
+        $folders = [];
+        $files = [];
+    
         $items = scandir($fullPath);
         foreach ($items as $item) {
             if ($item === '.' || $item === '..') continue;
             $itemPath = $fullPath . '/' . $item;
-            $itemRelPath = ltrim($relativePath, '/') . '/' . $item;
-            fm_delete_local_recursive($itemRelPath);
+            $relPath = $relativePath ? trim($relativePath, '/') . '/' . $item : $item;
+    
+            if (is_dir($itemPath)) {
+                $folders[] = [
+                    'name' => $item,
+                    'path' => $relPath,
+                    'mtime' => filemtime($itemPath)
+                ];
+            } else {
+                $files[] = [
+                    'name' => $item,
+                    'path' => $relPath,
+                    'size' => filesize($itemPath),
+                    'mtime' => filemtime($itemPath)
+                ];
+            }
         }
-        return @rmdir($fullPath);
-    } else {
-        return @unlink($fullPath);
+    
+        return ['folders' => $folders, 'files' => $files];
+    }
+}
+
+if (!function_exists('fm_get_file_info')) {
+    function fm_get_file_info($relativePath) {
+        $baseDir = fm_get_local_dir();
+        $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
+    
+        if (!file_exists($fullPath)) {
+            return null;
+        }
+    
+        return [
+            'name' => basename($fullPath),
+            'path' => $relativePath,
+            'full_path' => $fullPath,
+            'size' => filesize($fullPath),
+            'mtime' => filemtime($fullPath),
+            'is_dir' => is_dir($fullPath)
+        ];
+    }
+}
+
+if (!function_exists('fm_delete_local_recursive')) {
+    function fm_delete_local_recursive($relativePath) {
+        $baseDir = fm_get_local_dir();
+        $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
+    
+        if (!file_exists($fullPath)) {
+            return false;
+        }
+    
+        if (is_dir($fullPath)) {
+            $items = scandir($fullPath);
+            foreach ($items as $item) {
+                if ($item === '.' || $item === '..') continue;
+                $itemPath = $fullPath . '/' . $item;
+                $itemRelPath = ltrim($relativePath, '/') . '/' . $item;
+                fm_delete_local_recursive($itemRelPath);
+            }
+            return @rmdir($fullPath);
+        } else {
+            return @unlink($fullPath);
+        }
     }
 }
 
 // ============================================
 // R2 List with Caching
 // ============================================
-function fm_list_r2_cached($prefix = '', $maxAge = 300) {
-    $cacheKey = 'r2_list_' . md5($prefix);
-    $cached = fm_cache_get($cacheKey);
-    if ($cached !== null && (time() - $cached['time']) < $maxAge) {
-        return $cached['data'];
-    }
-
-    $s3 = fm_init_s3();
-    if (!$s3) {
-        return [];
-    }
-
-    $cfg = fm_get_config();
-    try {
-        $result = $s3->listObjectsV2([
-            'Bucket' => $cfg['r2_bucket'],
-            'Prefix' => $prefix
-        ]);
-
-        $objects = [];
-        if (isset($result['Contents'])) {
-            foreach ($result['Contents'] as $obj) {
-                $objects[] = [
-                    'key' => $obj['Key'],
-                    'size' => $obj['Size'],
-                    'modified' => $obj['LastModified']->format('Y-m-d H:i:s')
-                ];
-            }
+if (!function_exists('fm_list_r2_cached')) {
+    function fm_list_r2_cached($prefix = '', $maxAge = 300) {
+        $cacheKey = 'r2_list_' . md5($prefix);
+        $cached = fm_cache_get($cacheKey);
+        if ($cached !== null && (time() - $cached['time']) < $maxAge) {
+            return $cached['data'];
         }
-
-        fm_cache_set($cacheKey, ['time' => time(), 'data' => $objects]);
-        return $objects;
-    } catch (Exception $e) {
-        return [];
+    
+        $s3 = fm_init_s3();
+        if (!$s3) {
+            return [];
+        }
+    
+        $cfg = fm_get_config();
+        try {
+            $result = $s3->listObjectsV2([
+                'Bucket' => $cfg['r2_bucket'],
+                'Prefix' => $prefix
+            ]);
+    
+            $objects = [];
+            if (isset($result['Contents'])) {
+                foreach ($result['Contents'] as $obj) {
+                    $objects[] = [
+                        'key' => $obj['Key'],
+                        'size' => $obj['Size'],
+                        'modified' => $obj['LastModified']->format('Y-m-d H:i:s')
+                    ];
+                }
+            }
+    
+            fm_cache_set($cacheKey, ['time' => time(), 'data' => $objects]);
+            return $objects;
+        } catch (Exception $e) {
+            return [];
+        }
     }
 }
 
 // ============================================
 // Upload Queue Processing
 // ============================================
-function fm_get_pending_uploads($limit = 100) {
-    return fm_query("SELECT * FROM fm_upload_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?", [$limit]) ?: [];
+if (!function_exists('fm_get_pending_uploads')) {
+    function fm_get_pending_uploads($limit = 100) {
+        return fm_query("SELECT * FROM fm_upload_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?", [$limit]) ?: [];
+    }
 }
 
-function fm_process_upload_queue_worker($limit = 20) {
-    return fm_process_upload_queue($limit);
+if (!function_exists('fm_process_upload_queue_worker')) {
+    function fm_process_upload_queue_worker($limit = 20) {
+        return fm_process_upload_queue($limit);
+    }
 }
 
 // ============================================
@@ -1081,101 +1096,204 @@ function fm_process_upload_queue_worker($limit = 20) {
  * Check if shell commands are usable on this host.
  * We do a safe, non-destructive test.
  */
-function fm_can_use_shell()
-{
-    if (!function_exists('shell_exec') || !is_callable('shell_exec')) {
-        return false;
+if (!function_exists('fm_can_use_shell')) {
+    function fm_can_use_shell()
+    {
+        if (!function_exists('shell_exec') || !is_callable('shell_exec')) {
+            return false;
+        }
+        // Some hosts expose shell_exec but it's disabled. safe test:
+        $test = @shell_exec('echo SHELL_OK 2>/dev/null');
+        return (is_string($test) && strpos($test, 'SHELL_OK') !== false);
     }
-    // Some hosts expose shell_exec but it's disabled. safe test:
-    $test = @shell_exec('echo SHELL_OK 2>/dev/null');
-    return (is_string($test) && strpos($test, 'SHELL_OK') !== false);
 }
 
 /**
  * Try to find a binary using 'which' (if shell available) or fallback to common paths.
  */
-function fm_find_binary($name, $common_paths = [])
-{
-    if (fm_can_use_shell()) {
-        $which = trim(@shell_exec("which " . escapeshellarg($name) . " 2>/dev/null"));
-        if ($which !== '') return $which;
+if (!function_exists('fm_find_binary')) {
+    function fm_find_binary($name, $common_paths = [])
+    {
+        if (fm_can_use_shell()) {
+            $which = trim(@shell_exec("which " . escapeshellarg($name) . " 2>/dev/null"));
+            if ($which !== '') return $which;
+        }
+        foreach ($common_paths as $p) {
+            if (file_exists($p) && is_executable($p)) return $p;
+        }
+        return null;
     }
-    foreach ($common_paths as $p) {
-        if (file_exists($p) && is_executable($p)) return $p;
-    }
-    return null;
 }
 
 // ============================================
 // PHP fallback: create DB dump without shell
 // (streaming friendly, gzipped .sql.gz)
 // ============================================
-function fm_create_db_dump_php($prefix = 'db_backup')
-{
-    global $db;
-    $cfg = fm_get_config();
-    $backupDir = rtrim($cfg['backup_dir'], '/');
-    @mkdir($backupDir, 0755, true);
-
-    // Prepare file names
-    $timestamp = date('Ymd_His');
-    $filename = "{$prefix}_{$timestamp}.sql.gz";
-    $filepath = $backupDir . '/' . $filename;
-
-    // Get mysqli
-    $mysqli = null;
-    if (isset($db) && method_exists($db, 'mysqli')) {
-        $mysqli = $db->mysqli();
-    } elseif (function_exists('mysqli_connect')) {
-        $mysqli = mysqli_connect(getenv('DB_HOST') ?: '127.0.0.1', getenv('DB_USER') ?: '', getenv('DB_PASSWORD') ?: '', getenv('DB_NAME') ?: '');
-    }
-
-    if (!$mysqli) {
-        return ['success' => false, 'message' => 'No mysqli connection available for PHP fallback'];
-    }
-
-    // Temporary plain SQL file then gzip it streaming
-    $tmpFile = tempnam(sys_get_temp_dir(), 'dbdump_') . '.sql';
-    $fh = fopen($tmpFile, 'w');
-    if (!$fh) {
-        return ['success' => false, 'message' => 'Unable to create temporary file for dump'];
-    }
-
-    $dbName = (isset($db) && method_exists($db, 'getDbName')) ? $db->getDbName() : (getenv('DB_NAME') ?: '');
-    if ($dbName) fwrite($fh, "-- Database: `{$dbName}`\n");
-    fwrite($fh, "-- Dump time: " . date('Y-m-d H:i:s') . "\n\n");
-    fwrite($fh, "SET FOREIGN_KEY_CHECKS=0;\n\n");
-
-    // Get tables
-    $tables = [];
-    $res = $mysqli->query("SHOW TABLES");
-    if ($res) {
-        while ($row = $res->fetch_array()) {
-            $tables[] = $row[0];
+if (!function_exists('fm_create_db_dump_php')) {
+    function fm_create_db_dump_php($prefix = 'db_backup')
+    {
+        global $db;
+        $cfg = fm_get_config();
+        $backupDir = rtrim($cfg['backup_dir'], '/');
+        @mkdir($backupDir, 0755, true);
+    
+        // Prepare file names
+        $timestamp = date('Ymd_His');
+        $filename = "{$prefix}_{$timestamp}.sql.gz";
+        $filepath = $backupDir . '/' . $filename;
+    
+        // Get mysqli
+        $mysqli = null;
+        if (isset($db) && method_exists($db, 'mysqli')) {
+            $mysqli = $db->mysqli();
+        } elseif (function_exists('mysqli_connect')) {
+            $mysqli = mysqli_connect(getenv('DB_HOST') ?: '127.0.0.1', getenv('DB_USER') ?: '', getenv('DB_PASSWORD') ?: '', getenv('DB_NAME') ?: '');
         }
-        $res->free();
+    
+        if (!$mysqli) {
+            return ['success' => false, 'message' => 'No mysqli connection available for PHP fallback'];
+        }
+    
+        // Temporary plain SQL file then gzip it streaming
+        $tmpFile = tempnam(sys_get_temp_dir(), 'dbdump_') . '.sql';
+        $fh = fopen($tmpFile, 'w');
+        if (!$fh) {
+            return ['success' => false, 'message' => 'Unable to create temporary file for dump'];
+        }
+    
+        $dbName = (isset($db) && method_exists($db, 'getDbName')) ? $db->getDbName() : (getenv('DB_NAME') ?: '');
+        if ($dbName) fwrite($fh, "-- Database: `{$dbName}`\n");
+        fwrite($fh, "-- Dump time: " . date('Y-m-d H:i:s') . "\n\n");
+        fwrite($fh, "SET FOREIGN_KEY_CHECKS=0;\n\n");
+    
+        // Get tables
+        $tables = [];
+        $res = $mysqli->query("SHOW TABLES");
+        if ($res) {
+            while ($row = $res->fetch_array()) {
+                $tables[] = $row[0];
+            }
+            $res->free();
+        }
+    
+        foreach ($tables as $table) {
+            // Structure
+            if ($r = $mysqli->query("SHOW CREATE TABLE `{$table}`")) {
+                $row = $r->fetch_assoc();
+                $create = isset($row['Create Table']) ? $row['Create Table'] : (array_values($row)[1] ?? '');
+                fwrite($fh, "-- -----------------------------\n");
+                fwrite($fh, "-- Table structure for `{$table}`\n");
+                fwrite($fh, "DROP TABLE IF EXISTS `{$table}`;\n");
+                fwrite($fh, $create . ";\n\n");
+                $r->free();
+            }
+    
+            // Data (stream)
+            $res2 = $mysqli->query("SELECT * FROM `{$table}`", MYSQLI_USE_RESULT);
+            if ($res2) {
+                $firstRow = $res2->fetch_assoc();
+                if ($firstRow !== null) {
+                    $cols = array_keys($firstRow);
+                    fwrite($fh, "-- Data for table `{$table}`\n");
+                    fwrite($fh, "INSERT INTO `{$table}` (`" . implode("`,`", $cols) . "`) VALUES\n");
+                    $vals = array_map(function ($v) use ($mysqli) {
+                        if ($v === null) return 'NULL';
+                        return "'" . $mysqli->real_escape_string($v) . "'";
+                    }, array_values($firstRow));
+                    fwrite($fh, "(" . implode(", ", $vals) . ")\n");
+                    while ($row = $res2->fetch_assoc()) {
+                        $vals = array_map(function ($v) use ($mysqli) {
+                            if ($v === null) return 'NULL';
+                            return "'" . $mysqli->real_escape_string($v) . "'";
+                        }, array_values($row));
+                        fwrite($fh, ",(" . implode(", ", $vals) . ")\n");
+                    }
+                    fwrite($fh, ";\n\n");
+                }
+                $res2->close();
+            }
+        }
+    
+        fwrite($fh, "SET FOREIGN_KEY_CHECKS=1;\n");
+        fclose($fh);
+    
+        // gzip the temp file to target path (stream)
+        $in = fopen($tmpFile, 'rb');
+        if (!$in) {
+            @unlink($tmpFile);
+            return ['success' => false, 'message' => 'Unable to read temp dump file'];
+        }
+        $out = gzopen($filepath, 'wb9');
+        if (!$out) {
+            fclose($in);
+            @unlink($tmpFile);
+            return ['success' => false, 'message' => 'Unable to create gzip backup file'];
+        }
+        while (!feof($in)) {
+            $chunk = fread($in, 262144);
+            gzwrite($out, $chunk);
+        }
+        fclose($in);
+        gzclose($out);
+        @unlink($tmpFile);
+    
+        if (file_exists($filepath)) {
+            return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath)];
+        }
+        return ['success' => false, 'message' => 'Failed to write PHP-mode backup file'];
     }
+}
 
-    foreach ($tables as $table) {
+// ============================================
+// PHP fallback: create single table dump
+// ============================================
+if (!function_exists('fm_create_table_dump_php')) {
+    function fm_create_table_dump_php($tableName, $prefix = 'table_backup')
+    {
+        global $db;
+        $cfg = fm_get_config();
+        $backupDir = rtrim($cfg['backup_dir'], '/');
+        @mkdir($backupDir, 0755, true);
+    
+        if (empty($tableName)) {
+            return ['success' => false, 'message' => 'Table name is required'];
+        }
+    
+        $mysqli = (isset($db) && method_exists($db, 'mysqli')) ? $db->mysqli() : null;
+        if (!$mysqli) return ['success' => false, 'message' => 'No mysqli connection available'];
+    
+        $timestamp = date('Ymd_His');
+        $filename = "{$prefix}_{$tableName}_{$timestamp}.sql.gz";
+        $filepath = $backupDir . '/' . $filename;
+    
+        $tmpFile = tempnam(sys_get_temp_dir(), 'tabledump_') . '.sql';
+        $fh = fopen($tmpFile, 'w');
+        if (!$fh) return ['success' => false, 'message' => 'Unable to create temporary file for table dump'];
+    
+        fwrite($fh, "-- Table: `{$tableName}`\n");
+        fwrite($fh, "-- Dump time: " . date('Y-m-d H:i:s') . "\n\n");
+    
         // Structure
-        if ($r = $mysqli->query("SHOW CREATE TABLE `{$table}`")) {
+        $r = $mysqli->query("SHOW CREATE TABLE `{$tableName}`");
+        if ($r) {
             $row = $r->fetch_assoc();
             $create = isset($row['Create Table']) ? $row['Create Table'] : (array_values($row)[1] ?? '');
-            fwrite($fh, "-- -----------------------------\n");
-            fwrite($fh, "-- Table structure for `{$table}`\n");
-            fwrite($fh, "DROP TABLE IF EXISTS `{$table}`;\n");
+            fwrite($fh, "DROP TABLE IF EXISTS `{$tableName}`;\n");
             fwrite($fh, $create . ";\n\n");
             $r->free();
+        } else {
+            fclose($fh);
+            @unlink($tmpFile);
+            return ['success' => false, 'message' => 'Table does not exist or cannot fetch structure'];
         }
-
-        // Data (stream)
-        $res2 = $mysqli->query("SELECT * FROM `{$table}`", MYSQLI_USE_RESULT);
+    
+        // Data
+        $res2 = $mysqli->query("SELECT * FROM `{$tableName}`", MYSQLI_USE_RESULT);
         if ($res2) {
             $firstRow = $res2->fetch_assoc();
             if ($firstRow !== null) {
                 $cols = array_keys($firstRow);
-                fwrite($fh, "-- Data for table `{$table}`\n");
-                fwrite($fh, "INSERT INTO `{$table}` (`" . implode("`,`", $cols) . "`) VALUES\n");
+                fwrite($fh, "INSERT INTO `{$tableName}` (`" . implode("`,`", $cols) . "`) VALUES\n");
                 $vals = array_map(function ($v) use ($mysqli) {
                     if ($v === null) return 'NULL';
                     return "'" . $mysqli->real_escape_string($v) . "'";
@@ -1192,425 +1310,342 @@ function fm_create_db_dump_php($prefix = 'db_backup')
             }
             $res2->close();
         }
-    }
-
-    fwrite($fh, "SET FOREIGN_KEY_CHECKS=1;\n");
-    fclose($fh);
-
-    // gzip the temp file to target path (stream)
-    $in = fopen($tmpFile, 'rb');
-    if (!$in) {
-        @unlink($tmpFile);
-        return ['success' => false, 'message' => 'Unable to read temp dump file'];
-    }
-    $out = gzopen($filepath, 'wb9');
-    if (!$out) {
-        fclose($in);
-        @unlink($tmpFile);
-        return ['success' => false, 'message' => 'Unable to create gzip backup file'];
-    }
-    while (!feof($in)) {
-        $chunk = fread($in, 262144);
-        gzwrite($out, $chunk);
-    }
-    fclose($in);
-    gzclose($out);
-    @unlink($tmpFile);
-
-    if (file_exists($filepath)) {
-        return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath)];
-    }
-    return ['success' => false, 'message' => 'Failed to write PHP-mode backup file'];
-}
-
-// ============================================
-// PHP fallback: create single table dump
-// ============================================
-function fm_create_table_dump_php($tableName, $prefix = 'table_backup')
-{
-    global $db;
-    $cfg = fm_get_config();
-    $backupDir = rtrim($cfg['backup_dir'], '/');
-    @mkdir($backupDir, 0755, true);
-
-    if (empty($tableName)) {
-        return ['success' => false, 'message' => 'Table name is required'];
-    }
-
-    $mysqli = (isset($db) && method_exists($db, 'mysqli')) ? $db->mysqli() : null;
-    if (!$mysqli) return ['success' => false, 'message' => 'No mysqli connection available'];
-
-    $timestamp = date('Ymd_His');
-    $filename = "{$prefix}_{$tableName}_{$timestamp}.sql.gz";
-    $filepath = $backupDir . '/' . $filename;
-
-    $tmpFile = tempnam(sys_get_temp_dir(), 'tabledump_') . '.sql';
-    $fh = fopen($tmpFile, 'w');
-    if (!$fh) return ['success' => false, 'message' => 'Unable to create temporary file for table dump'];
-
-    fwrite($fh, "-- Table: `{$tableName}`\n");
-    fwrite($fh, "-- Dump time: " . date('Y-m-d H:i:s') . "\n\n");
-
-    // Structure
-    $r = $mysqli->query("SHOW CREATE TABLE `{$tableName}`");
-    if ($r) {
-        $row = $r->fetch_assoc();
-        $create = isset($row['Create Table']) ? $row['Create Table'] : (array_values($row)[1] ?? '');
-        fwrite($fh, "DROP TABLE IF EXISTS `{$tableName}`;\n");
-        fwrite($fh, $create . ";\n\n");
-        $r->free();
-    } else {
         fclose($fh);
-        @unlink($tmpFile);
-        return ['success' => false, 'message' => 'Table does not exist or cannot fetch structure'];
-    }
-
-    // Data
-    $res2 = $mysqli->query("SELECT * FROM `{$tableName}`", MYSQLI_USE_RESULT);
-    if ($res2) {
-        $firstRow = $res2->fetch_assoc();
-        if ($firstRow !== null) {
-            $cols = array_keys($firstRow);
-            fwrite($fh, "INSERT INTO `{$tableName}` (`" . implode("`,`", $cols) . "`) VALUES\n");
-            $vals = array_map(function ($v) use ($mysqli) {
-                if ($v === null) return 'NULL';
-                return "'" . $mysqli->real_escape_string($v) . "'";
-            }, array_values($firstRow));
-            fwrite($fh, "(" . implode(", ", $vals) . ")\n");
-            while ($row = $res2->fetch_assoc()) {
-                $vals = array_map(function ($v) use ($mysqli) {
-                    if ($v === null) return 'NULL';
-                    return "'" . $mysqli->real_escape_string($v) . "'";
-                }, array_values($row));
-                fwrite($fh, ",(" . implode(", ", $vals) . ")\n");
-            }
-            fwrite($fh, ";\n\n");
+    
+        // gzip
+        $in = fopen($tmpFile, 'rb');
+        if (!$in) { @unlink($tmpFile); return ['success' => false, 'message' => 'Unable to read temp table dump file']; }
+        $out = gzopen($filepath, 'wb9');
+        if (!$out) { fclose($in); @unlink($tmpFile); return ['success' => false, 'message' => 'Unable to create gzip file']; }
+        while (!feof($in)) {
+            $chunk = fread($in, 262144);
+            gzwrite($out, $chunk);
         }
-        $res2->close();
+        fclose($in);
+        gzclose($out);
+        @unlink($tmpFile);
+    
+        if (file_exists($filepath)) {
+            return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath)];
+        }
+        return ['success' => false, 'message' => 'Failed to create table backup'];
     }
-    fclose($fh);
-
-    // gzip
-    $in = fopen($tmpFile, 'rb');
-    if (!$in) { @unlink($tmpFile); return ['success' => false, 'message' => 'Unable to read temp table dump file']; }
-    $out = gzopen($filepath, 'wb9');
-    if (!$out) { fclose($in); @unlink($tmpFile); return ['success' => false, 'message' => 'Unable to create gzip file']; }
-    while (!feof($in)) {
-        $chunk = fread($in, 262144);
-        gzwrite($out, $chunk);
-    }
-    fclose($in);
-    gzclose($out);
-    @unlink($tmpFile);
-
-    if (file_exists($filepath)) {
-        return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath)];
-    }
-    return ['success' => false, 'message' => 'Failed to create table backup'];
 }
 
 // ============================================
 // PHP fallback: restore from .sql.gz
 // (uses mysqli multi_query in chunks)
 // ============================================
-function fm_restore_sql_gz_local_php($filepath, $targetDb = null)
-{
-    global $db;
-    if (!file_exists($filepath)) return ['success' => false, 'message' => 'Backup file not found'];
-
-    $mysqli = (isset($db) && method_exists($db, 'mysqli')) ? $db->mysqli() : null;
-    if (!$mysqli) return ['success' => false, 'message' => 'No mysqli connection available for PHP restore'];
-
-    $dbName = $targetDb ?: (isset($db) && method_exists($db, 'getDbName') ? $db->getDbName() : (getenv('DB_NAME') ?: ''));
-    if (!$dbName) return ['success' => false, 'message' => 'Target database not specified'];
-
-    $gz = gzopen($filepath, 'rb');
-    if (!$gz) return ['success' => false, 'message' => 'Unable to open gzip file'];
-
-    $sql = '';
-    $errors = [];
-    while (!gzeof($gz)) {
-        $chunk = gzread($gz, 262144);
-        if ($chunk === false) break;
-        $sql .= $chunk;
-
-        if (strlen($sql) > 1024 * 1024) {
-            $parts = explode(";\n", $sql);
-            $sql = array_pop($parts);
-            $toRun = implode(";\n", $parts);
-            if (trim($toRun) !== '') {
-                $toRun = "USE `" . $mysqli->real_escape_string($dbName) . "`;\n" . $toRun . ";\n";
-                if (!$mysqli->multi_query($toRun)) {
-                    $errors[] = $mysqli->error;
-                    while ($mysqli->more_results() && $mysqli->next_result()) { /* consume */ }
-                } else {
-                    do {
-                        if ($res = $mysqli->store_result()) { $res->free(); }
-                    } while ($mysqli->more_results() && $mysqli->next_result());
+if (!function_exists('fm_restore_sql_gz_local_php')) {
+    function fm_restore_sql_gz_local_php($filepath, $targetDb = null)
+    {
+        global $db;
+        if (!file_exists($filepath)) return ['success' => false, 'message' => 'Backup file not found'];
+    
+        $mysqli = (isset($db) && method_exists($db, 'mysqli')) ? $db->mysqli() : null;
+        if (!$mysqli) return ['success' => false, 'message' => 'No mysqli connection available for PHP restore'];
+    
+        $dbName = $targetDb ?: (isset($db) && method_exists($db, 'getDbName') ? $db->getDbName() : (getenv('DB_NAME') ?: ''));
+        if (!$dbName) return ['success' => false, 'message' => 'Target database not specified'];
+    
+        $gz = gzopen($filepath, 'rb');
+        if (!$gz) return ['success' => false, 'message' => 'Unable to open gzip file'];
+    
+        $sql = '';
+        $errors = [];
+        while (!gzeof($gz)) {
+            $chunk = gzread($gz, 262144);
+            if ($chunk === false) break;
+            $sql .= $chunk;
+    
+            if (strlen($sql) > 1024 * 1024) {
+                $parts = explode(";\n", $sql);
+                $sql = array_pop($parts);
+                $toRun = implode(";\n", $parts);
+                if (trim($toRun) !== '') {
+                    $toRun = "USE `" . $mysqli->real_escape_string($dbName) . "`;\n" . $toRun . ";\n";
+                    if (!$mysqli->multi_query($toRun)) {
+                        $errors[] = $mysqli->error;
+                        while ($mysqli->more_results() && $mysqli->next_result()) { /* consume */ }
+                    } else {
+                        do {
+                            if ($res = $mysqli->store_result()) { $res->free(); }
+                        } while ($mysqli->more_results() && $mysqli->next_result());
+                    }
                 }
             }
         }
-    }
-    gzclose($gz);
-
-    if (trim($sql) !== '') {
-        $toRun = "USE `" . $mysqli->real_escape_string($dbName) . "`;\n" . $sql;
-        if (substr(trim($toRun), -1) !== ';') $toRun .= ';';
-        if (!$mysqli->multi_query($toRun)) {
-            $errors[] = $mysqli->error;
-        } else {
-            do { if ($res = $mysqli->store_result()) { $res->free(); } } while ($mysqli->more_results() && $mysqli->next_result());
+        gzclose($gz);
+    
+        if (trim($sql) !== '') {
+            $toRun = "USE `" . $mysqli->real_escape_string($dbName) . "`;\n" . $sql;
+            if (substr(trim($toRun), -1) !== ';') $toRun .= ';';
+            if (!$mysqli->multi_query($toRun)) {
+                $errors[] = $mysqli->error;
+            } else {
+                do { if ($res = $mysqli->store_result()) { $res->free(); } } while ($mysqli->more_results() && $mysqli->next_result());
+            }
         }
+    
+        if (empty($errors)) return ['success' => true, 'message' => 'Database restored successfully (PHP mode)'];
+        return ['success' => false, 'message' => 'Restore completed with errors', 'errors' => $errors];
     }
-
-    if (empty($errors)) return ['success' => true, 'message' => 'Database restored successfully (PHP mode)'];
-    return ['success' => false, 'message' => 'Restore completed with errors', 'errors' => $errors];
 }
 
 // ============================================
 // Main functions: attempt shell mode then fallback to PHP
 // ============================================
 
-function fm_create_db_dump($prefix = 'db_backup') {
-    $cfg = fm_get_config();
-    @mkdir($cfg['backup_dir'], 0755, true);
-
-    // Shell path / binary detection
-    $shell_ok = fm_can_use_shell();
-    $mysqldump = fm_find_binary('mysqldump', ['/usr/bin/mysqldump', '/usr/local/bin/mysqldump']);
-
-    // Env creds (used for shell path)
-    $dbUser = getenv('DB_USER') ?: '';
-    $dbPass = getenv('DB_PASSWORD') ?: '';
-    $dbName = getenv('DB_NAME') ?: '';
-    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
-
-    // If shell available and mysqldump present AND DB_NAME configured -> shell route
-    if ($shell_ok && $mysqldump && $dbName) {
-        $timestamp = date('Ymd_His');
-        $filename = "{$prefix}_{$timestamp}.sql.gz";
-        $filepath = rtrim($cfg['backup_dir'], '/') . '/' . $filename;
-
-        $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
-        file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
-
-        $cmd = sprintf(
-            '%s --defaults-extra-file=%s --single-transaction --quick --lock-tables=false %s 2>&1 | gzip -c > %s',
-            escapeshellcmd($mysqldump),
-            escapeshellarg($tmpcnf),
-            escapeshellarg($dbName),
-            escapeshellarg($filepath)
-        );
-
-        $output = [];
-        @exec($cmd, $output, $returnCode);
-        @unlink($tmpcnf);
-
-        if (isset($returnCode) && $returnCode === 0 && file_exists($filepath)) {
-            return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath), 'mode' => 'shell'];
-        } else {
-            // Fall through to PHP fallback (but capture shell message)
-            $shellErr = implode("\n", (array)$output);
-            $phpResult = fm_create_db_dump_php($prefix);
-            if (isset($phpResult['success']) && $phpResult['success']) {
-                $phpResult['mode'] = 'php_fallback';
-                $phpResult['shell_error'] = $shellErr;
+if (!function_exists('fm_create_db_dump')) {
+    function fm_create_db_dump($prefix = 'db_backup') {
+        $cfg = fm_get_config();
+        @mkdir($cfg['backup_dir'], 0755, true);
+    
+        // Shell path / binary detection
+        $shell_ok = fm_can_use_shell();
+        $mysqldump = fm_find_binary('mysqldump', ['/usr/bin/mysqldump', '/usr/local/bin/mysqldump']);
+    
+        // Env creds (used for shell path)
+        $dbUser = getenv('DB_USER') ?: '';
+        $dbPass = getenv('DB_PASSWORD') ?: '';
+        $dbName = getenv('DB_NAME') ?: '';
+        $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+    
+        // If shell available and mysqldump present AND DB_NAME configured -> shell route
+        if ($shell_ok && $mysqldump && $dbName) {
+            $timestamp = date('Ymd_His');
+            $filename = "{$prefix}_{$timestamp}.sql.gz";
+            $filepath = rtrim($cfg['backup_dir'], '/') . '/' . $filename;
+    
+            $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+            file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+    
+            $cmd = sprintf(
+                '%s --defaults-extra-file=%s --single-transaction --quick --lock-tables=false %s 2>&1 | gzip -c > %s',
+                escapeshellcmd($mysqldump),
+                escapeshellarg($tmpcnf),
+                escapeshellarg($dbName),
+                escapeshellarg($filepath)
+            );
+    
+            $output = [];
+            @exec($cmd, $output, $returnCode);
+            @unlink($tmpcnf);
+    
+            if (isset($returnCode) && $returnCode === 0 && file_exists($filepath)) {
+                return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath), 'mode' => 'shell'];
             } else {
+                // Fall through to PHP fallback (but capture shell message)
+                $shellErr = implode("\n", (array)$output);
+                $phpResult = fm_create_db_dump_php($prefix);
+                if (isset($phpResult['success']) && $phpResult['success']) {
+                    $phpResult['mode'] = 'php_fallback';
+                    $phpResult['shell_error'] = $shellErr;
+                } else {
+                    $phpResult['mode'] = 'php_fallback';
+                    $phpResult['shell_error'] = $shellErr;
+                }
+                return $phpResult;
+            }
+        }
+    
+        // Shell not available or mysqldump not found => PHP fallback
+        return fm_create_db_dump_php($prefix);
+    }
+}
+
+if (!function_exists('fm_restore_sql_gz_local')) {
+    function fm_create_table_dump($tableName, $prefix = 'table_backup') {
+        $cfg = fm_get_config();
+        @mkdir($cfg['backup_dir'], 0755, true);
+    
+        $shell_ok = fm_can_use_shell();
+        $mysqldump = fm_find_binary('mysqldump', ['/usr/bin/mysqldump', '/usr/local/bin/mysqldump']);
+    
+        $dbUser = getenv('DB_USER') ?: '';
+        $dbPass = getenv('DB_PASSWORD') ?: '';
+        $dbName = getenv('DB_NAME') ?: '';
+        $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+    
+        if ($shell_ok && $mysqldump && $dbName && $tableName) {
+            $timestamp = date('Ymd_His');
+            $filename = "{$prefix}_{$tableName}_{$timestamp}.sql.gz";
+            $filepath = rtrim($cfg['backup_dir'], '/') . '/' . $filename;
+    
+            $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+            file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+    
+            $cmd = sprintf(
+                '%s --defaults-extra-file=%s --single-transaction %s %s 2>&1 | gzip -c > %s',
+                escapeshellcmd($mysqldump),
+                escapeshellarg($tmpcnf),
+                escapeshellarg($dbName),
+                escapeshellarg($tableName),
+                escapeshellarg($filepath)
+            );
+    
+            $output = [];
+            @exec($cmd, $output, $returnCode);
+            @unlink($tmpcnf);
+    
+            if (isset($returnCode) && $returnCode === 0 && file_exists($filepath)) {
+                return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath), 'mode' => 'shell'];
+            } else {
+                // Fall back to PHP table dump
+                $shellErr = implode("\n", (array)$output);
+                $phpResult = fm_create_table_dump_php($tableName, $prefix);
                 $phpResult['mode'] = 'php_fallback';
                 $phpResult['shell_error'] = $shellErr;
+                return $phpResult;
             }
-            return $phpResult;
         }
+    
+        return fm_create_table_dump_php($tableName, $prefix);
     }
-
-    // Shell not available or mysqldump not found => PHP fallback
-    return fm_create_db_dump_php($prefix);
 }
 
-function fm_create_table_dump($tableName, $prefix = 'table_backup') {
-    $cfg = fm_get_config();
-    @mkdir($cfg['backup_dir'], 0755, true);
-
-    $shell_ok = fm_can_use_shell();
-    $mysqldump = fm_find_binary('mysqldump', ['/usr/bin/mysqldump', '/usr/local/bin/mysqldump']);
-
-    $dbUser = getenv('DB_USER') ?: '';
-    $dbPass = getenv('DB_PASSWORD') ?: '';
-    $dbName = getenv('DB_NAME') ?: '';
-    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
-
-    if ($shell_ok && $mysqldump && $dbName && $tableName) {
-        $timestamp = date('Ymd_His');
-        $filename = "{$prefix}_{$tableName}_{$timestamp}.sql.gz";
-        $filepath = rtrim($cfg['backup_dir'], '/') . '/' . $filename;
-
-        $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
-        file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
-
-        $cmd = sprintf(
-            '%s --defaults-extra-file=%s --single-transaction %s %s 2>&1 | gzip -c > %s',
-            escapeshellcmd($mysqldump),
-            escapeshellarg($tmpcnf),
-            escapeshellarg($dbName),
-            escapeshellarg($tableName),
-            escapeshellarg($filepath)
-        );
-
-        $output = [];
-        @exec($cmd, $output, $returnCode);
-        @unlink($tmpcnf);
-
-        if (isset($returnCode) && $returnCode === 0 && file_exists($filepath)) {
-            return ['success' => true, 'filename' => $filename, 'path' => $filepath, 'size' => filesize($filepath), 'mode' => 'shell'];
-        } else {
-            // Fall back to PHP table dump
-            $shellErr = implode("\n", (array)$output);
-            $phpResult = fm_create_table_dump_php($tableName, $prefix);
-            $phpResult['mode'] = 'php_fallback';
-            $phpResult['shell_error'] = $shellErr;
-            return $phpResult;
-        }
-    }
-
-    return fm_create_table_dump_php($tableName, $prefix);
-}
-
-function fm_restore_sql_gz_local($filepath, $targetDb = null) {
-    $shell_ok = fm_can_use_shell();
-    $mysql = fm_find_binary('mysql', ['/usr/bin/mysql', '/usr/local/bin/mysql']);
-    $gunzip = fm_find_binary('gunzip', ['/bin/gunzip', '/usr/bin/gunzip', '/usr/bin/gzip']);
-
-    // Shell path DB creds
-    $dbUser = getenv('DB_USER') ?: '';
-    $dbPass = getenv('DB_PASSWORD') ?: '';
-    $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
-    $dbName = $targetDb ?: (getenv('DB_NAME') ?: '');
-
-    // If shell available and mysql binary exists and dbName present -> shell restore
-    if ($shell_ok && $mysql && $dbName && file_exists($filepath)) {
-        $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
-        file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
-
-        // Prefer gunzip if available, else use gzip -dc or gunzip -c
-        $decompress_cmd = $gunzip ? escapeshellcmd($gunzip) . ' -c ' : 'gzip -dc';
-
-        $cmd = sprintf(
-            '%s %s | %s --defaults-extra-file=%s %s 2>&1',
-            $decompress_cmd,
-            escapeshellarg($filepath),
-            escapeshellcmd($mysql),
-            escapeshellarg($tmpcnf),
-            escapeshellarg($dbName)
-        );
-
-        $output = [];
-        @exec($cmd, $output, $returnCode);
-        @unlink($tmpcnf);
-
-        if (isset($returnCode) && $returnCode === 0) {
-            return ['success' => true, 'message' => 'Database restored successfully', 'mode' => 'shell'];
-        } else {
-            // Fall back to PHP restore
-            $shellErr = implode("\n", (array)$output);
-            $phpResult = fm_restore_sql_gz_local_php($filepath, $targetDb);
-            $phpResult['mode'] = 'php_fallback';
-            $phpResult['shell_error'] = $shellErr;
-            return $phpResult;
-        }
-    }
-
-    // Otherwise use PHP restore
-    return fm_restore_sql_gz_local_php($filepath, $targetDb);
-}
-
-function fm_restore_selective_tables($filepath, $tableNames, $targetDb = null) {
-    global $db;
-    if (!file_exists($filepath)) return ['success' => false, 'message' => 'Backup file not found'];
-
-    $mysqli = (isset($db) && method_exists($db, 'mysqli')) ? $db->mysqli() : null;
-    if (!$mysqli) return ['success' => false, 'message' => 'No mysqli connection available'];
-
-    $dbName = $targetDb ?: (isset($db) && method_exists($db, 'getDbName') ? $db->getDbName() : (getenv('DB_NAME') ?: ''));
-    if (!$dbName) return ['success' => false, 'message' => 'Target database not specified'];
-
-    $gz = gzopen($filepath, 'rb');
-    if (!$gz) return ['success' => false, 'message' => 'Unable to open backup file'];
-
-    $currentTable = null;
-    $inTargetTable = false;
-    $tableData = [];
-    $buffer = '';
-
-    while (!gzeof($gz)) {
-        $line = gzgets($gz);
-        if ($line === false) break;
-
-        $buffer .= $line;
-
-        if (preg_match('/^DROP TABLE IF EXISTS `([^`]+)`/', $line, $matches)) {
-            $currentTable = $matches[1];
-            $inTargetTable = in_array($currentTable, $tableNames);
-            if ($inTargetTable) {
-                $tableData[$currentTable] = $line;
+if (!function_exists('fm_restore_sql_gz_local')) {
+    function fm_restore_sql_gz_local($filepath, $targetDb = null) {
+        $shell_ok = fm_can_use_shell();
+        $mysql = fm_find_binary('mysql', ['/usr/bin/mysql', '/usr/local/bin/mysql']);
+        $gunzip = fm_find_binary('gunzip', ['/bin/gunzip', '/usr/bin/gunzip', '/usr/bin/gzip']);
+    
+        // Shell path DB creds
+        $dbUser = getenv('DB_USER') ?: '';
+        $dbPass = getenv('DB_PASSWORD') ?: '';
+        $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+        $dbName = $targetDb ?: (getenv('DB_NAME') ?: '');
+    
+        // If shell available and mysql binary exists and dbName present -> shell restore
+        if ($shell_ok && $mysql && $dbName && file_exists($filepath)) {
+            $tmpcnf = tempnam(sys_get_temp_dir(), 'mycnf');
+            file_put_contents($tmpcnf, "[client]\nuser={$dbUser}\npassword=\"{$dbPass}\"\nhost={$dbHost}\n");
+    
+            // Prefer gunzip if available, else use gzip -dc or gunzip -c
+            $decompress_cmd = $gunzip ? escapeshellcmd($gunzip) . ' -c ' : 'gzip -dc';
+    
+            $cmd = sprintf(
+                '%s %s | %s --defaults-extra-file=%s %s 2>&1',
+                $decompress_cmd,
+                escapeshellarg($filepath),
+                escapeshellcmd($mysql),
+                escapeshellarg($tmpcnf),
+                escapeshellarg($dbName)
+            );
+    
+            $output = [];
+            @exec($cmd, $output, $returnCode);
+            @unlink($tmpcnf);
+    
+            if (isset($returnCode) && $returnCode === 0) {
+                return ['success' => true, 'message' => 'Database restored successfully', 'mode' => 'shell'];
+            } else {
+                // Fall back to PHP restore
+                $shellErr = implode("\n", (array)$output);
+                $phpResult = fm_restore_sql_gz_local_php($filepath, $targetDb);
+                $phpResult['mode'] = 'php_fallback';
+                $phpResult['shell_error'] = $shellErr;
+                return $phpResult;
             }
-        } elseif ($inTargetTable) {
-            $tableData[$currentTable] .= $line;
         }
+    
+        // Otherwise use PHP restore
+        return fm_restore_sql_gz_local_php($filepath, $targetDb);
+    }
+}
 
-        if (strlen($buffer) > 1024 * 1024) {
-            $buffer = '';
+if (!function_exists('fm_restore_selective_tables')) {
+    function fm_restore_selective_tables($filepath, $tableNames, $targetDb = null) {
+        global $db;
+        if (!file_exists($filepath)) return ['success' => false, 'message' => 'Backup file not found'];
+    
+        $mysqli = (isset($db) && method_exists($db, 'mysqli')) ? $db->mysqli() : null;
+        if (!$mysqli) return ['success' => false, 'message' => 'No mysqli connection available'];
+    
+        $dbName = $targetDb ?: (isset($db) && method_exists($db, 'getDbName') ? $db->getDbName() : (getenv('DB_NAME') ?: ''));
+        if (!$dbName) return ['success' => false, 'message' => 'Target database not specified'];
+    
+        $gz = gzopen($filepath, 'rb');
+        if (!$gz) return ['success' => false, 'message' => 'Unable to open backup file'];
+    
+        $currentTable = null;
+        $inTargetTable = false;
+        $tableData = [];
+        $buffer = '';
+    
+        while (!gzeof($gz)) {
+            $line = gzgets($gz);
+            if ($line === false) break;
+    
+            $buffer .= $line;
+    
+            if (preg_match('/^DROP TABLE IF EXISTS `([^`]+)`/', $line, $matches)) {
+                $currentTable = $matches[1];
+                $inTargetTable = in_array($currentTable, $tableNames);
+                if ($inTargetTable) {
+                    $tableData[$currentTable] = $line;
+                }
+            } elseif ($inTargetTable) {
+                $tableData[$currentTable] .= $line;
+            }
+    
+            if (strlen($buffer) > 1024 * 1024) {
+                $buffer = '';
+            }
         }
-    }
-    gzclose($gz);
-
-    $errors = [];
-    foreach ($tableData as $table => $sql) {
-        $sql = "USE `" . $mysqli->real_escape_string($dbName) . "`;\n" . $sql;
-        if (!$mysqli->multi_query($sql)) {
-            $errors[] = "Failed to restore table {$table}: " . $mysqli->error;
-            while ($mysqli->more_results() && $mysqli->next_result()) {}
-        } else {
-            do {
-                if ($res = $mysqli->store_result()) { $res->free(); }
-            } while ($mysqli->more_results() && $mysqli->next_result());
+        gzclose($gz);
+    
+        $errors = [];
+        foreach ($tableData as $table => $sql) {
+            $sql = "USE `" . $mysqli->real_escape_string($dbName) . "`;\n" . $sql;
+            if (!$mysqli->multi_query($sql)) {
+                $errors[] = "Failed to restore table {$table}: " . $mysqli->error;
+                while ($mysqli->more_results() && $mysqli->next_result()) {}
+            } else {
+                do {
+                    if ($res = $mysqli->store_result()) { $res->free(); }
+                } while ($mysqli->more_results() && $mysqli->next_result());
+            }
         }
+    
+        if (empty($errors)) {
+            return ['success' => true, 'message' => 'Selected tables restored successfully'];
+        }
+        return ['success' => false, 'message' => 'Restore completed with errors', 'errors' => $errors];
     }
-
-    if (empty($errors)) {
-        return ['success' => true, 'message' => 'Selected tables restored successfully'];
-    }
-    return ['success' => false, 'message' => 'Restore completed with errors', 'errors' => $errors];
 }
 
 // ============================================
 // retention enforcement (unchanged behavior)
 // ============================================
-function fm_enforce_retention() {
-    $cfg = fm_get_config();
-    $backupDir = $cfg['backup_dir'];
-    $retentionDays = isset($cfg['backup_retention_days']) ? (int)$cfg['backup_retention_days'] : 30;
-    $cutoffTime = time() - ($retentionDays * 86400);
-
-    $deleted = 0;
-    if (is_dir($backupDir)) {
-        $files = scandir($backupDir);
-        foreach ($files as $file) {
-            if ($file === '.' || $file === '..') continue;
-            $filePath = $backupDir . '/' . $file;
-            if (is_file($filePath) && filemtime($filePath) < $cutoffTime) {
-                if (@unlink($filePath)) {
-                    $deleted++;
+if (!function_exists('fm_enforce_retention')) {
+    function fm_enforce_retention() {
+        $cfg = fm_get_config();
+        $backupDir = $cfg['backup_dir'];
+        $retentionDays = isset($cfg['backup_retention_days']) ? (int)$cfg['backup_retention_days'] : 30;
+        $cutoffTime = time() - ($retentionDays * 86400);
+    
+        $deleted = 0;
+        if (is_dir($backupDir)) {
+            $files = scandir($backupDir);
+            foreach ($files as $file) {
+                if ($file === '.' || $file === '..') continue;
+                $filePath = $backupDir . '/' . $file;
+                if (is_file($filePath) && filemtime($filePath) < $cutoffTime) {
+                    if (@unlink($filePath)) {
+                        $deleted++;
+                    }
                 }
             }
         }
+    
+        // attempt to clear recycle bin / other housekeeping
+        if (function_exists('fm_empty_recycle_bin_auto')) {
+            fm_empty_recycle_bin_auto();
+        }
+    
+        return ['deleted_backups' => $deleted];
     }
-
-    // attempt to clear recycle bin / other housekeeping
-    if (function_exists('fm_empty_recycle_bin_auto')) {
-        fm_empty_recycle_bin_auto();
-    }
-
-    return ['deleted_backups' => $deleted];
 }
 
 
@@ -1619,103 +1654,117 @@ function fm_enforce_retention() {
 // ============================================
 $_FM_CACHE = [];
 
-function fm_cache_get($key) {
-    global $_FM_CACHE;
-    return $_FM_CACHE[$key] ?? null;
+if (!function_exists('fm_cache_get')) {
+    function fm_cache_get($key) {
+        global $_FM_CACHE;
+        return $_FM_CACHE[$key] ?? null;
+    }
 }
 
-function fm_cache_set($key, $value) {
-    global $_FM_CACHE;
-    $_FM_CACHE[$key] = $value;
+if (!function_exists('fm_cache_set')) {
+    function fm_cache_set($key, $value) {
+        global $_FM_CACHE;
+        $_FM_CACHE[$key] = $value;
+    }
 }
 
-function fm_cache_delete($key) {
-    global $_FM_CACHE;
-    unset($_FM_CACHE[$key]);
+if (!function_exists('fm_cache_delete')) {
+    function fm_cache_delete($key) {
+        global $_FM_CACHE;
+        unset($_FM_CACHE[$key]);
+    }
 }
 
 // ============================================
 // File URL Helper
 // ============================================
-function fm_get_file_url($relativePath) {
-    $cfg = fm_get_config();
-    $baseDir = fm_get_local_dir();
-    $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
-
-    if (!file_exists($fullPath)) {
-        return ['location' => 'none', 'url' => null];
-    }
-
-    $remoteKey = 'files/' . ltrim($relativePath, '/');
-
-    $fileRecord = fm_query("SELECT r2_uploaded, r2_key FROM fm_files WHERE filename = ? LIMIT 1", [basename($relativePath)]);
-
-    if (!empty($fileRecord) && $fileRecord[0]['r2_uploaded'] == 1 && !empty($fileRecord[0]['r2_key'])) {
-        if (!empty($cfg['r2_domain'])) {
-            $cdnUrl = rtrim($cfg['r2_domain'], '/') . '/' . ltrim($fileRecord[0]['r2_key'], '/');
-            return ['location' => 'r2', 'url' => $cdnUrl];
+if (!function_exists('fm_stream_file_download')) {
+    function fm_get_file_url($relativePath) {
+        $cfg = fm_get_config();
+        $baseDir = fm_get_local_dir();
+        $fullPath = $baseDir . '/' . ltrim($relativePath, '/');
+    
+        if (!file_exists($fullPath)) {
+            return ['location' => 'none', 'url' => null];
         }
-    }
-
-    return ['location' => 'local', 'url' => null];
-}
-
-function fm_stream_file_download($fullPath, $downloadName = '') {
-    if (!file_exists($fullPath)) {
-        header('HTTP/1.1 404 Not Found');
-        exit;
-    }
-
-    $fileName = $downloadName ?: basename($fullPath);
-
-    header('Content-Description: File Transfer');
-    header('Content-Type: application/octet-stream');
-    header('Content-Disposition: attachment; filename="' . basename($fileName) . '"');
-    header('Content-Length: ' . filesize($fullPath));
-    header('Cache-Control: must-revalidate');
-    header('Pragma: public');
-
-    readfile($fullPath);
-    exit;
-}
-
-function fm_sync_user_quota($userId) {
-    $baseDir = fm_get_local_dir();
-    $totalSize = 0;
-
-    $files = fm_query("SELECT filename, size FROM fm_files WHERE user_id = ? AND is_deleted = 0", [$userId]);
-    foreach ($files as $file) {
-        $path = $baseDir . '/' . $file['filename'];
-        if (file_exists($path)) {
-            $totalSize += filesize($path);
-        }
-    }
-
-    fm_update('fm_user_quotas', [
-        'used_bytes' => $totalSize,
-        'updated_at' => date('Y-m-d H:i:s')
-    ], ['user_id' => $userId]);
-
-    return $totalSize;
-}
-
-function fm_calculate_total_storage() {
-    $baseDir = fm_get_local_dir();
-    $totalSize = 0;
-
-    if (is_dir($baseDir)) {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($baseDir, RecursiveDirectoryIterator::SKIP_DOTS)
-        );
-
-        foreach ($iterator as $file) {
-            if ($file->isFile()) {
-                $totalSize += $file->getSize();
+    
+        $remoteKey = 'files/' . ltrim($relativePath, '/');
+    
+        $fileRecord = fm_query("SELECT r2_uploaded, r2_key FROM fm_files WHERE filename = ? LIMIT 1", [basename($relativePath)]);
+    
+        if (!empty($fileRecord) && $fileRecord[0]['r2_uploaded'] == 1 && !empty($fileRecord[0]['r2_key'])) {
+            if (!empty($cfg['r2_domain'])) {
+                $cdnUrl = rtrim($cfg['r2_domain'], '/') . '/' . ltrim($fileRecord[0]['r2_key'], '/');
+                return ['location' => 'r2', 'url' => $cdnUrl];
             }
         }
+    
+        return ['location' => 'local', 'url' => null];
     }
+}
 
-    return $totalSize;
+if (!function_exists('fm_stream_file_download')) {
+    function fm_stream_file_download($fullPath, $downloadName = '') {
+        if (!file_exists($fullPath)) {
+            header('HTTP/1.1 404 Not Found');
+            exit;
+        }
+    
+        $fileName = $downloadName ?: basename($fullPath);
+    
+        header('Content-Description: File Transfer');
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="' . basename($fileName) . '"');
+        header('Content-Length: ' . filesize($fullPath));
+        header('Cache-Control: must-revalidate');
+        header('Pragma: public');
+    
+        readfile($fullPath);
+        exit;
+    }
+}
+
+if (!function_exists('fm_sync_user_quota')) {
+    function fm_sync_user_quota($userId) {
+        $baseDir = fm_get_local_dir();
+        $totalSize = 0;
+    
+        $files = fm_query("SELECT filename, size FROM fm_files WHERE user_id = ? AND is_deleted = 0", [$userId]);
+        foreach ($files as $file) {
+            $path = $baseDir . '/' . $file['filename'];
+            if (file_exists($path)) {
+                $totalSize += filesize($path);
+            }
+        }
+    
+        fm_update('fm_user_quotas', [
+            'used_bytes' => $totalSize,
+            'updated_at' => date('Y-m-d H:i:s')
+        ], ['user_id' => $userId]);
+    
+        return $totalSize;
+    }
+}
+
+if (!function_exists('fm_calculate_total_storage')) {
+    function fm_calculate_total_storage() {
+        $baseDir = fm_get_local_dir();
+        $totalSize = 0;
+    
+        if (is_dir($baseDir)) {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($baseDir, RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+    
+            foreach ($iterator as $file) {
+                if ($file->isFile()) {
+                    $totalSize += $file->getSize();
+                }
+            }
+        }
+    
+        return $totalSize;
+    }
 }
 
 if (!function_exists('fm_format_bytes')) {
@@ -1790,4 +1839,3 @@ if (!function_exists('fm_log_debug')) {
         @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
     }
 }
-
