@@ -1088,6 +1088,483 @@ try {
             ]);
             exit;
 
+        // Get all common folders
+        case 'list_common_folders':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $folders = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC");
+            echo json_encode(['status' => 200, 'folders' => $folders ?: []]);
+            exit;
+
+        // Get all special folders (with access check)
+        case 'list_special_folders':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $isAdmin = _fm_is_admin();
+
+            if ($isAdmin) {
+                $folders = fm_query("SELECT * FROM fm_special_folders WHERE is_active = 1 ORDER BY sort_order ASC");
+            } else {
+                $folders = fm_query("
+                    SELECT sf.* FROM fm_special_folders sf
+                    INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                    WHERE sf.is_active = 1 AND fa.user_id = ?
+                    ORDER BY sf.sort_order ASC
+                ", [$userId]);
+            }
+
+            echo json_encode(['status' => 200, 'folders' => $folders ?: []]);
+            exit;
+
+        // Get recycle bin items
+        case 'list_recycle_bin':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $isAdmin = _fm_is_admin();
+
+            if ($isAdmin) {
+                $items = fm_query("
+                    SELECT rb.*, f.mime_type, f.file_type
+                    FROM fm_recycle_bin rb
+                    LEFT JOIN fm_files f ON rb.file_id = f.id
+                    WHERE rb.restored_at IS NULL AND rb.force_deleted_at IS NULL
+                    ORDER BY rb.deleted_at DESC
+                ");
+            } else {
+                $items = fm_query("
+                    SELECT rb.*, f.mime_type, f.file_type
+                    FROM fm_recycle_bin rb
+                    LEFT JOIN fm_files f ON rb.file_id = f.id
+                    WHERE rb.user_id = ? AND rb.restored_at IS NULL AND rb.force_deleted_at IS NULL
+                    ORDER BY rb.deleted_at DESC
+                ", [$userId]);
+            }
+
+            echo json_encode(['status' => 200, 'items' => $items ?: []]);
+            exit;
+
+        // Restore file from recycle bin
+        case 'restore_from_recycle':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $recycleId = (int)($_POST['recycle_id'] ?? 0);
+            if (!$recycleId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing recycle_id']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $isAdmin = _fm_is_admin();
+
+            $item = fm_query("SELECT * FROM fm_recycle_bin WHERE id = ? LIMIT 1", [$recycleId]);
+            if (empty($item)) {
+                echo json_encode(['status' => 404, 'error' => 'Recycle item not found']);
+                exit;
+            }
+
+            $item = $item[0];
+            if (!$isAdmin && $item['user_id'] != $userId) {
+                echo json_encode(['status' => 403, 'error' => 'Access denied']);
+                exit;
+            }
+
+            if ($item['can_restore'] != 1) {
+                echo json_encode(['status' => 400, 'error' => 'This item cannot be restored']);
+                exit;
+            }
+
+            // Restore file in database
+            fm_update('fm_files', [
+                'is_deleted' => 0,
+                'deleted_at' => null,
+                'deleted_by' => null
+            ], ['id' => $item['file_id']]);
+
+            // Mark as restored in recycle bin
+            fm_update('fm_recycle_bin', [
+                'restored_at' => date('Y-m-d H:i:s')
+            ], ['id' => $recycleId]);
+
+            // Update user quota
+            fm_update_user_quota($item['user_id'], $item['size']);
+
+            echo json_encode(['status' => 200, 'message' => 'File restored successfully']);
+            exit;
+
+        // Permanently delete from recycle bin (admin only)
+        case 'permanent_delete':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $recycleId = (int)($_POST['recycle_id'] ?? 0);
+            if (!$recycleId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing recycle_id']);
+                exit;
+            }
+
+            $item = fm_query("SELECT * FROM fm_recycle_bin WHERE id = ? LIMIT 1", [$recycleId]);
+            if (empty($item)) {
+                echo json_encode(['status' => 404, 'error' => 'Recycle item not found']);
+                exit;
+            }
+
+            $item = $item[0];
+            $userId = _fm_user_id();
+
+            // Mark as permanently deleted
+            fm_update('fm_recycle_bin', [
+                'force_deleted_at' => date('Y-m-d H:i:s'),
+                'force_deleted_by' => $userId,
+                'can_restore' => 0
+            ], ['id' => $recycleId]);
+
+            // Delete physical file if exists
+            $baseDir = fm_get_local_dir();
+            $fullPath = $baseDir . '/' . ltrim($item['original_path'], '/');
+            if (file_exists($fullPath)) {
+                @unlink($fullPath);
+            }
+
+            echo json_encode(['status' => 200, 'message' => 'File permanently deleted']);
+            exit;
+
+        // Clean recycle bin (admin only)
+        case 'clean_recycle_bin':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $now = date('Y-m-d H:i:s');
+
+            // Get expired items
+            $expiredItems = fm_query("
+                SELECT * FROM fm_recycle_bin
+                WHERE auto_delete_at <= ? AND restored_at IS NULL AND force_deleted_at IS NULL
+            ", [$now]);
+
+            $deletedCount = 0;
+            $baseDir = fm_get_local_dir();
+
+            foreach ($expiredItems as $item) {
+                // Mark as permanently deleted
+                fm_update('fm_recycle_bin', [
+                    'force_deleted_at' => $now,
+                    'force_deleted_by' => $userId,
+                    'can_restore' => 0
+                ], ['id' => $item['id']]);
+
+                // Delete physical file
+                $fullPath = $baseDir . '/' . ltrim($item['original_path'], '/');
+                if (file_exists($fullPath)) {
+                    @unlink($fullPath);
+                }
+
+                $deletedCount++;
+            }
+
+            echo json_encode([
+                'status' => 200,
+                'message' => "Cleaned {$deletedCount} expired items",
+                'deleted_count' => $deletedCount
+            ]);
+            exit;
+
+        // Get file versions
+        case 'list_file_versions':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $fileId = (int)($_GET['file_id'] ?? 0);
+            if (!$fileId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing file_id']);
+                exit;
+            }
+
+            $versions = fm_query("
+                SELECT * FROM fm_file_versions
+                WHERE file_id = ?
+                ORDER BY version_number DESC
+            ", [$fileId]);
+
+            echo json_encode(['status' => 200, 'versions' => $versions ?: []]);
+            exit;
+
+        // Create file share
+        case 'create_file_share':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $fileId = (int)($_POST['file_id'] ?? 0);
+            $sharedWith = isset($_POST['shared_with']) ? (int)$_POST['shared_with'] : null;
+            $shareType = $_POST['share_type'] ?? 'private';
+            $permission = $_POST['permission'] ?? 'view';
+            $expiresAt = $_POST['expires_at'] ?? null;
+
+            if (!$fileId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing file_id']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $shareToken = bin2hex(random_bytes(32));
+
+            $shareData = [
+                'file_id' => $fileId,
+                'shared_by' => $userId,
+                'shared_with' => $sharedWith,
+                'share_type' => $shareType,
+                'permission' => $permission,
+                'share_token' => $shareToken,
+                'expires_at' => $expiresAt,
+                'created_at' => date('Y-m-d H:i:s')
+            ];
+
+            $shareId = fm_insert('fm_file_shares', $shareData);
+
+            echo json_encode([
+                'status' => 200,
+                'share_id' => $shareId,
+                'share_token' => $shareToken,
+                'share_url' => 'share.php?token=' . $shareToken
+            ]);
+            exit;
+
+        // List file shares
+        case 'list_file_shares':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $fileId = (int)($_GET['file_id'] ?? 0);
+            if (!$fileId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing file_id']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $shares = fm_query("
+                SELECT fs.*, u.username as shared_with_username
+                FROM fm_file_shares fs
+                LEFT JOIN Wo_Users u ON fs.shared_with = u.user_id
+                WHERE fs.file_id = ? AND fs.shared_by = ? AND fs.is_active = 1
+                ORDER BY fs.created_at DESC
+            ", [$fileId, $userId]);
+
+            echo json_encode(['status' => 200, 'shares' => $shares ?: []]);
+            exit;
+
+        // Revoke file share
+        case 'revoke_file_share':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $shareId = (int)($_POST['share_id'] ?? 0);
+            if (!$shareId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing share_id']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            fm_update('fm_file_shares', ['is_active' => 0], ['id' => $shareId, 'shared_by' => $userId]);
+
+            echo json_encode(['status' => 200, 'message' => 'Share revoked successfully']);
+            exit;
+
+        // Get total system storage (admin only)
+        case 'get_system_storage':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            // Get VPS total storage limit
+            $vpsSetting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'vps_total_storage_bytes' LIMIT 1");
+            $vpsTotal = !empty($vpsSetting) ? (int)$vpsSetting[0]['setting_value'] : 64424509440; // 60 GB default
+
+            // Calculate total used by all users
+            $usedResult = fm_query("SELECT SUM(used_bytes) as total_used FROM fm_user_quotas");
+            $totalUsed = !empty($usedResult) ? (int)$usedResult[0]['total_used'] : 0;
+
+            // Get per-user breakdown
+            $userBreakdown = fm_query("
+                SELECT uq.user_id, uq.used_bytes, u.username
+                FROM fm_user_quotas uq
+                LEFT JOIN Wo_Users u ON uq.user_id = u.user_id
+                WHERE uq.used_bytes > 0
+                ORDER BY uq.used_bytes DESC
+                LIMIT 50
+            ");
+
+            echo json_encode([
+                'status' => 200,
+                'vps_total_bytes' => $vpsTotal,
+                'total_used_bytes' => $totalUsed,
+                'vps_total_formatted' => fm_format_bytes($vpsTotal),
+                'total_used_formatted' => fm_format_bytes($totalUsed),
+                'percentage_used' => $vpsTotal > 0 ? round(($totalUsed / $vpsTotal) * 100, 2) : 0,
+                'user_breakdown' => $userBreakdown ?: []
+            ]);
+            exit;
+
+        // Manage special folders (admin only)
+        case 'manage_special_folder':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $subAction = $_POST['sub_action'] ?? '';
+
+            if ($subAction === 'create') {
+                $folderData = [
+                    'folder_name' => $_POST['folder_name'] ?? '',
+                    'folder_key' => $_POST['folder_key'] ?? '',
+                    'folder_path' => $_POST['folder_path'] ?? '',
+                    'folder_icon' => $_POST['folder_icon'] ?? 'bi-folder-lock',
+                    'folder_color' => $_POST['folder_color'] ?? '#ef4444',
+                    'description' => $_POST['description'] ?? '',
+                    'sort_order' => (int)($_POST['sort_order'] ?? 0),
+                    'created_by' => _fm_user_id(),
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
+
+                $folderId = fm_insert('fm_special_folders', $folderData);
+                echo json_encode(['status' => 200, 'folder_id' => $folderId]);
+            } elseif ($subAction === 'grant_access') {
+                $accessData = [
+                    'folder_id' => (int)$_POST['folder_id'],
+                    'folder_type' => 'special',
+                    'user_id' => (int)$_POST['user_id'],
+                    'permission_level' => $_POST['permission_level'] ?? 'view',
+                    'granted_by' => _fm_user_id(),
+                    'granted_at' => date('Y-m-d H:i:s')
+                ];
+
+                fm_insert('fm_folder_access', $accessData);
+                echo json_encode(['status' => 200, 'message' => 'Access granted']);
+            } elseif ($subAction === 'revoke_access') {
+                $folderId = (int)$_POST['folder_id'];
+                $userId = (int)$_POST['user_id'];
+
+                fm_query("DELETE FROM fm_folder_access WHERE folder_id = ? AND user_id = ? AND folder_type = 'special'", [$folderId, $userId]);
+                echo json_encode(['status' => 200, 'message' => 'Access revoked']);
+            }
+            exit;
+
+        // Rename file or folder
+        case 'rename':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $oldPath = $_POST['old_path'] ?? '';
+            $newName = $_POST['new_name'] ?? '';
+
+            if (empty($oldPath) || empty($newName)) {
+                echo json_encode(['status' => 400, 'error' => 'Missing parameters']);
+                exit;
+            }
+
+            $baseDir = fm_get_local_dir();
+            $oldFullPath = $baseDir . '/' . ltrim($oldPath, '/');
+
+            $pathParts = explode('/', $oldPath);
+            array_pop($pathParts);
+            $pathParts[] = $newName;
+            $newPath = implode('/', $pathParts);
+            $newFullPath = $baseDir . '/' . ltrim($newPath, '/');
+
+            if (!file_exists($oldFullPath)) {
+                echo json_encode(['status' => 404, 'error' => 'File not found']);
+                exit;
+            }
+
+            if (file_exists($newFullPath)) {
+                echo json_encode(['status' => 409, 'error' => 'A file with this name already exists']);
+                exit;
+            }
+
+            if (@rename($oldFullPath, $newFullPath)) {
+                // Update database
+                fm_update('fm_files', [
+                    'filename' => $newName,
+                    'path' => $newPath,
+                    'updated_at' => date('Y-m-d H:i:s')
+                ], ['path' => $oldPath]);
+
+                echo json_encode(['status' => 200, 'new_path' => $newPath]);
+            } else {
+                echo json_encode(['status' => 500, 'error' => 'Failed to rename']);
+            }
+            exit;
+
+        // Move file or folder
+        case 'move':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $sourcePath = $_POST['source_path'] ?? '';
+            $targetPath = $_POST['target_path'] ?? '';
+
+            if (empty($sourcePath) || empty($targetPath)) {
+                echo json_encode(['status' => 400, 'error' => 'Missing parameters']);
+                exit;
+            }
+
+            $baseDir = fm_get_local_dir();
+            $sourceFullPath = $baseDir . '/' . ltrim($sourcePath, '/');
+            $targetFullPath = $baseDir . '/' . ltrim($targetPath, '/');
+
+            if (!file_exists($sourceFullPath)) {
+                echo json_encode(['status' => 404, 'error' => 'Source file not found']);
+                exit;
+            }
+
+            if (!is_dir(dirname($targetFullPath))) {
+                @mkdir(dirname($targetFullPath), 0755, true);
+            }
+
+            if (@rename($sourceFullPath, $targetFullPath)) {
+                // Update database
+                fm_update('fm_files', [
+                    'path' => $targetPath,
+                    'updated_at' => date('Y-m-d H:i:s')
+                ], ['path' => $sourcePath]);
+
+                echo json_encode(['status' => 200, 'new_path' => $targetPath]);
+            } else {
+                echo json_encode(['status' => 500, 'error' => 'Failed to move']);
+            }
+            exit;
+
         default:
             echo json_encode(['status' => 404, 'error' => 'Unknown action: ' . $action]);
             exit;
