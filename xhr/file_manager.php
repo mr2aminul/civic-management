@@ -1115,6 +1115,54 @@ try {
             ]);
             exit;
 
+        // Get initialization data (combines multiple requests)
+        case 'get_init_data':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $isAdmin = _fm_is_admin();
+
+            // Get common folders
+            $commonFolders = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC");
+
+            // Get special folders
+            if ($isAdmin) {
+                $specialFolders = fm_query("SELECT * FROM fm_special_folders WHERE is_active = 1 ORDER BY sort_order ASC");
+            } else {
+                $specialFolders = fm_query("
+                    SELECT sf.* FROM fm_special_folders sf
+                    INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                    WHERE sf.is_active = 1 AND fa.user_id = ?
+                    ORDER BY sf.sort_order ASC
+                ", [$userId]);
+            }
+
+            // Get user quota
+            $quota = fm_get_user_quota($userId);
+
+            // Check R2 status
+            $r2 = fm_init_s3();
+            $r2Enabled = !empty($r2);
+
+            echo json_encode([
+                'status' => 200,
+                'common_folders' => $commonFolders ?: [],
+                'special_folders' => $specialFolders ?: [],
+                'quota' => [
+                    'quota' => $quota['quota'],
+                    'used' => $quota['used'],
+                    'quota_formatted' => fm_format_bytes($quota['quota']),
+                    'used_formatted' => fm_format_bytes($quota['used']),
+                    'percentage' => $quota['quota'] > 0 ? round(($quota['used'] / $quota['quota']) * 100, 2) : 0
+                ],
+                'r2_enabled' => $r2Enabled,
+                'r2_status' => $r2Enabled ? 'Connected' : 'Not Configured'
+            ]);
+            exit;
+
         // Get all common folders
         case 'list_common_folders':
             if (!_fm_is_logged()) {

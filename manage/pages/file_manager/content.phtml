@@ -1068,6 +1068,47 @@ jQuery(function($) {
         return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
     }
 
+    function loadInitData() {
+        $.get(API + '&s=get_init_data', res => {
+            if (res && res.status === 200) {
+                // Update quota
+                if (res.quota) {
+                    $('#fm-storage-text').text(res.quota.used_formatted + ' / ' + res.quota.quota_formatted);
+                }
+
+                // Update R2 status
+                if (res.r2_status) {
+                    $('#fm-r2-status').text(res.r2_status);
+                }
+
+                // Load folder structure
+                if (res.common_folders && res.common_folders.length > 0) {
+                    res.common_folders.forEach(folder => {
+                        $('.fm-sidebar').append(`
+                            <div class="fm-sidebar-item" data-view="common" data-folder-id="${folder.id}">
+                                <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
+                            </div>
+                        `);
+                    });
+                }
+
+                if (res.special_folders && res.special_folders.length > 0) {
+                    $('.fm-sidebar').append('<div class="fm-sidebar-section">Special Folders</div>');
+                    res.special_folders.forEach(folder => {
+                        $('.fm-sidebar').append(`
+                            <div class="fm-sidebar-item" data-view="special" data-folder-id="${folder.id}">
+                                <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
+                            </div>
+                        `);
+                    });
+                }
+            }
+        }, 'json').fail(() => {
+            $('#fm-storage-text').text('--');
+            $('#fm-r2-status').text('Error');
+        });
+    }
+
     function loadQuota() {
         $.get(API + '&s=get_user_quota', res => {
             if (res && res.status == 200) $('#fm-storage-text').text(formatSize(res.used) + ' / ' +
@@ -1908,36 +1949,8 @@ jQuery(function($) {
         }, 'json');
     }
 
-    function loadFolderStructure() {
-        $.get(API + '&s=list_common_folders', res => {
-            if (res && res.status === 200 && res.folders) {
-                res.folders.forEach(folder => {
-                    $('.fm-sidebar').append(`
-                        <div class="fm-sidebar-item" data-view="common" data-folder-id="${folder.id}">
-                            <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
-                        </div>
-                    `);
-                });
-            }
-        }, 'json');
-
-        $.get(API + '&s=list_special_folders', res => {
-            if (res && res.status === 200 && res.folders && res.folders.length > 0) {
-                $('.fm-sidebar').append('<div class="fm-sidebar-section">Special Folders</div>');
-                res.folders.forEach(folder => {
-                    $('.fm-sidebar').append(`
-                        <div class="fm-sidebar-item" data-view="special" data-folder-id="${folder.id}">
-                            <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
-                        </div>
-                    `);
-                });
-            }
-        }, 'json');
-    }
-
+    // Initialize the file manager
     loadFolder('');
-    loadQuota();
-    checkR2();
-    loadFolderStructure();
+    loadInitData();
 });
 </script>

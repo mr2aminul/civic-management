@@ -972,6 +972,10 @@ if (!function_exists('fm_list_local_folder')) {
         $items = scandir($fullPath);
         foreach ($items as $item) {
             if ($item === '.' || $item === '..') continue;
+
+            // Skip .thumbnails folder
+            if ($item === '.thumbnails') continue;
+
             $itemPath = $fullPath . '/' . $item;
             $relPath = $relativePath ? trim($relativePath, '/') . '/' . $item : $item;
 
@@ -1001,7 +1005,7 @@ if (!function_exists('fm_list_local_folder')) {
                     // Get thumbnail path if available
                     if ($fileData['thumbnail_generated'] == 1) {
                         $thumb = fm_get_file_thumbnail($dbFile[0]['id'], 'medium');
-                        if ($thumb) {
+                        if ($thumb && !empty($thumb['thumbnail_path'])) {
                             $fileData['thumbnail'] = $thumb['thumbnail_path'];
                         }
                     }
