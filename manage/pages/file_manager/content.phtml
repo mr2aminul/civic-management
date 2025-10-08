@@ -1193,7 +1193,8 @@ jQuery(function($) {
                 const isFolder = item.type === 'folder';
                 const icon = isFolder ? 'bi-folder-fill' : getFileIcon(item.name);
                 const displayName = isFolder ? item.name : getOriginalFileName(item.name);
-                const r2Indicator = item.r2_uploaded == 1 ? '<div class="fm-r2-indicator" title="Stored on Cloudflare R2"><i class="bi bi-cloud-check-fill"></i> R2</div>' : '';
+                const r2Uploaded = parseInt(item.r2_uploaded) === 1;
+                const r2Indicator = r2Uploaded ? '<div class="fm-r2-indicator" title="Stored on Cloudflare R2"><i class="bi bi-cloud-check-fill"></i> R2</div>' : '';
 
                 const previewHtml = isFolder
                     ? `<div class="fm-item-preview-wrapper"><i class="fm-item-preview-icon bi ${icon}"></i></div>`
@@ -1214,7 +1215,11 @@ jQuery(function($) {
 
                 // Load thumbnail/preview for files
                 if (!isFolder && item.id) {
-                    loadFilePreview(item, $card.find('.fm-item-preview-wrapper'));
+                    const $previewWrapper = $card.find('.fm-item-preview-wrapper');
+                    if (r2Uploaded && r2Indicator) {
+                        $previewWrapper.append(r2Indicator);
+                    }
+                    loadFilePreview(item, $previewWrapper);
                 }
             });
         } else {
@@ -1234,7 +1239,8 @@ jQuery(function($) {
                 const icon = isFolder ? 'bi-folder-fill' : getFileIcon(item.name);
                 const date = item.mtime ? new Date(item.mtime * 1000).toLocaleDateString() : '--';
                 const displayName = isFolder ? item.name : getOriginalFileName(item.name);
-                const r2Badge = item.r2_uploaded == 1 ? '<span class="fm-list-r2-badge" title="Stored on Cloudflare R2"><i class="bi bi-cloud-check-fill"></i> R2</span>' : '';
+                const r2Uploaded = parseInt(item.r2_uploaded) === 1;
+                const r2Badge = r2Uploaded ? '<span class="fm-list-r2-badge" title="Stored on Cloudflare R2"><i class="bi bi-cloud-check-fill"></i> R2</span>' : '';
 
                 const $row = $(`
           <div class="fm-list-item" data-path="${escapeHtml(item.path)}" data-type="${item.type}" data-file-id="${item.id || ''}">
@@ -1801,22 +1807,17 @@ jQuery(function($) {
         const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz'];
         const audioExts = ['mp3', 'wav', 'ogg', 'flac'];
 
-        // For images, try to load actual thumbnail
+        // For images, try to load actual image or thumbnail
         if (imageExts.includes(ext) && item.id) {
-            $.get(API + '&s=get_thumbnail', { file_id: item.id, size: 'medium' }, res => {
-                if (res && res.status === 200 && res.thumbnail) {
-                    const thumbUrl = API + '&s=download_local&file=' + encodeURIComponent(res.thumbnail.thumbnail_path);
-                    $container.html(`<img src="${thumbUrl}" loading="lazy">`);
-                } else {
-                    // Try to generate thumbnail
-                    $.post(API + '&s=generate_thumbnail', { file_id: item.id, size: 'medium' }, res => {
-                        if (res && res.status === 200 && res.thumbnail) {
-                            const thumbUrl = API + '&s=download_local&file=' + encodeURIComponent(res.thumbnail.path);
-                            $container.html(`<img src="${thumbUrl}" loading="lazy">`);
-                        }
-                    }, 'json');
-                }
-            }, 'json');
+            // First try to display the actual image
+            const imageUrl = API + '&s=download_local&file=' + encodeURIComponent(item.path);
+            const imgHtml = `<img src="${imageUrl}" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fm-item-preview-icon bi bi-file-image\\' style=\\'color:#3b82f6\\'></i>';">`;
+            $container.html(imgHtml);
+
+            // Also try to generate thumbnail in background for future use
+            if (item.id) {
+                $.post(API + '&s=generate_thumbnail', { file_id: item.id, size: 'medium' }, () => {}, 'json').fail(() => {});
+            }
             return;
         }
 

@@ -1644,7 +1644,17 @@ try {
             }
 
             $baseDir = fm_get_local_dir();
-            $filePath = $baseDir . '/' . $file[0]['filename'];
+            $fileRecord = $file[0];
+
+            $filePath = $baseDir . '/' . $fileRecord['filename'];
+            if (!file_exists($filePath) && !empty($fileRecord['path'])) {
+                $filePath = $baseDir . '/' . ltrim($fileRecord['path'], '/');
+            }
+
+            if (!file_exists($filePath)) {
+                echo json_encode(['status' => 404, 'error' => 'Physical file not found: ' . $fileRecord['filename']]);
+                exit;
+            }
 
             $result = fm_generate_thumbnail($filePath, $fileId, $size);
 
@@ -1652,7 +1662,7 @@ try {
                 fm_update('fm_files', ['thumbnail_generated' => 1], ['id' => $fileId]);
                 echo json_encode(['status' => 200, 'thumbnail' => $result]);
             } else {
-                echo json_encode(['status' => 500, 'error' => $result['error']]);
+                echo json_encode(['status' => 500, 'error' => $result['error'] ?? 'Unknown error']);
             }
             exit;
 

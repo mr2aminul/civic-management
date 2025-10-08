@@ -478,13 +478,14 @@ function fm_empty_recycle_bin_auto() {
 // R2 Upload Queue
 // ============================================
 function fm_enqueue_r2_upload($localPath, $remoteKey, $fileId = null) {
-    return fm_insert('fm_upload_queue', [
+    $result = fm_insert('fm_upload_queue', [
         'file_id' => $fileId,
         'local_path' => $localPath,
         'remote_key' => $remoteKey,
         'status' => 'pending',
         'created_at' => date('Y-m-d H:i:s')
     ]);
+    return $result ? true : false;
 }
 
 function fm_process_upload_queue($limit = 20) {
