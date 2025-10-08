@@ -25,8 +25,9 @@ function _fm_is_admin() {
 }
 
 function _fm_user_id() {
-    if (function_exists('Wo_UserId')) return (int)Wo_UserId();
-    return isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
+    global $wo;
+    $user_id = $wo['user']['user_id'];
+    return ($user_id) ? $user_id : 0;
 }
 
 // Enable detailed error reporting for debugging
