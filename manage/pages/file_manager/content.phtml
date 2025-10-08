@@ -1216,10 +1216,7 @@ jQuery(function($) {
                 // Load thumbnail/preview for files
                 if (!isFolder && item.id) {
                     const $previewWrapper = $card.find('.fm-item-preview-wrapper');
-                    if (r2Uploaded && r2Indicator) {
-                        $previewWrapper.append(r2Indicator);
-                    }
-                    loadFilePreview(item, $previewWrapper);
+                    loadFilePreview(item, $previewWrapper, r2Uploaded);
                 }
             });
         } else {
@@ -1262,7 +1259,7 @@ jQuery(function($) {
 
                 // Load preview for list view
                 if (!isFolder && item.id) {
-                    loadFilePreview(item, $row.find('.fm-list-item-preview'));
+                    loadFilePreview(item, $row.find('.fm-list-item-preview'), r2Uploaded);
                 }
             });
         }
@@ -1798,7 +1795,7 @@ jQuery(function($) {
         editingFile = isEditing || false;
     };
 
-    function loadFilePreview(item, $container) {
+    function loadFilePreview(item, $container, isOnR2 = false) {
         const ext = item.name.split('.').pop().toLowerCase();
         const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
         const videoExts = ['mp4', 'webm', 'ogg', 'avi', 'mov'];
@@ -1807,17 +1804,39 @@ jQuery(function($) {
         const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz'];
         const audioExts = ['mp3', 'wav', 'ogg', 'flac'];
 
-        // For images, try to load actual image or thumbnail
-        if (imageExts.includes(ext) && item.id) {
-            // First try to display the actual image
-            const imageUrl = API + '&s=download_local&file=' + encodeURIComponent(item.path);
-            const imgHtml = `<img src="${imageUrl}" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fm-item-preview-icon bi bi-file-image\\' style=\\'color:#3b82f6\\'></i>';">`;
-            $container.html(imgHtml);
+        // Add R2 indicator if file is on R2
+        const r2Indicator = isOnR2 ? '<div class="fm-r2-indicator" title="Stored on Cloudflare R2"><i class="bi bi-cloud-check-fill"></i> R2</div>' : '';
 
-            // Also try to generate thumbnail in background for future use
-            if (item.id) {
-                $.post(API + '&s=generate_thumbnail', { file_id: item.id, size: 'medium' }, () => {}, 'json').fail(() => {});
-            }
+        // For images, try to load thumbnail first, fallback to actual image
+        if (imageExts.includes(ext) && item.id) {
+            // Try to get existing thumbnail
+            $.get(API + '&s=get_thumbnail', { file_id: item.id, size: 'medium' }, (thumbRes) => {
+                if (thumbRes && thumbRes.status === 200 && thumbRes.thumbnail) {
+                    // Use thumbnail if available
+                    const thumbUrl = API + '&s=download_local&file=' + encodeURIComponent(thumbRes.thumbnail.thumbnail_path);
+                    $container.html(`<img src="${thumbUrl}" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fm-item-preview-icon bi bi-file-image\\' style=\\'color:#3b82f6\\'></i>${r2Indicator}';">${r2Indicator}`);
+                } else {
+                    // Generate thumbnail if not available
+                    $.post(API + '&s=generate_thumbnail', { file_id: item.id, size: 'medium' }, (genRes) => {
+                        if (genRes && genRes.status === 200 && genRes.thumbnail && genRes.thumbnail.path) {
+                            const thumbUrl = API + '&s=download_local&file=' + encodeURIComponent(genRes.thumbnail.path);
+                            $container.html(`<img src="${thumbUrl}" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fm-item-preview-icon bi bi-file-image\\' style=\\'color:#3b82f6\\'></i>${r2Indicator}';">${r2Indicator}`);
+                        } else {
+                            // Fallback to original image
+                            const imageUrl = API + '&s=download_local&file=' + encodeURIComponent(item.path);
+                            $container.html(`<img src="${imageUrl}" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fm-item-preview-icon bi bi-file-image\\' style=\\'color:#3b82f6\\'></i>${r2Indicator}';">${r2Indicator}`);
+                        }
+                    }, 'json').fail(() => {
+                        // Fallback to original image
+                        const imageUrl = API + '&s=download_local&file=' + encodeURIComponent(item.path);
+                        $container.html(`<img src="${imageUrl}" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fm-item-preview-icon bi bi-file-image\\' style=\\'color:#3b82f6\\'></i>${r2Indicator}';">${r2Indicator}`);
+                    });
+                }
+            }, 'json').fail(() => {
+                // Fallback to original image
+                const imageUrl = API + '&s=download_local&file=' + encodeURIComponent(item.path);
+                $container.html(`<img src="${imageUrl}" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fm-item-preview-icon bi bi-file-image\\' style=\\'color:#3b82f6\\'></i>${r2Indicator}';">${r2Indicator}`);
+            });
             return;
         }
 
@@ -1853,7 +1872,13 @@ jQuery(function($) {
             previewColor = '#f59e0b';
         }
 
-        $container.find('.fm-item-preview-icon, i').removeClass().addClass(`bi ${previewIcon}`).css('color', previewColor);
+        // Update icon with R2 indicator
+        const iconHtml = `<i class="fm-item-preview-icon bi ${previewIcon}" style="color:${previewColor}"></i>${r2Indicator}`;
+        if ($container.hasClass('fm-item-preview-wrapper')) {
+            $container.html(iconHtml);
+        } else {
+            $container.find('.fm-item-preview-icon, i').first().replaceWith(iconHtml);
+        }
     }
 
     function createNewFile(type, extension) {
