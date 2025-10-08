@@ -159,7 +159,7 @@ Background upload queue for R2 cloud storage.
 - `/xhr/file_manager.php` - API endpoint for file operations
 - `/assets/includes/file_manager_helper.php` - Helper functions
 - `/assets/includes/functions_*.php` - Core functions
-- `/config.php` - Database and system configuration
+- `/config.php` - MySql Database and system configuration
 
 ### Cron Jobs
 - `/cron-backup.php` - Scheduled backups
