@@ -960,20 +960,20 @@ if (!function_exists('fm_list_local_folder')) {
     function fm_list_local_folder($relativePath = '') {
         $baseDir = fm_get_local_dir();
         $fullPath = $relativePath ? $baseDir . '/' . ltrim($relativePath, '/') : $baseDir;
-    
+
         if (!is_dir($fullPath)) {
             return ['folders' => [], 'files' => []];
         }
-    
+
         $folders = [];
         $files = [];
-    
+
         $items = scandir($fullPath);
         foreach ($items as $item) {
             if ($item === '.' || $item === '..') continue;
             $itemPath = $fullPath . '/' . $item;
             $relPath = $relativePath ? trim($relativePath, '/') . '/' . $item : $item;
-    
+
             if (is_dir($itemPath)) {
                 $folders[] = [
                     'name' => $item,
@@ -981,15 +981,25 @@ if (!function_exists('fm_list_local_folder')) {
                     'mtime' => filemtime($itemPath)
                 ];
             } else {
-                $files[] = [
+                $fileData = [
                     'name' => $item,
                     'path' => $relPath,
                     'size' => filesize($itemPath),
-                    'mtime' => filemtime($itemPath)
+                    'mtime' => filemtime($itemPath),
+                    'r2_uploaded' => 0
                 ];
+
+                // Check if file exists in database and has R2 status
+                $dbFile = fm_query("SELECT id, r2_uploaded FROM fm_files WHERE filename = ? OR path = ? LIMIT 1", [$item, $relPath]);
+                if (!empty($dbFile)) {
+                    $fileData['id'] = $dbFile[0]['id'];
+                    $fileData['r2_uploaded'] = (int)$dbFile[0]['r2_uploaded'];
+                }
+
+                $files[] = $fileData;
             }
         }
-    
+
         return ['folders' => $folders, 'files' => $files];
     }
 }
