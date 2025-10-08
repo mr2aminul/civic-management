@@ -987,14 +987,33 @@ if (!function_exists('fm_list_local_folder')) {
                     'path' => $relPath,
                     'size' => filesize($itemPath),
                     'mtime' => filemtime($itemPath),
-                    'r2_uploaded' => 0
+                    'r2_uploaded' => 0,
+                    'thumbnail' => ''
                 ];
 
                 // Check if file exists in database and has R2 status
-                $dbFile = fm_query("SELECT id, r2_uploaded FROM fm_files WHERE filename = ? OR path = ? LIMIT 1", [$item, $relPath]);
+                $dbFile = fm_query("SELECT id, r2_uploaded, r2_key, thumbnail_generated FROM fm_files WHERE filename = ? OR path = ? LIMIT 1", [$item, $relPath]);
                 if (!empty($dbFile)) {
                     $fileData['id'] = $dbFile[0]['id'];
                     $fileData['r2_uploaded'] = (int)$dbFile[0]['r2_uploaded'];
+                    $fileData['thumbnail_generated'] = (int)($dbFile[0]['thumbnail_generated'] ?? 0);
+
+                    // Get thumbnail path if available
+                    if ($fileData['thumbnail_generated'] == 1) {
+                        $thumb = fm_get_file_thumbnail($dbFile[0]['id'], 'medium');
+                        if ($thumb) {
+                            $fileData['thumbnail'] = $thumb['thumbnail_path'];
+                        }
+                    }
+                } else {
+                    // File exists on disk but not in database - try to check R2 directly
+                    $cfg = fm_get_config();
+                    if (!empty($cfg['r2_key']) && !empty($cfg['r2_secret'])) {
+                        $remoteKey = 'files/' . $relPath;
+                        if (fm_check_r2_exists($remoteKey)) {
+                            $fileData['r2_uploaded'] = 1;
+                        }
+                    }
                 }
 
                 $files[] = $fileData;
@@ -2162,5 +2181,50 @@ if (!function_exists('fm_is_file_on_r2')) {
         }
 
         return (int)$file[0]['r2_uploaded'] === 1;
+    }
+}
+
+// ============================================
+// Check if file exists on R2
+// ============================================
+if (!function_exists('fm_check_r2_exists')) {
+    function fm_check_r2_exists($remoteKey) {
+        $s3 = fm_init_s3();
+        if (!$s3) return false;
+
+        $cfg = fm_get_config();
+        try {
+            $s3->headObject([
+                'Bucket' => $cfg['r2_bucket'],
+                'Key' => $remoteKey
+            ]);
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+}
+
+// ============================================
+// Sync R2 status for all files
+// ============================================
+if (!function_exists('fm_sync_all_r2_status')) {
+    function fm_sync_all_r2_status($limit = 100) {
+        $files = fm_query("SELECT id, path, filename FROM fm_files WHERE r2_uploaded = 0 AND is_deleted = 0 LIMIT ?", [$limit]);
+
+        $updated = 0;
+        foreach ($files as $file) {
+            $remoteKey = 'files/' . ltrim($file['path'], '/');
+            if (fm_check_r2_exists($remoteKey)) {
+                fm_update('fm_files', [
+                    'r2_uploaded' => 1,
+                    'r2_key' => $remoteKey,
+                    'r2_uploaded_at' => date('Y-m-d H:i:s')
+                ], ['id' => $file['id']]);
+                $updated++;
+            }
+        }
+
+        return $updated;
     }
 }

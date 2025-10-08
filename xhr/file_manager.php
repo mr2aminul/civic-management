@@ -86,6 +86,23 @@ try {
             ]);
             exit;
 
+        // Sync R2 status for files
+        case 'sync_r2_status':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $limit = (int)($_POST['limit'] ?? 100);
+            $updated = fm_sync_all_r2_status($limit);
+
+            echo json_encode([
+                'status' => 200,
+                'updated' => $updated,
+                'message' => "Synced R2 status for {$updated} file(s)"
+            ]);
+            exit;
+
         // Create new folder
         case 'create_folder':
             if (!_fm_is_logged()) {
@@ -180,6 +197,16 @@ try {
                         'created_at' => date('Y-m-d H:i:s')
                     ];
                     $fileId = fm_insert('fm_files', $fileData);
+
+                    // Generate thumbnail for images
+                    $imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+                    $extension = strtolower(pathinfo($saveResult['filename'], PATHINFO_EXTENSION));
+                    if ($fileId && in_array($extension, $imageExts)) {
+                        $thumbResult = fm_generate_thumbnail($saveResult['path'], $fileId, 'medium');
+                        if ($thumbResult['success']) {
+                            fm_update('fm_files', ['thumbnail_generated' => 1], ['id' => $fileId]);
+                        }
+                    }
 
                     // Update user quota
                     fm_update_user_quota($userId, $fileSize);

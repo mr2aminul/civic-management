@@ -1809,6 +1809,12 @@ jQuery(function($) {
 
         // For images, try to load thumbnail first, fallback to actual image
         if (imageExts.includes(ext) && item.id) {
+            // Check if thumbnail path is already provided in the response
+            if (item.thumbnail && item.thumbnail !== '') {
+                const thumbUrl = API + '&s=download_local&file=' + encodeURIComponent(item.thumbnail);
+                $container.html(`<img src="${thumbUrl}" loading="lazy" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\'fm-item-preview-icon bi bi-file-image\' style=\'color:#3b82f6\'></i>${r2Indicator}';">${r2Indicator}`);
+                return;
+            }
             // Try to get existing thumbnail
             $.get(API + '&s=get_thumbnail', { file_id: item.id, size: 'medium' }, (thumbRes) => {
                 if (thumbRes && thumbRes.status === 200 && thumbRes.thumbnail) {
