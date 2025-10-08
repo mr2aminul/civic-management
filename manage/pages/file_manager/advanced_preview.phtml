@@ -121,12 +121,14 @@
     justify-content: center;
     background: #000;
     position: relative;
+    overflow: auto;
 }
 
 .fpe-image-viewer img {
-    max-width: 95%;
-    max-height: 95%;
+    max-width: none;
+    max-height: none;
     object-fit: contain;
+    transition: transform 0.2s;
 }
 
 .fpe-image-controls {
@@ -139,6 +141,7 @@
     padding: 8px 16px;
     display: flex;
     gap: 12px;
+    z-index: 10;
 }
 
 .fpe-image-controls button {
@@ -240,6 +243,7 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .fpe-editor-toolbar button {
@@ -274,6 +278,7 @@
     padding: 8px 12px;
     text-align: left;
     font-size: 13px;
+    min-width: 80px;
 }
 
 .fpe-spreadsheet-viewer th {
@@ -282,6 +287,13 @@
     position: sticky;
     top: 0;
     z-index: 1;
+}
+
+.fpe-spreadsheet-viewer input {
+    width: 100%;
+    border: 1px solid #d1d5db;
+    padding: 4px;
+    font-size: 13px;
 }
 
 @keyframes spin {
@@ -327,6 +339,58 @@
 .fpe-unsupported p {
     font-size: 14px;
     margin-bottom: 20px;
+}
+
+.sheet-tab {
+    padding: 6px 12px;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.sheet-tab.active {
+    background: #fff;
+    font-weight: 600;
+    border-color: #3b82f6;
+}
+
+.sheet-tab:hover {
+    background: #fff;
+}
+
+.doc-content {
+    padding: 40px 60px;
+    background: #fff;
+    overflow: auto;
+    height: calc(100% - 48px);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: #1f2937;
+}
+
+.doc-content h1, .doc-content h2, .doc-content h3 {
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+}
+
+.doc-content p {
+    margin-bottom: 1em;
+}
+
+.doc-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+}
+
+.doc-content table td, .doc-content table th {
+    border: 1px solid #e5e7eb;
+    padding: 8px;
 }
 </style>
 
@@ -379,6 +443,8 @@
     let currentUrl = null;
     let aceEditor = null;
     let currentMediaElement = null;
+    let currentWorkbook = null;
+    let imageScale = 1;
 
     window.openAdvancedFilePreview = function(filePath, fileName) {
         currentFile = filePath;
@@ -453,27 +519,42 @@
     }
 
     function renderImage(url) {
+        imageScale = 1;
         body.innerHTML = `
-            <div class="fpe-image-viewer">
-                <img src="${url}" id="fpe-preview-img">
+            <div class="fpe-image-viewer" id="image-viewer">
+                <img src="${url}" id="fpe-preview-img" style="max-width: 95%; max-height: 95%;">
                 <div class="fpe-image-controls">
                     <button onclick="zoomImage(1.2)" title="Zoom In"><i class="bi bi-zoom-in"></i></button>
                     <button onclick="zoomImage(0.8)" title="Zoom Out"><i class="bi bi-zoom-out"></i></button>
                     <button onclick="resetZoom()" title="Reset"><i class="bi bi-arrows-angle-contract"></i></button>
+                    <button onclick="rotateImage()" title="Rotate"><i class="bi bi-arrow-clockwise"></i></button>
                 </div>
             </div>
         `;
 
-        window.imageScale = 1;
+        let rotation = 0;
+
         window.zoomImage = function(factor) {
             const img = document.getElementById('fpe-preview-img');
-            window.imageScale *= factor;
-            img.style.transform = `scale(${window.imageScale})`;
+            imageScale *= factor;
+            img.style.transform = `scale(${imageScale}) rotate(${rotation}deg)`;
+            img.style.maxWidth = 'none';
+            img.style.maxHeight = 'none';
         };
+
         window.resetZoom = function() {
             const img = document.getElementById('fpe-preview-img');
-            window.imageScale = 1;
-            img.style.transform = 'scale(1)';
+            imageScale = 1;
+            rotation = 0;
+            img.style.transform = 'scale(1) rotate(0deg)';
+            img.style.maxWidth = '95%';
+            img.style.maxHeight = '95%';
+        };
+
+        window.rotateImage = function() {
+            const img = document.getElementById('fpe-preview-img');
+            rotation = (rotation + 90) % 360;
+            img.style.transform = `scale(${imageScale}) rotate(${rotation}deg)`;
         };
     }
 
@@ -482,15 +563,36 @@
     }
 
     function renderWordDocument(url, ext) {
-        body.innerHTML = `
-            <div class="fpe-office-viewer">
-                <iframe class="fpe-iframe" src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}"></iframe>
-            </div>
-        `;
-
-        editBtn.style.display = 'inline-flex';
-        editBtn.innerHTML = '<i class="bi bi-box-arrow-up-right"></i> <span>Edit in Google Docs</span>';
-        editBtn.onclick = () => window.open('https://docs.google.com/document/create', '_blank');
+        if (ext === 'docx' && typeof mammoth !== 'undefined') {
+            fetch(url)
+                .then(r => r.arrayBuffer())
+                .then(arrayBuffer => {
+                    return mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
+                })
+                .then(result => {
+                    body.innerHTML = `
+                        <div class="fpe-editor-toolbar">
+                            <span style="font-size: 13px; color: #6b7280;"><i class="bi bi-info-circle"></i> Read-only Document Preview</span>
+                        </div>
+                        <div class="doc-content">
+                            ${result.value}
+                        </div>
+                    `;
+                })
+                .catch(err => {
+                    body.innerHTML = `
+                        <div class="fpe-office-viewer">
+                            <iframe class="fpe-iframe" src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}"></iframe>
+                        </div>
+                    `;
+                });
+        } else {
+            body.innerHTML = `
+                <div class="fpe-office-viewer">
+                    <iframe class="fpe-iframe" src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}"></iframe>
+                </div>
+            `;
+        }
     }
 
     function renderSpreadsheet(url, ext) {
@@ -500,9 +602,32 @@
                 .then(data => {
                     if (typeof XLSX !== 'undefined') {
                         const workbook = XLSX.read(data, { type: 'array' });
+                        currentWorkbook = workbook;
+
+                        let tabsHtml = '<div class="fpe-editor-toolbar" style="display: flex; gap: 8px; overflow-x: auto;">';
+                        workbook.SheetNames.forEach((name, idx) => {
+                            tabsHtml += `<button onclick="window.switchSheet(${idx})" class="sheet-tab ${idx === 0 ? 'active' : ''}" data-sheet="${idx}">${escapeHtml(name)}</button>`;
+                        });
+                        tabsHtml += '</div>';
+
                         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                        const html = XLSX.utils.sheet_to_html(firstSheet);
-                        body.innerHTML = `<div class="fpe-spreadsheet-viewer">${html}</div>`;
+                        const html = XLSX.utils.sheet_to_html(firstSheet, { id: 'sheet-content' });
+
+                        body.innerHTML = tabsHtml + `<div class="fpe-spreadsheet-viewer" id="sheet-container">${html}</div>`;
+
+                        window.switchSheet = function(idx) {
+                            const sheet = workbook.Sheets[workbook.SheetNames[idx]];
+                            const html = XLSX.utils.sheet_to_html(sheet, { id: 'sheet-content' });
+                            document.getElementById('sheet-container').innerHTML = html;
+
+                            document.querySelectorAll('.sheet-tab').forEach((btn, i) => {
+                                if (i === idx) {
+                                    btn.classList.add('active');
+                                } else {
+                                    btn.classList.remove('active');
+                                }
+                            });
+                        };
                     } else {
                         body.innerHTML = `<iframe class="fpe-iframe" src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}"></iframe>`;
                     }
@@ -511,10 +636,6 @@
                     body.innerHTML = `<iframe class="fpe-iframe" src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}"></iframe>`;
                 });
         }
-
-        editBtn.style.display = 'inline-flex';
-        editBtn.innerHTML = '<i class="bi bi-box-arrow-up-right"></i> <span>Edit in Google Sheets</span>';
-        editBtn.onclick = () => window.open('https://sheets.google.com/create', '_blank');
     }
 
     function renderPresentation(url) {
@@ -523,10 +644,6 @@
                 <iframe class="fpe-iframe" src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}"></iframe>
             </div>
         `;
-
-        editBtn.style.display = 'inline-flex';
-        editBtn.innerHTML = '<i class="bi bi-box-arrow-up-right"></i> <span>Edit in Google Slides</span>';
-        editBtn.onclick = () => window.open('https://slides.google.com/create', '_blank');
     }
 
     function renderVideo(url, ext) {
@@ -559,10 +676,13 @@
 
         body.innerHTML = `
             <div class="fpe-audio-wrapper">
-                <audio id="fpe-audio" controls style="width: 80%; max-width: 500px;">
-                    <source src="${url}" type="${audioTypes[ext] || 'audio/mpeg'}">
-                    Your browser does not support the audio tag.
-                </audio>
+                <div style="text-align: center;">
+                    <i class="bi bi-music-note-beamed" style="font-size: 64px; color: rgba(255,255,255,0.8); margin-bottom: 20px;"></i>
+                    <audio id="fpe-audio" controls style="width: 80%; max-width: 500px; display: block; margin: 0 auto;">
+                        <source src="${url}" type="${audioTypes[ext] || 'audio/mpeg'}">
+                        Your browser does not support the audio tag.
+                    </audio>
+                </div>
             </div>
         `;
 
@@ -582,10 +702,11 @@
                     aceEditor.setReadOnly(true);
                     aceEditor.setOptions({
                         fontSize: "14px",
-                        showPrintMargin: false
+                        showPrintMargin: false,
+                        wrap: true
                     });
                 } else {
-                    body.innerHTML = '<pre style="padding:20px;overflow:auto;height:100%;margin:0;background:#fff">' + escapeHtml(text) + '</pre>';
+                    body.innerHTML = '<pre style="padding:20px;overflow:auto;height:100%;margin:0;background:#2d2d2d;color:#f8f8f2;font-family:monospace;line-height:1.5;">' + escapeHtml(text) + '</pre>';
                 }
 
                 tabs.style.display = 'flex';
@@ -603,7 +724,7 @@
                 <i class="bi bi-file-earmark"></i>
                 <h3>Preview not available</h3>
                 <p>This file type cannot be previewed in the browser.</p>
-                <a href="${url}" class="fpe-btn fpe-btn-primary" download="${fileName}">
+                <a href="${url}" class="fpe-btn fpe-btn-primary" download="${escapeHtml(fileName)}">
                     <i class="bi bi-download"></i> Download File
                 </a>
             </div>
@@ -622,6 +743,7 @@
     function enableEditing() {
         if (aceEditor) {
             aceEditor.setReadOnly(false);
+            aceEditor.focus();
             editBtn.innerHTML = '<i class="bi bi-save"></i> <span>Save</span>';
             editBtn.onclick = () => saveFile();
             if (typeof window.setPreviewModalState === 'function') {
@@ -688,6 +810,8 @@
             aceEditor.destroy();
             aceEditor = null;
         }
+        currentWorkbook = null;
+        imageScale = 1;
         if (typeof window.setPreviewModalState === 'function') {
             window.setPreviewModalState(false, false);
         }
@@ -699,6 +823,8 @@
         if (e.key === 'Escape' && modal.classList.contains('active')) {
             const isEditing = aceEditor && !aceEditor.getReadOnly();
             if (!isEditing) {
+                e.preventDefault();
+                e.stopPropagation();
                 closeModal();
             }
         }
@@ -717,7 +843,7 @@
         const map = {
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
         };
-        return text.replace(/[&<>"']/g, m => map[m]);
+        return String(text).replace(/[&<>"']/g, m => map[m]);
     }
 })();
 </script>
