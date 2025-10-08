@@ -2232,3 +2232,377 @@ if (!function_exists('fm_sync_all_r2_status')) {
         return $updated;
     }
 }
+
+// ============================================
+// Storage Management Functions
+// ============================================
+
+if (!function_exists('fm_create_user_storage_structure')) {
+    function fm_create_user_storage_structure($userId) {
+        $cfg = fm_get_config();
+        $baseDir = $cfg['local_storage'];
+        $userStoragePath = "Storage/{$userId}";
+        $fullPath = $baseDir . '/' . $userStoragePath;
+
+        if (!is_dir($fullPath)) {
+            if (!@mkdir($fullPath, 0755, true)) {
+                return ['success' => false, 'error' => 'Failed to create user storage directory'];
+            }
+        }
+
+        $defaultSubfolders = ['Documents', 'Images', 'Videos', 'Downloads', 'Archives'];
+        $setting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'default_user_subfolders' LIMIT 1");
+
+        if (!empty($setting) && !empty($setting[0]['setting_value'])) {
+            $customFolders = json_decode($setting[0]['setting_value'], true);
+            if (is_array($customFolders)) {
+                $defaultSubfolders = $customFolders;
+            }
+        }
+
+        foreach ($defaultSubfolders as $subfolder) {
+            $subfolderPath = $fullPath . '/' . $subfolder;
+            if (!is_dir($subfolderPath)) {
+                @mkdir($subfolderPath, 0755, true);
+            }
+
+            fm_query(
+                "INSERT IGNORE INTO fm_folder_structure (user_id, folder_name, folder_path, folder_type, is_default, created_at) VALUES (?, ?, ?, 'user', 1, NOW())",
+                [$userId, $subfolder, "{$userStoragePath}/{$subfolder}"]
+            );
+        }
+
+        fm_query(
+            "INSERT IGNORE INTO fm_user_storage_tracking (user_id, created_at) VALUES (?, NOW())",
+            [$userId]
+        );
+
+        return ['success' => true, 'path' => $userStoragePath];
+    }
+}
+
+if (!function_exists('fm_get_user_storage_usage')) {
+    function fm_get_user_storage_usage($userId) {
+        $result = fm_query(
+            "SELECT * FROM fm_user_storage_tracking WHERE user_id = ? LIMIT 1",
+            [$userId]
+        );
+
+        if (empty($result)) {
+            fm_query(
+                "INSERT INTO fm_user_storage_tracking (user_id, created_at) VALUES (?, NOW())",
+                [$userId]
+            );
+            return [
+                'user_id' => $userId,
+                'used_bytes' => 0,
+                'quota_bytes' => fm_get_config()['default_quota'],
+                'total_files' => 0,
+                'total_folders' => 0,
+                'r2_uploaded_bytes' => 0,
+                'local_only_bytes' => 0,
+                'usage_percentage' => 0
+            ];
+        }
+
+        $data = $result[0];
+        $usagePercent = $data['quota_bytes'] > 0
+            ? round(($data['used_bytes'] / $data['quota_bytes']) * 100, 2)
+            : 0;
+
+        return [
+            'user_id' => $data['user_id'],
+            'used_bytes' => (int)$data['used_bytes'],
+            'quota_bytes' => (int)$data['quota_bytes'],
+            'total_files' => (int)$data['total_files'],
+            'total_folders' => (int)$data['total_folders'],
+            'r2_uploaded_bytes' => (int)$data['r2_uploaded_bytes'],
+            'local_only_bytes' => (int)$data['local_only_bytes'],
+            'usage_percentage' => $usagePercent,
+            'used_formatted' => fm_format_bytes_enhanced($data['used_bytes']),
+            'quota_formatted' => fm_format_bytes_enhanced($data['quota_bytes']),
+            'last_upload_at' => $data['last_upload_at'] ?? null
+        ];
+    }
+}
+
+if (!function_exists('fm_get_global_storage_usage')) {
+    function fm_get_global_storage_usage() {
+        $result = fm_query("SELECT * FROM v_global_storage_summary LIMIT 1");
+
+        if (empty($result)) {
+            return [
+                'total_users' => 0,
+                'total_files_count' => 0,
+                'total_used_bytes' => 0,
+                'vps_total_bytes' => 64424509440,
+                'global_usage_percentage' => 0,
+                'total_r2_bytes' => 0,
+                'total_local_only_bytes' => 0
+            ];
+        }
+
+        $data = $result[0];
+        return [
+            'total_users' => (int)$data['total_users'],
+            'total_files_count' => (int)$data['total_files_count'],
+            'total_used_bytes' => (int)$data['total_used_bytes'],
+            'vps_total_bytes' => (int)$data['vps_total_bytes'],
+            'global_usage_percentage' => (float)$data['global_usage_percentage'],
+            'total_r2_bytes' => (int)$data['total_r2_bytes'],
+            'total_local_only_bytes' => (int)$data['total_local_only_bytes'],
+            'used_formatted' => fm_format_bytes_enhanced($data['total_used_bytes']),
+            'quota_formatted' => fm_format_bytes_enhanced($data['vps_total_bytes']),
+            'available_bytes' => (int)$data['vps_total_bytes'] - (int)$data['total_used_bytes'],
+            'available_formatted' => fm_format_bytes_enhanced((int)$data['vps_total_bytes'] - (int)$data['total_used_bytes'])
+        ];
+    }
+}
+
+if (!function_exists('fm_get_all_users_storage_breakdown')) {
+    function fm_get_all_users_storage_breakdown($limit = 50, $offset = 0) {
+        $result = fm_query(
+            "SELECT ust.*, u.username, u.email
+             FROM fm_user_storage_tracking ust
+             LEFT JOIN Wo_Users u ON ust.user_id = u.user_id
+             WHERE ust.used_bytes > 0
+             ORDER BY ust.used_bytes DESC
+             LIMIT ? OFFSET ?",
+            [$limit, $offset]
+        );
+
+        if (empty($result)) {
+            return [];
+        }
+
+        $breakdown = [];
+        foreach ($result as $row) {
+            $usagePercent = $row['quota_bytes'] > 0
+                ? round(($row['used_bytes'] / $row['quota_bytes']) * 100, 2)
+                : 0;
+
+            $breakdown[] = [
+                'user_id' => (int)$row['user_id'],
+                'username' => $row['username'] ?? 'Unknown',
+                'email' => $row['email'] ?? '',
+                'used_bytes' => (int)$row['used_bytes'],
+                'quota_bytes' => (int)$row['quota_bytes'],
+                'used_formatted' => fm_format_bytes_enhanced($row['used_bytes']),
+                'quota_formatted' => fm_format_bytes_enhanced($row['quota_bytes']),
+                'usage_percentage' => $usagePercent,
+                'total_files' => (int)$row['total_files'],
+                'total_folders' => (int)$row['total_folders'],
+                'r2_uploaded_bytes' => (int)$row['r2_uploaded_bytes'],
+                'local_only_bytes' => (int)$row['local_only_bytes'],
+                'last_upload_at' => $row['last_upload_at']
+            ];
+        }
+
+        return $breakdown;
+    }
+}
+
+if (!function_exists('fm_update_storage_tracking')) {
+    function fm_update_storage_tracking($userId) {
+        fm_query("CALL sp_update_user_storage_stats(?)", [$userId]);
+    }
+}
+
+if (!function_exists('fm_get_common_folders_with_stats')) {
+    function fm_get_common_folders_with_stats() {
+        $result = fm_query("SELECT * FROM v_common_folders_summary ORDER BY folder_name ASC");
+
+        if (empty($result)) {
+            return [];
+        }
+
+        $folders = [];
+        foreach ($result as $row) {
+            $folders[] = [
+                'id' => (int)$row['id'],
+                'folder_name' => $row['folder_name'],
+                'folder_key' => $row['folder_key'],
+                'folder_path' => $row['folder_path'],
+                'total_files' => (int)$row['actual_file_count'],
+                'total_size_bytes' => (int)$row['actual_size_bytes'],
+                'total_size_formatted' => fm_format_bytes_enhanced($row['actual_size_bytes']),
+                'is_active' => (int)$row['is_active'] === 1
+            ];
+        }
+
+        return $folders;
+    }
+}
+
+if (!function_exists('fm_get_special_folders_with_stats')) {
+    function fm_get_special_folders_with_stats($userId = null) {
+        if ($userId === null) {
+            $result = fm_query("SELECT * FROM v_special_folders_summary ORDER BY folder_name ASC");
+        } else {
+            $result = fm_query(
+                "SELECT sf.*, COUNT(f.id) as actual_file_count, COALESCE(SUM(f.size), 0) as actual_size_bytes
+                 FROM fm_special_folders sf
+                 INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                 LEFT JOIN fm_files f ON f.special_folder_id = sf.id AND f.is_deleted = 0
+                 WHERE sf.is_active = 1 AND fa.user_id = ?
+                 GROUP BY sf.id
+                 ORDER BY sf.folder_name ASC",
+                [$userId]
+            );
+        }
+
+        if (empty($result)) {
+            return [];
+        }
+
+        $folders = [];
+        foreach ($result as $row) {
+            $folders[] = [
+                'id' => (int)$row['id'],
+                'folder_name' => $row['folder_name'],
+                'folder_key' => $row['folder_key'],
+                'folder_path' => $row['folder_path'],
+                'total_files' => (int)$row['actual_file_count'],
+                'total_size_bytes' => (int)$row['actual_size_bytes'],
+                'total_size_formatted' => fm_format_bytes_enhanced($row['actual_size_bytes']),
+                'requires_permission' => (int)($row['requires_permission'] ?? 1) === 1,
+                'total_users_with_access' => (int)($row['total_users_with_access'] ?? 0),
+                'is_active' => (int)$row['is_active'] === 1
+            ];
+        }
+
+        return $folders;
+    }
+}
+
+if (!function_exists('fm_check_folder_access')) {
+    function fm_check_folder_access($userId, $folderId, $folderType = 'special') {
+        global $wo;
+
+        if (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) {
+            return true;
+        }
+
+        if ($folderType === 'common') {
+            return true;
+        }
+
+        if ($folderType === 'special') {
+            $result = fm_query(
+                "SELECT id FROM fm_folder_access WHERE folder_id = ? AND folder_type = 'special' AND user_id = ? LIMIT 1",
+                [$folderId, $userId]
+            );
+            return !empty($result);
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('fm_format_bytes_enhanced')) {
+    function fm_format_bytes_enhanced($bytes, $precision = 2) {
+        if ($bytes <= 0) return '0 B';
+
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $base = 1024;
+        $exp = floor(log($bytes) / log($base));
+        $exp = min($exp, count($units) - 1);
+
+        return round($bytes / pow($base, $exp), $precision) . ' ' . $units[$exp];
+    }
+}
+
+if (!function_exists('fm_get_folder_contents')) {
+    function fm_get_folder_contents($userId, $folderType, $folderId = null, $path = '') {
+        $isAdmin = function_exists('Wo_IsAdmin') && Wo_IsAdmin();
+
+        if ($folderType === 'user') {
+            $userPath = "Storage/{$userId}";
+            if ($path) {
+                $userPath .= '/' . ltrim($path, '/');
+            }
+
+            $result = fm_list_local_folder($userPath);
+            return $result;
+        }
+
+        if ($folderType === 'common' && $folderId) {
+            $folder = fm_query(
+                "SELECT folder_path FROM fm_common_folders WHERE id = ? AND is_active = 1 LIMIT 1",
+                [$folderId]
+            );
+
+            if (empty($folder)) {
+                return ['folders' => [], 'files' => []];
+            }
+
+            $folderPath = $folder[0]['folder_path'];
+            if ($path) {
+                $folderPath .= '/' . ltrim($path, '/');
+            }
+
+            return fm_list_local_folder($folderPath);
+        }
+
+        if ($folderType === 'special' && $folderId) {
+            if (!$isAdmin && !fm_check_folder_access($userId, $folderId, 'special')) {
+                return ['folders' => [], 'files' => [], 'error' => 'Access denied'];
+            }
+
+            $folder = fm_query(
+                "SELECT folder_path FROM fm_special_folders WHERE id = ? AND is_active = 1 LIMIT 1",
+                [$folderId]
+            );
+
+            if (empty($folder)) {
+                return ['folders' => [], 'files' => []];
+            }
+
+            $folderPath = $folder[0]['folder_path'];
+            if ($path) {
+                $folderPath .= '/' . ltrim($path, '/');
+            }
+
+            return fm_list_local_folder($folderPath);
+        }
+
+        return ['folders' => [], 'files' => []];
+    }
+}
+
+if (!function_exists('fm_grant_special_folder_access')) {
+    function fm_grant_special_folder_access($folderId, $userId, $permissionLevel = 'view', $grantedBy = 0) {
+        $exists = fm_query(
+            "SELECT id FROM fm_folder_access WHERE folder_id = ? AND folder_type = 'special' AND user_id = ? LIMIT 1",
+            [$folderId, $userId]
+        );
+
+        if (!empty($exists)) {
+            fm_update('fm_folder_access', [
+                'permission_level' => $permissionLevel,
+                'granted_by' => $grantedBy
+            ], [
+                'id' => $exists[0]['id']
+            ]);
+            return $exists[0]['id'];
+        }
+
+        return fm_insert('fm_folder_access', [
+            'folder_id' => $folderId,
+            'folder_type' => 'special',
+            'user_id' => $userId,
+            'permission_level' => $permissionLevel,
+            'granted_by' => $grantedBy,
+            'granted_at' => date('Y-m-d H:i:s')
+        ]);
+    }
+}
+
+if (!function_exists('fm_revoke_special_folder_access')) {
+    function fm_revoke_special_folder_access($folderId, $userId) {
+        return fm_query(
+            "DELETE FROM fm_folder_access WHERE folder_id = ? AND folder_type = 'special' AND user_id = ?",
+            [$folderId, $userId]
+        );
+    }
+}

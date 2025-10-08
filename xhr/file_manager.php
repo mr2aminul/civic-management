@@ -1140,27 +1140,36 @@ try {
                 ", [$userId]);
             }
 
-            // Get user quota
-            $quota = fm_get_user_quota($userId);
+            // Get user storage usage (enhanced)
+            $storageUsage = fm_get_user_storage_usage($userId);
+
+            // Get global storage if admin
+            $globalStorage = null;
+            $userBreakdown = null;
+            if ($isAdmin) {
+                $globalStorage = fm_get_global_storage_usage();
+                $userBreakdown = fm_get_all_users_storage_breakdown(10, 0);
+            }
 
             // Check R2 status
             $r2 = fm_init_s3();
             $r2Enabled = !empty($r2);
 
-            echo json_encode([
+            $response = [
                 'status' => 200,
                 'common_folders' => $commonFolders ?: [],
                 'special_folders' => $specialFolders ?: [],
-                'quota' => [
-                    'quota' => $quota['quota'],
-                    'used' => $quota['used'],
-                    'quota_formatted' => fm_format_bytes($quota['quota']),
-                    'used_formatted' => fm_format_bytes($quota['used']),
-                    'percentage' => $quota['quota'] > 0 ? round(($quota['used'] / $quota['quota']) * 100, 2) : 0
-                ],
+                'storage_usage' => $storageUsage,
                 'r2_enabled' => $r2Enabled,
                 'r2_status' => $r2Enabled ? 'Connected' : 'Not Configured'
-            ]);
+            ];
+
+            if ($isAdmin && $globalStorage) {
+                $response['global_storage'] = $globalStorage;
+                $response['top_users'] = $userBreakdown;
+            }
+
+            echo json_encode($response);
             exit;
 
         // Get all common folders
@@ -1842,6 +1851,185 @@ try {
                 'collabora_url' => $collaboraUrl,
                 'file_url' => Wo_Ajax_Requests_File() . '?f=file_manager&s=download_local&file=' . urlencode($file[0]['path']),
                 'file_name' => $file[0]['original_filename']
+            ]);
+            exit;
+
+        // Get user storage details (enhanced)
+        case 'get_user_storage':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = isset($_GET['user_id']) && _fm_is_admin() ? (int)$_GET['user_id'] : _fm_user_id();
+            $storageUsage = fm_get_user_storage_usage($userId);
+
+            echo json_encode([
+                'status' => 200,
+                'storage' => $storageUsage
+            ]);
+            exit;
+
+        // Get global storage summary (admin only)
+        case 'get_global_storage':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $globalStorage = fm_get_global_storage_usage();
+            $userBreakdown = fm_get_all_users_storage_breakdown(50, 0);
+
+            echo json_encode([
+                'status' => 200,
+                'global_storage' => $globalStorage,
+                'user_breakdown' => $userBreakdown
+            ]);
+            exit;
+
+        // Get folder contents (user, common, or special)
+        case 'get_folder_contents':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $folderType = $_GET['folder_type'] ?? 'user';
+            $folderId = isset($_GET['folder_id']) ? (int)$_GET['folder_id'] : null;
+            $path = $_GET['path'] ?? '';
+
+            $contents = fm_get_folder_contents($userId, $folderType, $folderId, $path);
+
+            echo json_encode([
+                'status' => 200,
+                'folder_type' => $folderType,
+                'folder_id' => $folderId,
+                'path' => $path,
+                'contents' => $contents
+            ]);
+            exit;
+
+        // Create user storage structure
+        case 'create_user_storage':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $result = fm_create_user_storage_structure($userId);
+
+            if ($result['success']) {
+                echo json_encode([
+                    'status' => 200,
+                    'message' => 'User storage created successfully',
+                    'storage_path' => $result['path']
+                ]);
+            } else {
+                echo json_encode([
+                    'status' => 500,
+                    'error' => $result['error'] ?? 'Failed to create user storage'
+                ]);
+            }
+            exit;
+
+        // Update storage tracking for user
+        case 'update_storage_tracking':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = isset($_POST['user_id']) && _fm_is_admin() ? (int)$_POST['user_id'] : _fm_user_id();
+            fm_update_storage_tracking($userId);
+
+            $storageUsage = fm_get_user_storage_usage($userId);
+
+            echo json_encode([
+                'status' => 200,
+                'message' => 'Storage tracking updated',
+                'storage' => $storageUsage
+            ]);
+            exit;
+
+        // Grant special folder access (admin only)
+        case 'grant_folder_access':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $folderId = (int)($_POST['folder_id'] ?? 0);
+            $targetUserId = (int)($_POST['user_id'] ?? 0);
+            $permissionLevel = $_POST['permission_level'] ?? 'view';
+
+            if (!$folderId || !$targetUserId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing folder_id or user_id']);
+                exit;
+            }
+
+            $grantedBy = _fm_user_id();
+            $accessId = fm_grant_special_folder_access($folderId, $targetUserId, $permissionLevel, $grantedBy);
+
+            echo json_encode([
+                'status' => 200,
+                'message' => 'Access granted successfully',
+                'access_id' => $accessId
+            ]);
+            exit;
+
+        // Revoke special folder access (admin only)
+        case 'revoke_folder_access':
+            if (!_fm_is_admin()) {
+                echo json_encode(['status' => 403, 'error' => 'Admin access required']);
+                exit;
+            }
+
+            $folderId = (int)($_POST['folder_id'] ?? 0);
+            $targetUserId = (int)($_POST['user_id'] ?? 0);
+
+            if (!$folderId || !$targetUserId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing folder_id or user_id']);
+                exit;
+            }
+
+            fm_revoke_special_folder_access($folderId, $targetUserId);
+
+            echo json_encode([
+                'status' => 200,
+                'message' => 'Access revoked successfully'
+            ]);
+            exit;
+
+        // Get common folders with statistics
+        case 'get_common_folders_stats':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $folders = fm_get_common_folders_with_stats();
+
+            echo json_encode([
+                'status' => 200,
+                'folders' => $folders
+            ]);
+            exit;
+
+        // Get special folders with statistics
+        case 'get_special_folders_stats':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $userId = _fm_is_admin() ? null : _fm_user_id();
+            $folders = fm_get_special_folders_with_stats($userId);
+
+            echo json_encode([
+                'status' => 200,
+                'folders' => $folders
             ]);
             exit;
 

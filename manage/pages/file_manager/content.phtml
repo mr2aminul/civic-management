@@ -1071,9 +1071,27 @@ jQuery(function($) {
     function loadInitData() {
         $.get(API + '&s=get_init_data', res => {
             if (res && res.status === 200) {
-                // Update quota
-                if (res.quota) {
-                    $('#fm-storage-text').text(res.quota.used_formatted + ' / ' + res.quota.quota_formatted);
+                // Update storage usage
+                if (res.storage_usage) {
+                    const usage = res.storage_usage;
+                    $('#fm-storage-text').text(usage.used_formatted + ' / ' + usage.quota_formatted);
+
+                    // Show global storage for admins
+                    if (res.global_storage) {
+                        const global = res.global_storage;
+                        $('.fm-sidebar').find('.fm-sidebar-section:contains("Storage")').after(`
+                            <div class="fm-sidebar-item" style="background:#fef3c7;border-left:3px solid #f59e0b">
+                                <i class="bi bi-server" style="color:#f59e0b"></i>
+                                <div style="flex:1">
+                                    <div style="font-size:11px;color:#92400e">Global VPS Usage</div>
+                                    <div style="font-weight:600;font-size:13px;color:#78350f">
+                                        ${global.used_formatted} / ${global.quota_formatted}
+                                    </div>
+                                    <div style="font-size:10px;color:#92400e">${global.global_usage_percentage}% used</div>
+                                </div>
+                            </div>
+                        `);
+                    }
                 }
 
                 // Update R2 status
@@ -1081,22 +1099,35 @@ jQuery(function($) {
                     $('#fm-r2-status').text(res.r2_status);
                 }
 
-                // Load folder structure
+                // Add My Storage section
+                $('.fm-sidebar').find('[data-view="trash"]').after('<div class="fm-sidebar-section">My Storage</div>');
+                $('.fm-sidebar').find('.fm-sidebar-section:contains("My Storage")').after(`
+                    <div class="fm-sidebar-item" data-view="user-storage" data-folder-type="user">
+                        <i class="bi bi-folder-symlink"></i> My Files
+                    </div>
+                `);
+
+                // Load common folders
                 if (res.common_folders && res.common_folders.length > 0) {
+                    $('.fm-sidebar').find('.fm-sidebar-section:contains("My Storage")').after('<div class="fm-sidebar-section">Common Folders</div>');
+                    const commonSection = $('.fm-sidebar').find('.fm-sidebar-section:contains("Common Folders")');
                     res.common_folders.forEach(folder => {
-                        $('.fm-sidebar').append(`
-                            <div class="fm-sidebar-item" data-view="common" data-folder-id="${folder.id}">
+                        commonSection.after(`
+                            <div class="fm-sidebar-item" data-view="common" data-folder-id="${folder.id}" data-folder-type="common">
                                 <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
                             </div>
                         `);
                     });
                 }
 
+                // Load special folders
                 if (res.special_folders && res.special_folders.length > 0) {
-                    $('.fm-sidebar').append('<div class="fm-sidebar-section">Special Folders</div>');
+                    const lastSection = $('.fm-sidebar .fm-sidebar-section').last();
+                    lastSection.after('<div class="fm-sidebar-section">Special Folders</div>');
+                    const specialSection = $('.fm-sidebar').find('.fm-sidebar-section:contains("Special Folders")');
                     res.special_folders.forEach(folder => {
-                        $('.fm-sidebar').append(`
-                            <div class="fm-sidebar-item" data-view="special" data-folder-id="${folder.id}">
+                        specialSection.after(`
+                            <div class="fm-sidebar-item" data-view="special" data-folder-id="${folder.id}" data-folder-type="special">
                                 <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
                             </div>
                         `);
@@ -1396,8 +1427,10 @@ jQuery(function($) {
     $('#fm-sort-select').on('change', () => renderItems());
     $('#fm-search').on('input', () => renderItems());
 
-    $('.fm-sidebar-item[data-view]').on('click', function() {
+    $(document).on('click', '.fm-sidebar-item[data-view]', function() {
         const view = $(this).data('view');
+        const folderType = $(this).data('folder-type');
+        const folderId = $(this).data('folder-id');
 
         if (view === 'trash') {
             alert('Recycle Bin feature coming soon!');
@@ -1406,10 +1439,54 @@ jQuery(function($) {
 
         $('.fm-sidebar-item').removeClass('active');
         $(this).addClass('active');
-        currentFilter = view;
-        renderItems();
+
+        // Handle folder navigation
+        if (folderType === 'user') {
+            currentFilter = 'user-storage';
+            currentPath = '';
+            loadFolderContents('user', null, '');
+        } else if (folderType === 'common' && folderId) {
+            currentFilter = 'common-folder';
+            currentPath = '';
+            loadFolderContents('common', folderId, '');
+        } else if (folderType === 'special' && folderId) {
+            currentFilter = 'special-folder';
+            currentPath = '';
+            loadFolderContents('special', folderId, '');
+        } else {
+            currentFilter = view;
+            renderItems();
+        }
+
         updateStats();
     });
+
+    function loadFolderContents(folderType, folderId, path) {
+        const params = {
+            folder_type: folderType,
+            path: path
+        };
+
+        if (folderId) {
+            params.folder_id = folderId;
+        }
+
+        $.get(API + '&s=get_folder_contents', params, res => {
+            if (res && res.status === 200) {
+                const contents = res.contents;
+                currentPath = path || '';
+                setBreadcrumb(currentPath);
+
+                items = [
+                    ...(contents.folders || []).map(f => ({...f, type: 'folder'})),
+                    ...(contents.files || []).map(f => ({...f, type: 'file'}))
+                ];
+
+                renderItems();
+                updateStats();
+            }
+        }, 'json');
+    }
 
     $('#fm-upload-btn').on('click', () => $('#fm-file-input').click());
 
