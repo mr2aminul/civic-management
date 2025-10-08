@@ -1565,6 +1565,201 @@ try {
             }
             exit;
 
+        // Create new file
+        case 'create_new_file':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $path = $_POST['path'] ?? '';
+            $type = $_POST['type'] ?? 'text';
+            $content = $_POST['content'] ?? '';
+
+            if (empty($path)) {
+                echo json_encode(['status' => 400, 'error' => 'Missing path']);
+                exit;
+            }
+
+            $baseDir = fm_get_local_dir();
+            $fullPath = $baseDir . '/' . ltrim($path, '/');
+
+            if (!is_dir(dirname($fullPath))) {
+                @mkdir(dirname($fullPath), 0755, true);
+            }
+
+            if (file_exists($fullPath)) {
+                echo json_encode(['status' => 409, 'error' => 'File already exists']);
+                exit;
+            }
+
+            $success = false;
+            if ($type === 'text') {
+                $success = file_put_contents($fullPath, $content) !== false;
+            } elseif ($type === 'docx' || $type === 'xlsx') {
+                $success = touch($fullPath);
+            }
+
+            if ($success) {
+                $userId = _fm_user_id();
+                $fileSize = filesize($fullPath);
+
+                fm_insert('fm_files', [
+                    'user_id' => $userId,
+                    'filename' => basename($fullPath),
+                    'original_filename' => basename($path),
+                    'path' => ltrim($path, '/'),
+                    'file_type' => pathinfo($path, PATHINFO_EXTENSION),
+                    'mime_type' => 'application/octet-stream',
+                    'size' => $fileSize,
+                    'created_at' => date('Y-m-d H:i:s')
+                ]);
+
+                fm_update_user_quota($userId, $fileSize);
+                echo json_encode(['status' => 200, 'path' => $path]);
+            } else {
+                echo json_encode(['status' => 500, 'error' => 'Failed to create file']);
+            }
+            exit;
+
+        // Generate thumbnail
+        case 'generate_thumbnail':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $fileId = (int)($_POST['file_id'] ?? 0);
+            $size = $_POST['size'] ?? 'medium';
+
+            if (!$fileId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing file_id']);
+                exit;
+            }
+
+            $file = fm_query("SELECT * FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+            if (empty($file)) {
+                echo json_encode(['status' => 404, 'error' => 'File not found']);
+                exit;
+            }
+
+            $baseDir = fm_get_local_dir();
+            $filePath = $baseDir . '/' . $file[0]['filename'];
+
+            $result = fm_generate_thumbnail($filePath, $fileId, $size);
+
+            if ($result['success']) {
+                fm_update('fm_files', ['thumbnail_generated' => 1], ['id' => $fileId]);
+                echo json_encode(['status' => 200, 'thumbnail' => $result]);
+            } else {
+                echo json_encode(['status' => 500, 'error' => $result['error']]);
+            }
+            exit;
+
+        // Get file thumbnail
+        case 'get_thumbnail':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $fileId = (int)($_GET['file_id'] ?? 0);
+            $size = $_GET['size'] ?? 'medium';
+
+            if (!$fileId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing file_id']);
+                exit;
+            }
+
+            $thumb = fm_get_file_thumbnail($fileId, $size);
+
+            if ($thumb) {
+                echo json_encode(['status' => 200, 'thumbnail' => $thumb]);
+            } else {
+                echo json_encode(['status' => 404, 'error' => 'Thumbnail not found']);
+            }
+            exit;
+
+        // Create file version
+        case 'create_version':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $fileId = (int)($_POST['file_id'] ?? 0);
+            $comment = $_POST['comment'] ?? null;
+
+            if (!$fileId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing file_id']);
+                exit;
+            }
+
+            $userId = _fm_user_id();
+            $file = fm_query("SELECT * FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+
+            if (empty($file)) {
+                echo json_encode(['status' => 404, 'error' => 'File not found']);
+                exit;
+            }
+
+            $baseDir = fm_get_local_dir();
+            $filePath = $baseDir . '/' . $file[0]['filename'];
+
+            $result = fm_create_file_version($fileId, $userId, $filePath, $comment);
+
+            if ($result['success']) {
+                echo json_encode(['status' => 200, 'version' => $result]);
+            } else {
+                echo json_encode(['status' => 500, 'error' => $result['error']]);
+            }
+            exit;
+
+        // Collabora Online: Get document info
+        case 'collabora_info':
+            if (!_fm_is_logged()) {
+                echo json_encode(['status' => 403, 'error' => 'Login required']);
+                exit;
+            }
+
+            $fileId = (int)($_GET['file_id'] ?? 0);
+            if (!$fileId) {
+                echo json_encode(['status' => 400, 'error' => 'Missing file_id']);
+                exit;
+            }
+
+            $settings = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key IN ('collabora_enabled', 'collabora_url')");
+            $collaboraEnabled = false;
+            $collaboraUrl = '';
+
+            foreach ($settings as $setting) {
+                if ($setting['setting_key'] === 'collabora_enabled') {
+                    $collaboraEnabled = (int)$setting['setting_value'] === 1;
+                }
+                if ($setting['setting_key'] === 'collabora_url') {
+                    $collaboraUrl = $setting['setting_value'];
+                }
+            }
+
+            if (!$collaboraEnabled || empty($collaboraUrl)) {
+                echo json_encode(['status' => 503, 'error' => 'Collabora Online not configured']);
+                exit;
+            }
+
+            $file = fm_query("SELECT * FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+            if (empty($file)) {
+                echo json_encode(['status' => 404, 'error' => 'File not found']);
+                exit;
+            }
+
+            echo json_encode([
+                'status' => 200,
+                'collabora_url' => $collaboraUrl,
+                'file_url' => Wo_Ajax_Requests_File() . '?f=file_manager&s=download_local&file=' . urlencode($file[0]['path']),
+                'file_name' => $file[0]['original_filename']
+            ]);
+            exit;
+
         default:
             echo json_encode(['status' => 404, 'error' => 'Unknown action: ' . $action]);
             exit;

@@ -779,6 +779,30 @@ if ($tab == 'settings') {
 .fm-notification-close:hover {
     color: #1f2937;
 }
+
+.fm-r2-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: #10b981;
+    color: #fff;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.fm-item-thumbnail {
+    width: 100%;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
 </style>
 
 <div class="fm-container">
@@ -1084,15 +1108,25 @@ jQuery(function($) {
                 const isFolder = item.type === 'folder';
                 const icon = isFolder ? 'bi-folder-fill' : getFileIcon(item.name);
                 const displayName = isFolder ? item.name : getOriginalFileName(item.name);
+                const r2Badge = item.r2_uploaded == 1 ? '<span class="fm-r2-badge" title="Stored on R2"><i class="bi bi-cloud-check"></i></span>' : '';
                 const $card = $(`
-          <div class="fm-item-card" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
+          <div class="fm-item-card" data-path="${escapeHtml(item.path)}" data-type="${item.type}" data-file-id="${item.id || ''}">
             ${!isFolder ? '<input type="checkbox" class="fm-item-checkbox">' : ''}
             <div class="fm-item-icon"><i class="bi ${icon}"></i></div>
+            ${r2Badge}
             <div class="fm-item-name">${escapeHtml(displayName)}</div>
             <div class="fm-item-meta">${isFolder ? 'Folder' : formatSize(item.size)}</div>
           </div>
         `);
                 $('#fm-items-grid').append($card);
+
+                // Load thumbnail for images if available
+                if (!isFolder && item.id) {
+                    const ext = item.name.split('.').pop().toLowerCase();
+                    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                        loadThumbnail(item.id, $card.find('.fm-item-icon'));
+                    }
+                }
             });
         } else {
             $('#fm-items-grid').hide();
@@ -1455,9 +1489,12 @@ jQuery(function($) {
 
         if (type === 'empty') {
             $menu.append(`
-        <div class="fm-context-menu-item" data-action="new-file"><i class="bi bi-file-plus"></i> New File</div>
+        <div class="fm-context-menu-item" data-action="new-word"><i class="bi bi-file-word"></i> New Word File</div>
+        <div class="fm-context-menu-item" data-action="new-txt"><i class="bi bi-file-text"></i> New TXT File</div>
+        <div class="fm-context-menu-item" data-action="new-excel"><i class="bi bi-file-excel"></i> New Excel File</div>
         <div class="fm-context-menu-item" data-action="new-folder"><i class="bi bi-folder-plus"></i> New Folder</div>
-        <div class="fm-context-menu-item" data-action="upload"><i class="bi bi-cloud-upload"></i> Upload</div>
+        <div class="fm-context-menu-item" data-action="upload"><i class="bi bi-cloud-upload"></i> Upload Files</div>
+        <div class="fm-context-menu-item" data-action="upload-folder"><i class="bi bi-folder-up"></i> Upload Folder</div>
       `);
         } else {
             const type = ctxTarget.data('type');
@@ -1496,10 +1533,55 @@ jQuery(function($) {
         const action = $(this).data('action');
         $('#fm-context-menu').hide();
 
-        if (action === 'upload' || action === 'new-file') {
+        if (action === 'upload') {
             $('#fm-file-input').click();
+        } else if (action === 'upload-folder') {
+            $('#fm-file-input').attr('webkitdirectory', '').attr('directory', '').click();
         } else if (action === 'new-folder') {
             $('#fm-new-folder-btn').click();
+        } else if (action === 'new-txt') {
+            createNewFile('text', '.txt');
+        } else if (action === 'new-word') {
+            createNewFile('docx', '.docx');
+        } else if (action === 'new-excel') {
+            createNewFile('xlsx', '.xlsx');
+        } else if (action === 'rename') {
+            if (!ctxTarget) return;
+            const path = ctxTarget.data('path');
+            const oldName = path.split('/').pop();
+            const newName = prompt('Rename to:', oldName);
+            if (newName && newName !== oldName) {
+                $.post(API + '&s=rename', {
+                    old_path: path,
+                    new_name: newName
+                }, res => {
+                    if (res && res.status === 200) {
+                        pos5_success_noti('Renamed successfully');
+                        loadFolder(currentPath);
+                    } else {
+                        pos4_error_noti(res.error || 'Rename failed');
+                    }
+                }, 'json');
+            }
+            return;
+        } else if (action === 'move') {
+            if (!ctxTarget) return;
+            const path = ctxTarget.data('path');
+            const targetPath = prompt('Move to path:', currentPath);
+            if (targetPath !== null) {
+                $.post(API + '&s=move', {
+                    source_path: path,
+                    target_path: (targetPath ? targetPath + '/' : '') + path.split('/').pop()
+                }, res => {
+                    if (res && res.status === 200) {
+                        pos5_success_noti('Moved successfully');
+                        loadFolder(currentPath);
+                    } else {
+                        pos4_error_noti(res.error || 'Move failed');
+                    }
+                }, 'json');
+            }
+            return;
         } else if (!ctxTarget) {
             return;
         } else {
@@ -1612,8 +1694,73 @@ jQuery(function($) {
         editingFile = isEditing || false;
     };
 
+    function loadThumbnail(fileId, $iconContainer) {
+        $.get(API + '&s=get_thumbnail', { file_id: fileId, size: 'medium' }, res => {
+            if (res && res.status === 200 && res.thumbnail) {
+                const thumbUrl = API + '&s=download_local&file=' + encodeURIComponent(res.thumbnail.thumbnail_path);
+                $iconContainer.html(`<img src="${thumbUrl}" class="fm-item-thumbnail">`);
+            } else {
+                $.post(API + '&s=generate_thumbnail', { file_id: fileId, size: 'medium' }, res => {
+                    if (res && res.status === 200 && res.thumbnail) {
+                        const thumbUrl = API + '&s=download_local&file=' + encodeURIComponent(res.thumbnail.path);
+                        $iconContainer.html(`<img src="${thumbUrl}" class="fm-item-thumbnail">`);
+                    }
+                }, 'json');
+            }
+        }, 'json');
+    }
+
+    function createNewFile(type, extension) {
+        const fileName = prompt('Enter file name (without extension):');
+        if (!fileName) return;
+
+        const fullName = fileName + extension;
+        const content = type === 'text' ? '' : null;
+
+        $.post(API + '&s=create_new_file', {
+            path: currentPath ? currentPath + '/' + fullName : fullName,
+            type: type,
+            content: content || ''
+        }, res => {
+            if (res && res.status === 200) {
+                pos5_success_noti('File created successfully');
+                loadFolder(currentPath);
+            } else {
+                pos4_error_noti(res.error || 'Failed to create file');
+            }
+        }, 'json');
+    }
+
+    function loadFolderStructure() {
+        $.get(API + '&s=list_common_folders', res => {
+            if (res && res.status === 200 && res.folders) {
+                res.folders.forEach(folder => {
+                    $('.fm-sidebar').append(`
+                        <div class="fm-sidebar-item" data-view="common" data-folder-id="${folder.id}">
+                            <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
+                        </div>
+                    `);
+                });
+            }
+        }, 'json');
+
+        $.get(API + '&s=list_special_folders', res => {
+            if (res && res.status === 200 && res.folders && res.folders.length > 0) {
+                $('.fm-sidebar').append('<div class="fm-sidebar-section">Special Folders</div>');
+                res.folders.forEach(folder => {
+                    $('.fm-sidebar').append(`
+                        <div class="fm-sidebar-item" data-view="special" data-folder-id="${folder.id}">
+                            <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
+                        </div>
+                    `);
+                });
+            }
+        }, 'json');
+    }
+
     loadFolder('');
     loadQuota();
     checkR2();
+    loadFolderStructure();
 });
 </script>
