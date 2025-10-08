@@ -612,20 +612,66 @@ try {
 
             try {
                 $cfg = fm_get_config();
+                $backupDir = fm_get_backup_dir();
                 $result = $s3->listObjectsV2([
                     'Bucket' => $cfg['r2_bucket'],
                     'Prefix' => 'backups/'
                 ]);
 
                 $backups = [];
+                $downloaded = 0;
+                $skipped = 0;
+                $errors = [];
+
                 if (isset($result['Contents'])) {
                     foreach ($result['Contents'] as $obj) {
                         if (preg_match('/\.(sql|sql\.gz)$/i', $obj['Key'])) {
+                            $fileName = basename($obj['Key']);
+                            $localPath = $backupDir . '/' . $fileName;
+                            $needsDownload = false;
+
+                            // Check if file exists locally
+                            if (!file_exists($localPath)) {
+                                $needsDownload = true;
+                            } else {
+                                // Check if file size matches
+                                $localSize = filesize($localPath);
+                                if ($localSize !== $obj['Size']) {
+                                    $needsDownload = true;
+                                }
+                            }
+
+                            // Download file if needed
+                            if ($needsDownload) {
+                                try {
+                                    $s3->getObject([
+                                        'Bucket' => $cfg['r2_bucket'],
+                                        'Key' => $obj['Key'],
+                                        'SaveAs' => $localPath
+                                    ]);
+                                    $downloaded++;
+                                    fm_log_info('R2 Sync: Downloaded backup file', [
+                                        'file' => $fileName,
+                                        'size' => $obj['Size']
+                                    ]);
+                                } catch (Exception $e) {
+                                    $errors[] = "Failed to download {$fileName}: " . $e->getMessage();
+                                    fm_log_error('R2 Sync: Download failed', [
+                                        'file' => $fileName,
+                                        'error' => $e->getMessage()
+                                    ]);
+                                }
+                            } else {
+                                $skipped++;
+                            }
+
                             $backups[] = [
                                 'key' => $obj['Key'],
-                                'name' => basename($obj['Key']),
+                                'name' => $fileName,
                                 'size' => $obj['Size'],
-                                'modified' => $obj['LastModified']->format('Y-m-d H:i:s')
+                                'modified' => $obj['LastModified']->format('Y-m-d H:i:s'),
+                                'local_exists' => file_exists($localPath),
+                                'local_size' => file_exists($localPath) ? filesize($localPath) : 0
                             ];
                         }
                     }
@@ -635,13 +681,26 @@ try {
                     return strtotime($b['modified']) - strtotime($a['modified']);
                 });
 
-                $metadataFile = fm_get_backup_dir() . '/r2_backups_metadata.json';
+                $metadataFile = $backupDir . '/r2_backups_metadata.json';
                 file_put_contents($metadataFile, json_encode([
                     'updated_at' => date('Y-m-d H:i:s'),
                     'backups' => $backups
                 ], JSON_PRETTY_PRINT));
 
-                echo json_encode(['status' => 200, 'message' => 'Synced successfully', 'count' => count($backups)]);
+                $response = [
+                    'status' => 200,
+                    'message' => 'Synced successfully',
+                    'count' => count($backups),
+                    'downloaded' => $downloaded,
+                    'skipped' => $skipped
+                ];
+
+                if (!empty($errors)) {
+                    $response['errors'] = $errors;
+                    $response['partial'] = true;
+                }
+
+                echo json_encode($response);
             } catch (Exception $e) {
                 echo json_encode(['status' => 500, 'error' => $e->getMessage()]);
             }
