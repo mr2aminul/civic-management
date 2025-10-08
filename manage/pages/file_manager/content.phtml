@@ -925,7 +925,7 @@ if ($tab == 'settings') {
 
 <div id="fm-notifications-container" style="position:fixed;top:80px;right:24px;z-index:10001"></div>
 
-<?php include __DIR__ . '/file_preview_editor.phtml'; ?>
+<?php include __DIR__ . '/advanced_preview.phtml'; ?>
 
 <script>
 jQuery(function($) {
@@ -1059,6 +1059,11 @@ jQuery(function($) {
         return sorted;
     }
 
+    function getOriginalFileName(fileName) {
+        const match = fileName.match(/^file_[a-f0-9]+_(.+)$/);
+        return match ? match[1] : fileName;
+    }
+
     function renderItems() {
         const filtered = filterItems();
         const sorted = sortItems(filtered);
@@ -1077,11 +1082,12 @@ jQuery(function($) {
             sorted.forEach(item => {
                 const isFolder = item.type === 'folder';
                 const icon = isFolder ? 'bi-folder-fill' : getFileIcon(item.name);
+                const displayName = isFolder ? item.name : getOriginalFileName(item.name);
                 const $card = $(`
           <div class="fm-item-card" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
             ${!isFolder ? '<input type="checkbox" class="fm-item-checkbox">' : ''}
             <div class="fm-item-icon"><i class="bi ${icon}"></i></div>
-            <div class="fm-item-name">${escapeHtml(item.name)}</div>
+            <div class="fm-item-name">${escapeHtml(displayName)}</div>
             <div class="fm-item-meta">${isFolder ? 'Folder' : formatSize(item.size)}</div>
           </div>
         `);
@@ -1103,12 +1109,13 @@ jQuery(function($) {
                 const isFolder = item.type === 'folder';
                 const icon = isFolder ? 'bi-folder-fill' : getFileIcon(item.name);
                 const date = item.mtime ? new Date(item.mtime * 1000).toLocaleDateString() : '--';
+                const displayName = isFolder ? item.name : getOriginalFileName(item.name);
                 const $row = $(`
           <div class="fm-list-item" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
             <div>${!isFolder ? '<input type="checkbox" class="fm-item-checkbox">' : ''}</div>
             <div class="fm-list-item-name">
               <i class="fm-list-item-icon bi ${icon}"></i>
-              <span>${escapeHtml(item.name)}</span>
+              <span>${escapeHtml(displayName)}</span>
             </div>
             <div>${isFolder ? '--' : formatSize(item.size)}</div>
             <div>${date}</div>
@@ -1175,6 +1182,7 @@ jQuery(function($) {
     $(document).on('click', '.fm-item-card[data-type="file"], .fm-list-item[data-type="file"]', function(e) {
         if ($(e.target).is('input, button')) return;
         const path = $(this).data('path');
+        const fileName = $(this).data('path').split('/').pop();
 
         if (e.ctrlKey || e.metaKey) {
             const isSelected = selected.has(path);
@@ -1186,6 +1194,13 @@ jQuery(function($) {
                 $(this).addClass('selected').find('.fm-item-checkbox').prop('checked', true);
             }
             updateStats();
+        } else {
+            window.fileManagerAPI = API;
+            if (typeof window.openAdvancedFilePreview === 'function') {
+                window.openAdvancedFilePreview(path, fileName);
+            } else {
+                openPreview(path);
+            }
         }
     });
 
@@ -1521,8 +1536,8 @@ jQuery(function($) {
             } else if (action === 'preview' && type === 'file') {
                 const fileName = path.split('/').pop();
                 window.fileManagerAPI = API;
-                if (typeof window.openFilePreview === 'function') {
-                    window.openFilePreview(path, fileName);
+                if (typeof window.openAdvancedFilePreview === 'function') {
+                    window.openAdvancedFilePreview(path, fileName);
                 } else {
                     openPreview(path);
                 }
@@ -1547,8 +1562,19 @@ jQuery(function($) {
         }
     }
 
+    let previewModalOpen = false;
+    let editingFile = false;
+
     $(document).on('keydown', function(e) {
-        if (e.key === 'Delete' && selected.size > 0) {
+        if (previewModalOpen && editingFile) {
+            return;
+        }
+
+        if (previewModalOpen && e.key === 'Escape') {
+            return;
+        }
+
+        if (e.key === 'Delete' && selected.size > 0 && !previewModalOpen) {
             if (confirm(`Delete ${selected.size} selected item(s)?`)) {
                 const paths = Array.from(selected);
                 let completed = 0;
@@ -1564,7 +1590,7 @@ jQuery(function($) {
                     }, 'json');
                 });
             }
-        } else if (e.ctrlKey && e.key === 'a') {
+        } else if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !previewModalOpen) {
             e.preventDefault();
             $('.fm-item-card[data-type="file"], .fm-list-item[data-type="file"]').each(function() {
                 const path = $(this).data('path');
@@ -1572,13 +1598,18 @@ jQuery(function($) {
                 $(this).addClass('selected').find('.fm-item-checkbox').prop('checked', true);
             });
             updateStats();
-        } else if (e.key === 'Escape') {
+        } else if (e.key === 'Escape' && !previewModalOpen) {
             selected.clear();
             $('.fm-item-card, .fm-list-item').removeClass('selected').find('.fm-item-checkbox').prop(
                 'checked', false);
             updateStats();
         }
     });
+
+    window.setPreviewModalState = function(isOpen, isEditing) {
+        previewModalOpen = isOpen;
+        editingFile = isEditing || false;
+    };
 
     loadFolder('');
     loadQuota();
