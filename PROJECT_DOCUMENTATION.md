@@ -252,8 +252,6 @@ File manager operations are handled through `/xhr/file_manager.php` with various
 
 All 4 migrations have been successfully executed:
 - ✅ Migration 001: Core file manager and backup system
-- ✅ Migration 002: Enhanced features
-- ✅ Migration 003: Complete enhancements
 - ✅ Migration 004: Advanced features (Latest)
 
 The database is fully configured with all tables, indexes, and default data.
