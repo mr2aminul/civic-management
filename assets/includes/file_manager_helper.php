@@ -8,6 +8,12 @@ if (file_exists(LIBS_DIR . "/aws-sdk-php/vendor/autoload.php")) {
     require_once LIBS_DIR . "/aws-sdk-php/vendor/autoload.php";
 }
 
+if (!function_exists('Wo_Ajax_Requests_File')) {
+    function Wo_Ajax_Requests_File(){
+        Global $wo;
+    	return $wo['config']['site_url'] . "/requests.php";
+    }
+}
 // Load environment variables
 if (!function_exists('fm_load_env')) {
     function fm_load_env($path = null) {
