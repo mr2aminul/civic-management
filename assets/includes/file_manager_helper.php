@@ -910,9 +910,21 @@ if (!function_exists('fm_log_activity')) {
 // Local File Operations
 // ============================================
 if (!function_exists('fm_get_local_dir')) {
-    function fm_get_local_dir() {
+    function fm_get_local_dir($userId = null) {
         $cfg = fm_get_config();
         $dir = $cfg['local_storage'];
+
+        // If userId is provided and user is not admin, return user-specific directory
+        if ($userId !== null && $userId > 0) {
+            $isAdmin = (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) ||
+                      (function_exists('is_admin') && is_admin()) ||
+                      (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true);
+
+            if (!$isAdmin) {
+                $dir = $dir . '/storage/' . $userId;
+            }
+        }
+
         if (!file_exists($dir)) {
             @mkdir($dir, 0755, true);
         }
@@ -958,8 +970,8 @@ if (!function_exists('fm_save_uploaded_local')) {
 }
 
 if (!function_exists('fm_list_local_folder')) {
-    function fm_list_local_folder($relativePath = '') {
-        $baseDir = fm_get_local_dir();
+    function fm_list_local_folder($relativePath = '', $userId = null) {
+        $baseDir = fm_get_local_dir($userId);
         $fullPath = $relativePath ? $baseDir . '/' . ltrim($relativePath, '/') : $baseDir;
 
         if (!is_dir($fullPath)) {
@@ -2328,17 +2340,58 @@ if (!function_exists('fm_get_user_storage_usage')) {
 
 if (!function_exists('fm_get_global_storage_usage')) {
     function fm_get_global_storage_usage() {
+        // Try to get from view first
         $result = fm_query("SELECT * FROM v_global_storage_summary LIMIT 1");
 
+        // If view doesn't exist or is empty, calculate from tracking table
         if (empty($result)) {
+            // Get VPS total storage limit
+            $vpsSetting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'vps_total_storage_bytes' LIMIT 1");
+            $vpsTotal = !empty($vpsSetting) ? (int)$vpsSetting[0]['setting_value'] : 64424509440; // 60 GB default
+
+            // Sum up all users storage from tracking table
+            $stats = fm_query("
+                SELECT
+                    COUNT(DISTINCT user_id) as total_users,
+                    SUM(used_bytes) as total_used_bytes,
+                    SUM(total_files) as total_files_count,
+                    SUM(r2_uploaded_bytes) as total_r2_bytes,
+                    SUM(local_only_bytes) as total_local_only_bytes
+                FROM fm_user_storage_tracking
+            ");
+
+            if (empty($stats)) {
+                return [
+                    'total_users' => 0,
+                    'total_files_count' => 0,
+                    'total_used_bytes' => 0,
+                    'vps_total_bytes' => $vpsTotal,
+                    'global_usage_percentage' => 0,
+                    'total_r2_bytes' => 0,
+                    'total_local_only_bytes' => 0,
+                    'used_formatted' => '0 B',
+                    'quota_formatted' => fm_format_bytes_enhanced($vpsTotal),
+                    'available_bytes' => $vpsTotal,
+                    'available_formatted' => fm_format_bytes_enhanced($vpsTotal)
+                ];
+            }
+
+            $data = $stats[0];
+            $totalUsed = (int)($data['total_used_bytes'] ?? 0);
+            $usagePercent = $vpsTotal > 0 ? round(($totalUsed / $vpsTotal) * 100, 2) : 0;
+
             return [
-                'total_users' => 0,
-                'total_files_count' => 0,
-                'total_used_bytes' => 0,
-                'vps_total_bytes' => 64424509440,
-                'global_usage_percentage' => 0,
-                'total_r2_bytes' => 0,
-                'total_local_only_bytes' => 0
+                'total_users' => (int)($data['total_users'] ?? 0),
+                'total_files_count' => (int)($data['total_files_count'] ?? 0),
+                'total_used_bytes' => $totalUsed,
+                'vps_total_bytes' => $vpsTotal,
+                'global_usage_percentage' => $usagePercent,
+                'total_r2_bytes' => (int)($data['total_r2_bytes'] ?? 0),
+                'total_local_only_bytes' => (int)($data['total_local_only_bytes'] ?? 0),
+                'used_formatted' => fm_format_bytes_enhanced($totalUsed),
+                'quota_formatted' => fm_format_bytes_enhanced($vpsTotal),
+                'available_bytes' => $vpsTotal - $totalUsed,
+                'available_formatted' => fm_format_bytes_enhanced($vpsTotal - $totalUsed)
             ];
         }
 
@@ -2402,9 +2455,112 @@ if (!function_exists('fm_get_all_users_storage_breakdown')) {
     }
 }
 
+if (!function_exists('fm_calculate_directory_size')) {
+    function fm_calculate_directory_size($directory, &$fileCount = 0, &$folderCount = 0) {
+        $totalSize = 0;
+
+        if (!is_dir($directory)) {
+            return 0;
+        }
+
+        try {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($directory, RecursiveDirectoryIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::SELF_FIRST
+            );
+
+            foreach ($iterator as $file) {
+                // Skip .thumbnails directory
+                if (strpos($file->getPathname(), '/.thumbnails') !== false) {
+                    continue;
+                }
+
+                if ($file->isFile()) {
+                    $totalSize += $file->getSize();
+                    $fileCount++;
+                } elseif ($file->isDir()) {
+                    $folderCount++;
+                }
+            }
+        } catch (Exception $e) {
+            fm_log_error('Error calculating directory size', ['directory' => $directory, 'error' => $e->getMessage()]);
+        }
+
+        return $totalSize;
+    }
+}
+
 if (!function_exists('fm_update_storage_tracking')) {
     function fm_update_storage_tracking($userId) {
-        fm_query("CALL sp_update_user_storage_stats(?)", [$userId]);
+        // Calculate actual disk usage
+        $baseDir = fm_get_local_dir();
+        $isAdmin = (function_exists('Wo_IsAdmin') && Wo_IsAdmin());
+
+        if ($isAdmin) {
+            $userStoragePath = $baseDir . '/storage/' . $userId;
+        } else {
+            $userStoragePath = fm_get_local_dir($userId);
+        }
+
+        $totalSize = 0;
+        $totalFiles = 0;
+        $totalFolders = 0;
+        $r2UploadedBytes = 0;
+
+        if (is_dir($userStoragePath)) {
+            $totalSize = fm_calculate_directory_size($userStoragePath, $totalFiles, $totalFolders);
+        }
+
+        // Get R2 uploaded bytes from database
+        $r2Stats = fm_query(
+            "SELECT SUM(size) as r2_bytes FROM fm_files WHERE user_id = ? AND r2_uploaded = 1 AND is_deleted = 0",
+            [$userId]
+        );
+        if (!empty($r2Stats)) {
+            $r2UploadedBytes = (int)($r2Stats[0]['r2_bytes'] ?? 0);
+        }
+
+        $localOnlyBytes = $totalSize - $r2UploadedBytes;
+        if ($localOnlyBytes < 0) $localOnlyBytes = 0;
+
+        // Get or create quota record
+        $quota = fm_get_user_quota($userId);
+
+        // Update tracking table
+        $existing = fm_query(
+            "SELECT id FROM fm_user_storage_tracking WHERE user_id = ? LIMIT 1",
+            [$userId]
+        );
+
+        if (empty($existing)) {
+            fm_insert('fm_user_storage_tracking', [
+                'user_id' => $userId,
+                'used_bytes' => $totalSize,
+                'quota_bytes' => $quota['quota'],
+                'total_files' => $totalFiles,
+                'total_folders' => $totalFolders,
+                'r2_uploaded_bytes' => $r2UploadedBytes,
+                'local_only_bytes' => $localOnlyBytes,
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+        } else {
+            fm_update('fm_user_storage_tracking', [
+                'used_bytes' => $totalSize,
+                'quota_bytes' => $quota['quota'],
+                'total_files' => $totalFiles,
+                'total_folders' => $totalFolders,
+                'r2_uploaded_bytes' => $r2UploadedBytes,
+                'local_only_bytes' => $localOnlyBytes,
+                'updated_at' => date('Y-m-d H:i:s')
+            ], ['user_id' => $userId]);
+        }
+
+        // Also update fm_user_quotas table
+        fm_update('fm_user_quotas', [
+            'used_bytes' => $totalSize,
+            'updated_at' => date('Y-m-d H:i:s')
+        ], ['user_id' => $userId]);
     }
 }
 
@@ -2517,12 +2673,19 @@ if (!function_exists('fm_get_folder_contents')) {
         $isAdmin = function_exists('Wo_IsAdmin') && Wo_IsAdmin();
 
         if ($folderType === 'user') {
-            $userPath = "Storage/{$userId}";
-            if ($path) {
-                $userPath .= '/' . ltrim($path, '/');
+            // For non-admin users, use user-specific base directory
+            // For admin, use storage/{userId}
+            if ($isAdmin) {
+                $userPath = "storage/{$userId}";
+                if ($path) {
+                    $userPath .= '/' . ltrim($path, '/');
+                }
+            } else {
+                // Non-admin: just use the relative path since fm_get_local_dir handles user isolation
+                $userPath = $path;
             }
 
-            $result = fm_list_local_folder($userPath);
+            $result = fm_list_local_folder($userPath, $userId);
             return $result;
         }
 

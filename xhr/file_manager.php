@@ -76,8 +76,9 @@ try {
                 exit;
             }
 
+            $userId = _fm_user_id();
             $path = trim($_GET['path'] ?? '');
-            $result = fm_list_local_folder($path);
+            $result = fm_list_local_folder($path, $userId);
 
             echo json_encode([
                 'status' => 200,
@@ -116,7 +117,8 @@ try {
                 exit;
             }
 
-            $fullPath = fm_get_local_dir() . '/' . ltrim($path, '/');
+            $userId = _fm_user_id();
+            $fullPath = fm_get_local_dir($userId) . '/' . ltrim($path, '/');
 
             if (file_exists($fullPath)) {
                 echo json_encode(['status' => 409, 'error' => 'Folder already exists']);
@@ -279,10 +281,18 @@ try {
                 exit;
             }
 
-            $baseDir = fm_get_local_dir();
+            $userId = _fm_user_id();
+            $baseDir = fm_get_local_dir($userId);
             $backupDir = fm_get_backup_dir();
 
+            // Also check root storage directory for admin access
+            $rootBaseDir = fm_get_local_dir();
+
             $fullPath = $baseDir . '/' . ltrim($file, '/');
+
+            if (!file_exists($fullPath) || !is_file($fullPath)) {
+                $fullPath = $rootBaseDir . '/' . ltrim($file, '/');
+            }
 
             if (!file_exists($fullPath) || !is_file($fullPath)) {
                 $fullPath = $backupDir . '/' . basename($file);
@@ -296,9 +306,15 @@ try {
 
             $baseDirReal = realpath($baseDir);
             $backupDirReal = realpath($backupDir);
+            $rootBaseDirReal = realpath($rootBaseDir);
             $fullPathReal = realpath($fullPath);
 
-            if (strpos($fullPathReal, $baseDirReal) !== 0 && strpos($fullPathReal, $backupDirReal) !== 0) {
+            // Allow access if file is in user's directory, backup directory, or root storage (for admins)
+            $isAllowed = (strpos($fullPathReal, $baseDirReal) === 0) ||
+                        (strpos($fullPathReal, $backupDirReal) === 0) ||
+                        (strpos($fullPathReal, $rootBaseDirReal) === 0);
+
+            if (!$isAllowed) {
                 header('HTTP/1.1 403 Forbidden');
                 echo 'Access denied';
                 exit;
@@ -315,6 +331,7 @@ try {
             }
 
             $userId = _fm_user_id();
+            $baseDir = fm_get_local_dir($userId);
             $paths = [];
             if (isset($_POST['paths']) && is_array($_POST['paths'])) {
                 $paths = $_POST['paths'];
@@ -333,7 +350,6 @@ try {
             $allSuccess = true;
             foreach ($paths as $path) {
                 // Get file info before deletion to update quota
-                $baseDir = fm_get_local_dir();
                 $fullPath = $baseDir . '/' . ltrim($path, '/');
                 $fileSize = 0;
 
@@ -385,8 +401,9 @@ try {
                 exit;
             }
 
+            $userId = _fm_user_id();
             $backupDir = fm_get_backup_dir();
-            $localDir = fm_get_local_dir();
+            $localDir = fm_get_local_dir($userId);
 
             $fullPath = $localDir . '/' . ltrim($path, '/');
 
@@ -808,7 +825,8 @@ try {
                 exit;
             }
 
-            $baseDir = fm_get_local_dir();
+            $userId = _fm_user_id();
+            $baseDir = fm_get_local_dir($userId);
             $fullPath = $baseDir . '/' . ltrim($path, '/');
 
             if (!file_exists($fullPath)) {
@@ -1098,7 +1116,8 @@ try {
                 exit;
             }
 
-            $baseDir = fm_get_local_dir();
+            $userId = _fm_user_id();
+            $baseDir = fm_get_local_dir($userId);
             $fullPath = $baseDir . '/' . ltrim($path, '/');
 
             if (!file_exists($fullPath)) {
@@ -1124,6 +1143,9 @@ try {
 
             $userId = _fm_user_id();
             $isAdmin = _fm_is_admin();
+
+            // Update storage tracking for this user
+            fm_update_storage_tracking($userId);
 
             // Get common folders
             $commonFolders = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC");
@@ -1575,7 +1597,8 @@ try {
                 exit;
             }
 
-            $baseDir = fm_get_local_dir();
+            $userId = _fm_user_id();
+            $baseDir = fm_get_local_dir($userId);
             $oldFullPath = $baseDir . '/' . ltrim($oldPath, '/');
 
             $pathParts = explode('/', $oldPath);
@@ -1623,7 +1646,8 @@ try {
                 exit;
             }
 
-            $baseDir = fm_get_local_dir();
+            $userId = _fm_user_id();
+            $baseDir = fm_get_local_dir($userId);
             $sourceFullPath = $baseDir . '/' . ltrim($sourcePath, '/');
             $targetFullPath = $baseDir . '/' . ltrim($targetPath, '/');
 
@@ -1665,7 +1689,8 @@ try {
                 exit;
             }
 
-            $baseDir = fm_get_local_dir();
+            $userId = _fm_user_id();
+            $baseDir = fm_get_local_dir($userId);
             $fullPath = $baseDir . '/' . ltrim($path, '/');
 
             if (!is_dir(dirname($fullPath))) {
