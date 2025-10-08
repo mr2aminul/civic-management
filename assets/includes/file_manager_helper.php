@@ -1839,3 +1839,311 @@ if (!function_exists('fm_log_debug')) {
         @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
     }
 }
+// ============================================
+// Thumbnail Generation
+// ============================================
+if (!function_exists('fm_generate_thumbnail')) {
+    function fm_generate_thumbnail($sourceFile, $fileId, $size = 'medium') {
+        if (!file_exists($sourceFile)) {
+            return ['success' => false, 'error' => 'Source file not found'];
+        }
+
+        $ext = strtolower(pathinfo($sourceFile, PATHINFO_EXTENSION));
+        $imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+
+        if (!in_array($ext, $imageExts)) {
+            return ['success' => false, 'error' => 'Not an image file'];
+        }
+
+        $sizes = [
+            'small' => [100, 100],
+            'medium' => [300, 300],
+            'large' => [600, 600]
+        ];
+
+        if (!isset($sizes[$size])) {
+            $size = 'medium';
+        }
+
+        list($maxWidth, $maxHeight) = $sizes[$size];
+
+        $config = fm_get_config();
+        $thumbDir = $config['local_storage'] . '/.thumbnails';
+
+        if (!file_exists($thumbDir)) {
+            @mkdir($thumbDir, 0755, true);
+        }
+
+        $thumbFilename = 'thumb_' . $fileId . '_' . $size . '.jpg';
+        $thumbPath = $thumbDir . '/' . $thumbFilename;
+
+        try {
+            if (extension_loaded('gd')) {
+                $image = null;
+
+                switch ($ext) {
+                    case 'jpg':
+                    case 'jpeg':
+                        $image = @imagecreatefromjpeg($sourceFile);
+                        break;
+                    case 'png':
+                        $image = @imagecreatefrompng($sourceFile);
+                        break;
+                    case 'gif':
+                        $image = @imagecreatefromgif($sourceFile);
+                        break;
+                    case 'webp':
+                        if (function_exists('imagecreatefromwebp')) {
+                            $image = @imagecreatefromwebp($sourceFile);
+                        }
+                        break;
+                    case 'bmp':
+                        if (function_exists('imagecreatefrombmp')) {
+                            $image = @imagecreatefrombmp($sourceFile);
+                        }
+                        break;
+                }
+
+                if (!$image) {
+                    return ['success' => false, 'error' => 'Could not create image resource'];
+                }
+
+                $width = imagesx($image);
+                $height = imagesy($image);
+
+                $ratio = min($maxWidth / $width, $maxHeight / $height);
+                $newWidth = (int)($width * $ratio);
+                $newHeight = (int)($height * $ratio);
+
+                $thumbnail = imagecreatetruecolor($newWidth, $newHeight);
+                imagecopyresampled($thumbnail, $image, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
+
+                imagejpeg($thumbnail, $thumbPath, 85);
+                imagedestroy($image);
+                imagedestroy($thumbnail);
+
+                $thumbData = [
+                    'file_id' => $fileId,
+                    'thumbnail_path' => '.thumbnails/' . $thumbFilename,
+                    'thumbnail_size' => $size,
+                    'width' => $newWidth,
+                    'height' => $newHeight,
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
+
+                $thumbId = fm_insert('fm_thumbnails', $thumbData);
+
+                return [
+                    'success' => true,
+                    'thumbnail_id' => $thumbId,
+                    'path' => $thumbData['thumbnail_path']
+                ];
+            }
+
+            return ['success' => false, 'error' => 'GD extension not available'];
+        } catch (Exception $e) {
+            fm_log_error('Thumbnail generation failed', ['file' => $sourceFile, 'error' => $e->getMessage()]);
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+}
+
+// ============================================
+// File Versioning
+// ============================================
+if (!function_exists('fm_create_file_version')) {
+    function fm_create_file_version($fileId, $userId, $filePath, $comment = null) {
+        $fileInfo = fm_query("SELECT * FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+
+        if (empty($fileInfo)) {
+            return ['success' => false, 'error' => 'File not found'];
+        }
+
+        $fileInfo = $fileInfo[0];
+        $currentVersion = (int)($fileInfo['current_version'] ?? 1);
+        $newVersion = $currentVersion + 1;
+
+        $fileSize = file_exists($filePath) ? filesize($filePath) : 0;
+        $checksum = file_exists($filePath) ? md5_file($filePath) : null;
+
+        $versionData = [
+            'file_id' => $fileId,
+            'user_id' => $userId,
+            'version_number' => $newVersion,
+            'filename' => basename($filePath),
+            'path' => $filePath,
+            'size' => $fileSize,
+            'checksum' => $checksum,
+            'comment' => $comment,
+            'created_at' => date('Y-m-d H:i:s'),
+            'is_deletable' => 0
+        ];
+
+        $versionId = fm_insert('fm_file_versions', $versionData);
+
+        fm_update('fm_files', [
+            'current_version' => $newVersion,
+            'version_count' => $newVersion
+        ], ['id' => $fileId]);
+
+        return [
+            'success' => true,
+            'version_id' => $versionId,
+            'version_number' => $newVersion
+        ];
+    }
+}
+
+// ============================================
+// Check Folder Access
+// ============================================
+if (!function_exists('fm_check_folder_access')) {
+    function fm_check_folder_access($userId, $folderId, $folderType = 'special') {
+        global $wo;
+
+        if (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) {
+            return true;
+        }
+
+        if (function_exists('Wo_IsModerator') && Wo_IsModerator()) {
+            return true;
+        }
+
+        if ($folderType === 'common') {
+            return true;
+        }
+
+        $access = fm_query(
+            "SELECT id FROM fm_folder_access WHERE folder_id = ? AND folder_type = ? AND user_id = ? LIMIT 1",
+            [$folderId, $folderType, $userId]
+        );
+
+        return !empty($access);
+    }
+}
+
+// ============================================
+// Get User's Accessible Folders
+// ============================================
+if (!function_exists('fm_get_user_folders')) {
+    function fm_get_user_folders($userId, $isAdmin = false) {
+        $folders = [
+            'common' => [],
+            'special' => [],
+            'user' => []
+        ];
+
+        $folders['common'] = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC") ?: [];
+
+        if ($isAdmin) {
+            $folders['special'] = fm_query("SELECT * FROM fm_special_folders WHERE is_active = 1 ORDER BY sort_order ASC") ?: [];
+
+            $allUsers = fm_query("SELECT DISTINCT user_id FROM fm_files WHERE user_id > 0");
+            foreach ($allUsers as $user) {
+                $folders['user'][] = [
+                    'id' => $user['user_id'],
+                    'type' => 'user'
+                ];
+            }
+        } else {
+            $folders['special'] = fm_query("
+                SELECT sf.* FROM fm_special_folders sf
+                INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                WHERE sf.is_active = 1 AND fa.user_id = ?
+                ORDER BY sf.sort_order ASC
+            ", [$userId]) ?: [];
+        }
+
+        return $folders;
+    }
+}
+
+// ============================================
+// Move File to Recycle Bin
+// ============================================
+if (!function_exists('fm_move_to_recycle_bin')) {
+    function fm_move_to_recycle_bin($fileId, $userId) {
+        $file = fm_query("SELECT * FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+
+        if (empty($file)) {
+            return ['success' => false, 'error' => 'File not found'];
+        }
+
+        $file = $file[0];
+        $config = fm_get_config();
+        $retentionDays = $config['recycle_retention_days'];
+        $autoDeleteAt = date('Y-m-d H:i:s', strtotime("+{$retentionDays} days"));
+
+        $recycleData = [
+            'file_id' => $fileId,
+            'user_id' => $file['user_id'],
+            'original_path' => $file['path'],
+            'original_filename' => $file['original_filename'] ?? $file['filename'],
+            'size' => $file['size'],
+            'deleted_at' => date('Y-m-d H:i:s'),
+            'deleted_by' => $userId,
+            'auto_delete_at' => $autoDeleteAt,
+            'can_restore' => 1
+        ];
+
+        fm_insert('fm_recycle_bin', $recycleData);
+
+        fm_update('fm_files', [
+            'is_deleted' => 1,
+            'deleted_at' => date('Y-m-d H:i:s'),
+            'deleted_by' => $userId
+        ], ['id' => $fileId]);
+
+        fm_update_user_quota($file['user_id'], -$file['size']);
+
+        return ['success' => true];
+    }
+}
+
+// ============================================
+// Calculate Total System Storage
+// ============================================
+if (!function_exists('fm_calculate_total_storage')) {
+    function fm_calculate_total_storage() {
+        $result = fm_query("SELECT SUM(used_bytes) as total FROM fm_user_quotas");
+
+        if (empty($result)) {
+            return 0;
+        }
+
+        return (int)$result[0]['total'];
+    }
+}
+
+// ============================================
+// Get File Thumbnail
+// ============================================
+if (!function_exists('fm_get_file_thumbnail')) {
+    function fm_get_file_thumbnail($fileId, $size = 'medium') {
+        $thumb = fm_query(
+            "SELECT * FROM fm_thumbnails WHERE file_id = ? AND thumbnail_size = ? LIMIT 1",
+            [$fileId, $size]
+        );
+
+        if (empty($thumb)) {
+            return null;
+        }
+
+        return $thumb[0];
+    }
+}
+
+// ============================================
+// Check if File is on R2
+// ============================================
+if (!function_exists('fm_is_file_on_r2')) {
+    function fm_is_file_on_r2($fileId) {
+        $file = fm_query("SELECT r2_uploaded FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+
+        if (empty($file)) {
+            return false;
+        }
+
+        return (int)$file[0]['r2_uploaded'] === 1;
+    }
+}
