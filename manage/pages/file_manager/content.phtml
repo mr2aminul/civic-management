@@ -916,15 +916,6 @@ if ($tab == 'settings') {
             <div class="fm-sidebar-item active" data-view="all">
                 <i class="bi bi-folder"></i> All Files
             </div>
-            <div class="fm-sidebar-item" data-view="recent">
-                <i class="bi bi-clock-history"></i> Recent
-            </div>
-            <div class="fm-sidebar-item" data-view="images">
-                <i class="bi bi-image"></i> Images
-            </div>
-            <div class="fm-sidebar-item" data-view="documents">
-                <i class="bi bi-file-text"></i> Documents
-            </div>
             <div class="fm-sidebar-item" data-view="trash">
                 <i class="bi bi-trash"></i> Recycle Bin
             </div>
@@ -1074,20 +1065,27 @@ jQuery(function($) {
                 // Update storage usage
                 if (res.storage_usage) {
                     const usage = res.storage_usage;
-                    $('#fm-storage-text').text(usage.used_formatted + ' / ' + usage.quota_formatted);
+                    const usedFormatted = usage.used_formatted || formatSize(usage.used_bytes);
+                    const quotaFormatted = usage.quota_formatted || formatSize(usage.quota_bytes);
+                    $('#fm-storage-text').text(usedFormatted + ' / ' + quotaFormatted);
 
                     // Show global storage for admins
                     if (res.global_storage) {
                         const global = res.global_storage;
-                        $('.fm-sidebar').find('.fm-sidebar-section:contains("Storage")').after(`
-                            <div class="fm-sidebar-item" style="background:#fef3c7;border-left:3px solid #f59e0b">
+                        const globalUsed = global.used_formatted || formatSize(global.total_used_bytes);
+                        const globalQuota = global.quota_formatted || formatSize(global.vps_total_bytes);
+                        const globalPercent = global.global_usage_percentage || 0;
+
+                        const $storageItem = $('.fm-sidebar').find('.fm-sidebar-section:contains("Storage")').next('.fm-sidebar-item');
+                        $storageItem.after(`
+                            <div class="fm-sidebar-item" style="background:#fef3c7;border-left:3px solid #f59e0b;cursor:default">
                                 <i class="bi bi-server" style="color:#f59e0b"></i>
                                 <div style="flex:1">
                                     <div style="font-size:11px;color:#92400e">Global VPS Usage</div>
                                     <div style="font-weight:600;font-size:13px;color:#78350f">
-                                        ${global.used_formatted} / ${global.quota_formatted}
+                                        ${globalUsed} / ${globalQuota}
                                     </div>
-                                    <div style="font-size:10px;color:#92400e">${global.global_usage_percentage}% used</div>
+                                    <div style="font-size:10px;color:#92400e">${globalPercent}% used</div>
                                 </div>
                             </div>
                         `);
@@ -1099,9 +1097,12 @@ jQuery(function($) {
                     $('#fm-r2-status').text(res.r2_status);
                 }
 
-                // Add My Storage section
-                $('.fm-sidebar').find('[data-view="trash"]').after('<div class="fm-sidebar-section">My Storage</div>');
-                $('.fm-sidebar').find('.fm-sidebar-section:contains("My Storage")').after(`
+                // Add My Storage section after "Storage" section
+                const $storageSection = $('.fm-sidebar').find('.fm-sidebar-section:contains("Storage")');
+                $storageSection.nextAll('.fm-sidebar-item').first().after('<div class="fm-sidebar-section">My Storage</div>');
+
+                const $myStorageSection = $('.fm-sidebar').find('.fm-sidebar-section:contains("My Storage")');
+                $myStorageSection.after(`
                     <div class="fm-sidebar-item" data-view="user-storage" data-folder-type="user">
                         <i class="bi bi-folder-symlink"></i> My Files
                     </div>
@@ -1109,28 +1110,39 @@ jQuery(function($) {
 
                 // Load common folders
                 if (res.common_folders && res.common_folders.length > 0) {
-                    $('.fm-sidebar').find('.fm-sidebar-section:contains("My Storage")').after('<div class="fm-sidebar-section">Common Folders</div>');
-                    const commonSection = $('.fm-sidebar').find('.fm-sidebar-section:contains("Common Folders")');
+                    const $myFilesItem = $('.fm-sidebar').find('[data-view="user-storage"]');
+                    $myFilesItem.after('<div class="fm-sidebar-section">Common Folders</div>');
+                    const $commonSection = $('.fm-sidebar').find('.fm-sidebar-section:contains("Common Folders")');
+
+                    let $insertAfter = $commonSection;
                     res.common_folders.forEach(folder => {
-                        commonSection.after(`
+                        const $item = $(`
                             <div class="fm-sidebar-item" data-view="common" data-folder-id="${folder.id}" data-folder-type="common">
-                                <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
+                                <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${escapeHtml(folder.folder_name)}
                             </div>
                         `);
+                        $insertAfter.after($item);
+                        $insertAfter = $item;
                     });
                 }
 
                 // Load special folders
                 if (res.special_folders && res.special_folders.length > 0) {
-                    const lastSection = $('.fm-sidebar .fm-sidebar-section').last();
-                    lastSection.after('<div class="fm-sidebar-section">Special Folders</div>');
-                    const specialSection = $('.fm-sidebar').find('.fm-sidebar-section:contains("Special Folders")');
+                    const $lastCommonItem = $('.fm-sidebar').find('[data-folder-type="common"]').last();
+                    const $insertPoint = $lastCommonItem.length > 0 ? $lastCommonItem : $('.fm-sidebar').find('[data-view="user-storage"]');
+
+                    $insertPoint.after('<div class="fm-sidebar-section">Special Folders</div>');
+                    const $specialSection = $('.fm-sidebar').find('.fm-sidebar-section:contains("Special Folders")');
+
+                    let $insertAfter = $specialSection;
                     res.special_folders.forEach(folder => {
-                        specialSection.after(`
+                        const $item = $(`
                             <div class="fm-sidebar-item" data-view="special" data-folder-id="${folder.id}" data-folder-type="special">
-                                <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${folder.folder_name}
+                                <i class="${folder.folder_icon}" style="color:${folder.folder_color}"></i> ${escapeHtml(folder.folder_name)}
                             </div>
                         `);
+                        $insertAfter.after($item);
+                        $insertAfter = $item;
                     });
                 }
             }
@@ -1202,25 +1214,6 @@ jQuery(function($) {
 
     function filterItems() {
         let filtered = items.slice();
-
-        if (currentFilter === 'recent') {
-            filtered = filtered.filter(i => i.type === 'file').sort((a, b) => (b.mtime || 0) - (a.mtime || 0))
-                .slice(0, 50);
-        } else if (currentFilter === 'images') {
-            const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'bmp'];
-            filtered = filtered.filter(i => {
-                if (i.type === 'folder') return false;
-                const ext = i.name.split('.').pop().toLowerCase();
-                return imgExts.includes(ext);
-            });
-        } else if (currentFilter === 'documents') {
-            const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'ppt', 'pptx'];
-            filtered = filtered.filter(i => {
-                if (i.type === 'folder') return false;
-                const ext = i.name.split('.').pop().toLowerCase();
-                return docExts.includes(ext);
-            });
-        }
 
         const searchTerm = $('#fm-search').val().toLowerCase().trim();
         if (searchTerm) {
@@ -1453,6 +1446,9 @@ jQuery(function($) {
             currentFilter = 'special-folder';
             currentPath = '';
             loadFolderContents('special', folderId, '');
+        } else if (view === 'all') {
+            currentFilter = 'all';
+            loadFolder('');
         } else {
             currentFilter = view;
             renderItems();
