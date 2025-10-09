@@ -135,27 +135,145 @@ function fm_query($sql, $params = []) {
 }
 
 function fm_insert($table, $data) {
-    $conn = fm_get_db();
-    if (!$conn) return false;
+    $clean = [];
+    foreach ($data as $k => $v) {
+        if (is_array($v) || is_object($v)) {
+            $v = json_encode($v);
+        } elseif (is_bool($v)) {
+            $v = $v ? 1 : 0;
+        } elseif (is_null($v)) {
+            $v = null;
+        }
+        $clean[$k] = $v;
+    }
 
-    if ($conn['type'] === 'joshcam') {
+    $connInfo = fm_get_db();
+    if (!$connInfo) return false;
+
+    if ($connInfo['type'] === 'joshcam') {
         try {
-            return $conn['db']->insert($table, $data);
+            $jdb = $connInfo['db'];
+            $maybeMysqli = null;
+
+            if (is_object($jdb)) {
+                if (property_exists($jdb, 'mysqli') && $jdb->mysqli instanceof mysqli) {
+                    $maybeMysqli = $jdb->mysqli;
+                } elseif (property_exists($jdb, 'connection') && $jdb->connection instanceof mysqli) {
+                    $maybeMysqli = $jdb->connection;
+                } elseif (method_exists($jdb, 'getConnection')) {
+                    $tmp = $jdb->getConnection();
+                    if ($tmp instanceof mysqli) $maybeMysqli = $tmp;
+                } elseif (method_exists($jdb, 'getMysqli')) {
+                    $tmp = $jdb->getMysqli();
+                    if ($tmp instanceof mysqli) $maybeMysqli = $tmp;
+                }
+            }
+
+            if ($maybeMysqli instanceof mysqli) {
+                $mysqli = $maybeMysqli;
+                $keys = array_keys($clean);
+                $values = array_values($clean);
+                $placeholders = implode(',', array_fill(0, count($keys), '?'));
+                $sql = "INSERT INTO `$table` (`" . implode('`, `', $keys) . "`) VALUES ($placeholders)";
+                $stmt = $mysqli->prepare($sql);
+                if (!$stmt) {
+                    error_log("fm_insert: mysqli->prepare failed: " . $mysqli->error . " SQL: " . $sql);
+                    return false;
+                }
+
+                $types = '';
+                $bindVals = [];
+                foreach ($values as $i => $v) {
+                    if (is_int($v)) $types .= 'i';
+                    elseif (is_double($v) || is_float($v)) $types .= 'd';
+                    elseif (is_null($v)) $types .= 's';
+                    else $types .= 's';
+                    $bindVals[] = $v;
+                }
+
+                $bindParams = [];
+                $bindParams[] = &$types;
+                foreach ($bindVals as $i => &$bv) $bindParams[] = &$bv;
+
+                if (!call_user_func_array([$stmt, 'bind_param'], $bindParams)) {
+                    error_log("fm_insert: bind_param failed. SQL: {$sql} Values: " . print_r($values, true));
+                    return false;
+                }
+
+                if (!$stmt->execute()) {
+                    error_log("fm_insert: execute failed: " . $stmt->error . " SQL: " . $sql . " Values: " . print_r($values, true));
+                    return false;
+                }
+
+                $insertId = $stmt->insert_id ?: $mysqli->insert_id;
+                $stmt->close();
+
+                return $insertId ? (int)$insertId : true;
+            }
+
+            $res = $jdb->insert($table, $clean);
+            return $res;
         } catch (Exception $e) {
+            error_log("fm_insert: joshcam insert exception: " . $e->getMessage() . " Data: " . print_r($clean, true));
+        }
+    }
+
+    $host = getenv('DB_HOST') ?: '127.0.0.1';
+    $user = getenv('DB_USER') ?: '';
+    $pass = getenv('DB_PASSWORD') ?: '';
+    $name = getenv('DB_NAME') ?: '';
+
+    $mysqli = new mysqli($host, $user, $pass, $name);
+    if ($mysqli->connect_error) {
+        error_log("fm_insert: Temporary mysqli connection failed: " . $mysqli->connect_error);
+        return false;
+    }
+    $mysqli->set_charset('utf8mb4');
+
+    $keys = array_keys($clean);
+    $values = array_values($clean);
+    $placeholders = implode(',', array_fill(0, count($keys), '?'));
+    $sql = "INSERT INTO `$table` (`" . implode('`, `', $keys) . "`) VALUES ($placeholders)";
+    $stmt = $mysqli->prepare($sql);
+    if (!$stmt) {
+        error_log("fm_insert: prepare failed (temp mysqli): " . $mysqli->error . " SQL: " . $sql);
+        return false;
+    }
+
+    $types = '';
+    $bindVals = [];
+    foreach ($values as $v) {
+        if (is_int($v)) $types .= 'i';
+        elseif (is_double($v) || is_float($v)) $types .= 'd';
+        else $types .= 's';
+        $bindVals[] = $v;
+    }
+
+    $bindParams = [];
+    $bindParams[] = &$types;
+    foreach ($bindVals as $i => &$bv) $bindParams[] = &$bv;
+
+    if (count($bindVals) > 0) {
+        if (!call_user_func_array([$stmt, 'bind_param'], $bindParams)) {
+            error_log("fm_insert: bind_param failed (temp mysqli). SQL: {$sql} Values: " . print_r($values, true));
+            $stmt->close();
+            $mysqli->close();
             return false;
         }
     }
 
-    $keys = array_keys($data);
-    $values = array_values($data);
-    $placeholders = implode(',', array_fill(0, count($keys), '?'));
-    $sql = "INSERT INTO `$table` (`" . implode('`, `', $keys) . "`) VALUES ($placeholders)";
-    $result = fm_query($sql, $values);
-
-    if (is_array($result) && isset($result['insert_id'])) {
-        return $result['insert_id'];
+    if (!$stmt->execute()) {
+        error_log("fm_insert: execute failed (temp mysqli): " . $stmt->error . " SQL: " . $sql . " Values: " . print_r($values, true));
+        $stmt->close();
+        $mysqli->close();
+        return false;
     }
-    return $result;
+
+    $insertId = $stmt->insert_id ?: $mysqli->insert_id;
+    $stmt->close();
+    $mysqli->close();
+
+    return $insertId ? (int)$insertId : true;
 }
 
 function fm_update($table, $data, $where) {
