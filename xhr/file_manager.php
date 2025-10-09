@@ -258,6 +258,9 @@ try {
                 }
             }
 
+            // Update storage tracking after all uploads
+            fm_update_storage_tracking($userId);
+
             // Clear cache
             fm_cache_delete('list_local_' . ($subdir ?: 'root'));
 

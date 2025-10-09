@@ -2556,38 +2556,28 @@ if (!function_exists('fm_update_storage_tracking')) {
             return false;
         }
 
-        // Calculate actual disk usage
-        $baseDir = fm_get_local_dir();
-        $isAdmin = (function_exists('Wo_IsAdmin') && Wo_IsAdmin());
-
-        if ($isAdmin) {
-            $userStoragePath = $baseDir . '/storage/' . $userId;
-        } else {
-            $userStoragePath = fm_get_local_dir($userId);
-        }
-
-        $totalSize = 0;
-        $totalFiles = 0;
-        $totalFolders = 0;
-        $r2UploadedBytes = 0;
-
-        if (is_dir($userStoragePath)) {
-            // Ensure fm_calculate_directory_size returns integer and updates counts by reference
-            $totalSize = fm_calculate_directory_size($userStoragePath, $totalFiles, $totalFolders);
-            $totalSize = (int) $totalSize;
-            $totalFiles = (int) $totalFiles;
-            $totalFolders = (int) $totalFolders;
-        }
-
-        // Get R2 uploaded bytes from database
-        $r2Stats = fm_query(
-            "SELECT SUM(size) as r2_bytes FROM fm_files WHERE user_id = ? AND r2_uploaded = 1 AND is_deleted = 0",
+        // Calculate from database (source of truth)
+        $stats = fm_query(
+            "SELECT
+                COUNT(CASE WHEN is_folder = 0 AND is_deleted = 0 THEN 1 END) as total_files,
+                COUNT(CASE WHEN is_folder = 1 AND is_deleted = 0 THEN 1 END) as total_folders,
+                COALESCE(SUM(CASE WHEN is_folder = 0 AND is_deleted = 0 THEN size ELSE 0 END), 0) as used_bytes,
+                COALESCE(SUM(CASE WHEN is_folder = 0 AND is_deleted = 0 AND r2_uploaded = 1 THEN size ELSE 0 END), 0) as r2_uploaded_bytes
+             FROM fm_files
+             WHERE user_id = ?",
             [$userId]
         );
-        if (!empty($r2Stats) && isset($r2Stats[0]['r2_bytes'])) {
-            $r2UploadedBytes = (int) $r2Stats[0]['r2_bytes'];
-        } else {
-            $r2UploadedBytes = 0;
+
+        $totalFiles = 0;
+        $totalFolders = 0;
+        $totalSize = 0;
+        $r2UploadedBytes = 0;
+
+        if (!empty($stats)) {
+            $totalFiles = (int)($stats[0]['total_files'] ?? 0);
+            $totalFolders = (int)($stats[0]['total_folders'] ?? 0);
+            $totalSize = (int)($stats[0]['used_bytes'] ?? 0);
+            $r2UploadedBytes = (int)($stats[0]['r2_uploaded_bytes'] ?? 0);
         }
 
         $localOnlyBytes = $totalSize - $r2UploadedBytes;
