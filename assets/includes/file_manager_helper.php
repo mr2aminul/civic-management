@@ -109,7 +109,10 @@ function fm_query($sql, $params = []) {
     if ($conn['type'] === 'mysqli') {
         $mysqli = $conn['db'];
         $stmt = $mysqli->prepare($sql);
-        if (!$stmt) return false;
+        if (!$stmt) {
+            error_log("fm_query: prepare failed: " . $mysqli->error . " SQL: " . $sql);
+            return false;
+        }
 
         if (!empty($params)) {
             $types = '';
@@ -123,12 +126,22 @@ function fm_query($sql, $params = []) {
             $stmt->bind_param($types, ...$values);
         }
 
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            error_log("fm_query: execute failed: " . $stmt->error . " SQL: " . $sql);
+            $stmt->close();
+            return false;
+        }
+
         $result = $stmt->get_result();
         if ($result) {
-            return $result->fetch_all(MYSQLI_ASSOC);
+            $data = $result->fetch_all(MYSQLI_ASSOC);
+            $stmt->close();
+            return $data;
         }
-        return ['affected_rows' => $stmt->affected_rows, 'insert_id' => $stmt->insert_id];
+
+        $ret = ['affected_rows' => $stmt->affected_rows, 'insert_id' => $stmt->insert_id];
+        $stmt->close();
+        return $ret;
     }
 
     return false;
@@ -2776,38 +2789,61 @@ if (!function_exists('fm_update_storage_tracking')) {
             'updated_at' => $now
         ];
 
-        // Use INSERT ... ON DUPLICATE KEY UPDATE to handle both insert and update cases
-        $sql = "INSERT INTO `fm_user_storage_tracking`
-                (`user_id`, `total_files`, `total_folders`, `used_bytes`, `quota_bytes`,
-                 `r2_uploaded_bytes`, `local_only_bytes`, `last_calculated_at`, `last_upload_at`,
-                 `created_at`, `updated_at`)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    `total_files` = VALUES(`total_files`),
-                    `total_folders` = VALUES(`total_folders`),
-                    `used_bytes` = VALUES(`used_bytes`),
-                    `quota_bytes` = VALUES(`quota_bytes`),
-                    `r2_uploaded_bytes` = VALUES(`r2_uploaded_bytes`),
-                    `local_only_bytes` = VALUES(`local_only_bytes`),
-                    `last_calculated_at` = VALUES(`last_calculated_at`),
-                    `last_upload_at` = VALUES(`last_upload_at`),
-                    `updated_at` = VALUES(`updated_at`)";
+        // Check if record exists first
+        $existing = fm_query("SELECT user_id FROM fm_user_storage_tracking WHERE user_id = ?", [(int)$userId]);
 
-        $params = [
-            (int)$userId,
-            (int)$totalFiles,
-            (int)$totalFolders,
-            (int)$totalSize,
-            (int)$quotaBytes,
-            (int)$r2UploadedBytes,
-            (int)$localOnlyBytes,
-            $now,
-            $now,
-            $now,
-            $now
-        ];
+        if (!empty($existing)) {
+            // Update existing record
+            $updateSql = "UPDATE `fm_user_storage_tracking` SET
+                          `total_files` = ?,
+                          `total_folders` = ?,
+                          `used_bytes` = ?,
+                          `quota_bytes` = ?,
+                          `r2_uploaded_bytes` = ?,
+                          `local_only_bytes` = ?,
+                          `last_calculated_at` = ?,
+                          `last_upload_at` = ?,
+                          `updated_at` = ?
+                          WHERE `user_id` = ?";
 
-        $result = fm_query($sql, $params);
+            $params = [
+                (int)$totalFiles,
+                (int)$totalFolders,
+                (int)$totalSize,
+                (int)$quotaBytes,
+                (int)$r2UploadedBytes,
+                (int)$localOnlyBytes,
+                $now,
+                $now,
+                $now,
+                (int)$userId
+            ];
+
+            $result = fm_query($updateSql, $params);
+        } else {
+            // Insert new record
+            $insertSql = "INSERT INTO `fm_user_storage_tracking`
+                          (`user_id`, `total_files`, `total_folders`, `used_bytes`, `quota_bytes`,
+                           `r2_uploaded_bytes`, `local_only_bytes`, `last_calculated_at`, `last_upload_at`,
+                           `created_at`, `updated_at`)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+            $params = [
+                (int)$userId,
+                (int)$totalFiles,
+                (int)$totalFolders,
+                (int)$totalSize,
+                (int)$quotaBytes,
+                (int)$r2UploadedBytes,
+                (int)$localOnlyBytes,
+                $now,
+                $now,
+                $now,
+                $now
+            ];
+
+            $result = fm_query($insertSql, $params);
+        }
 
         if ($result === false) {
             $conn = fm_get_db();
@@ -2815,8 +2851,11 @@ if (!function_exists('fm_update_storage_tracking')) {
             if ($conn && $conn['type'] === 'mysqli' && $conn['db'] instanceof mysqli) {
                 $err = $conn['db']->error;
             }
-            error_log("fm_update_storage_tracking: INSERT ON DUPLICATE KEY UPDATE failed for user {$userId}. Error: {$err}");
+            error_log("fm_update_storage_tracking: Query failed for user {$userId}. Error: {$err}");
+            return false;
         }
+
+        return true;
 
         // Also update fm_user_quotas table using fm_update
         $quotaUpdate = [

@@ -1147,8 +1147,7 @@ try {
             $isAdmin = _fm_is_admin();
 
             // Update storage tracking for this user
-            $is_update = fm_update_storage_tracking($userId);
-            print_r($is_update);
+            fm_update_storage_tracking($userId);
 
             // Get common folders
             $commonFolders = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC");
