@@ -1,0 +1,70 @@
+========================================
+STORAGE TRACKING FIX - QUICK START GUIDE
+========================================
+
+STEP 1: Run the Storage Sync Utility
+-------------------------------------
+Execute this command on your server:
+
+    cd /tmp/cc-agent/58324225/project
+    php fix_storage_sync.php
+
+OR if you need to specify PHP version:
+
+    php8.1 fix_storage_sync.php
+    php8.2 fix_storage_sync.php
+
+This will:
+- Recalculate storage for all users
+- Fix "Storage Used" not decreasing on delete
+- Fix "Global VPS Usage" showing 0 B
+- Display a summary of the operation
+
+
+STEP 2: Verify the Fix
+-----------------------
+1. Log into your file manager interface
+2. Check "Storage Used" - it should now show correct values
+3. Upload a test file - storage should increase
+4. Delete the test file - storage should decrease
+5. (Admin only) Check "Global VPS Usage" - should show actual usage
+
+
+WHAT WAS FIXED:
+--------------
+✓ File deletion now properly decreases storage usage
+✓ Global VPS usage statistics now display correctly
+✓ Both storage tracking tables are kept in sync
+✓ Storage is calculated from database (source of truth)
+
+
+FILES MODIFIED:
+--------------
+- xhr/file_manager.php
+- assets/includes/file_manager_storage.php
+
+
+NEW FILES CREATED:
+-----------------
+- fix_storage_sync.php (Run this utility)
+- STORAGE_TRACKING_FIX.md (Detailed documentation)
+
+
+ONGOING MAINTENANCE:
+-------------------
+Optional: Set up a weekly cron job to keep storage in sync:
+
+    0 2 * * 0 php /path/to/fix_storage_sync.php >> /var/log/storage_sync.log 2>&1
+
+This runs every Sunday at 2 AM.
+
+
+TROUBLESHOOTING:
+---------------
+If storage still shows incorrectly after running the fix:
+1. Run: php fix_storage_sync.php again
+2. Check error logs for any issues
+3. Verify both fm_user_quotas and fm_user_storage_tracking tables exist
+
+
+For detailed technical documentation, see STORAGE_TRACKING_FIX.md

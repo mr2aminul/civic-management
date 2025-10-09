@@ -349,6 +349,8 @@ try {
 
             $results = [];
             $allSuccess = true;
+            $affectedUsers = [];
+
             foreach ($paths as $path) {
                 // Get file info before deletion to update quota
                 $fullPath = $baseDir . '/' . ltrim($path, '/');
@@ -370,14 +372,18 @@ try {
                             'deleted_by' => $userId
                         ], ['id' => $fileRecord[0]['id']]);
 
-                        // Update user quota (subtract deleted file size)
-                        fm_update_user_quota($fileRecord[0]['user_id'], -$fileRecord[0]['size']);
+                        $affectedUsers[$fileRecord[0]['user_id']] = true;
                     }
                 }
 
                 $success = fm_delete_local_recursive($path);
                 $results[] = ['path' => $path, 'success' => $success];
                 if (!$success) $allSuccess = false;
+            }
+
+            // Recalculate storage for all affected users
+            foreach (array_keys($affectedUsers) as $affectedUserId) {
+                fm_recalculate_user_storage($affectedUserId);
             }
 
             echo json_encode([

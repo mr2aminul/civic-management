@@ -178,7 +178,7 @@ function fm_recalculate_user_storage($userId) {
 
         $localSize = $totalSize - $r2Size;
 
-        // Update or insert
+        // Update or insert into fm_user_quotas
         $data = [
             'quota_bytes' => $quotaBytes,
             'used_bytes' => $totalSize,
@@ -194,12 +194,38 @@ function fm_recalculate_user_storage($userId) {
 
         if ($exists) {
             $db->where('user_id', $userId);
-            return $db->update('fm_user_quotas', $data);
+            $db->update('fm_user_quotas', $data);
         } else {
             $data['user_id'] = $userId;
             $data['created_at'] = date('Y-m-d H:i:s');
-            return $db->insert('fm_user_quotas', $data);
+            $db->insert('fm_user_quotas', $data);
         }
+
+        // Also update fm_user_storage_tracking if it exists
+        $trackingData = [
+            'total_files' => $totalFiles,
+            'total_folders' => (int)$totalFolders,
+            'used_bytes' => $totalSize,
+            'quota_bytes' => $quotaBytes,
+            'r2_uploaded_bytes' => $r2Size,
+            'local_only_bytes' => $localSize,
+            'last_calculated_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s')
+        ];
+
+        $db->where('user_id', $userId);
+        $trackingExists = $db->getOne('fm_user_storage_tracking', 'user_id');
+
+        if ($trackingExists) {
+            $db->where('user_id', $userId);
+            $db->update('fm_user_storage_tracking', $trackingData);
+        } else {
+            $trackingData['user_id'] = $userId;
+            $trackingData['created_at'] = date('Y-m-d H:i:s');
+            $db->insert('fm_user_storage_tracking', $trackingData);
+        }
+
+        return true;
     } catch (Exception $e) {
         error_log("fm_recalculate_user_storage: Failed for user {$userId}. Error: " . $e->getMessage());
         return false;
@@ -257,40 +283,46 @@ function fm_get_global_storage_stats() {
     global $db;
 
     try {
-        $db->get('fm_user_quotas', null, [
-            'COUNT(DISTINCT user_id) as total_users',
-            'SUM(used_bytes) as total_used',
-            'SUM(quota_bytes) as total_quota',
-            'SUM(total_files) as all_files',
-            'SUM(total_folders) as all_folders',
-            'SUM(r2_uploaded_bytes) as total_r2',
-            'SUM(local_only_bytes) as total_local'
-        ]);
+        // Try fm_user_storage_tracking first (newer table)
+        $trackingExists = $db->tableExists('fm_user_storage_tracking');
 
-        $result = $db->getOne('fm_user_quotas', [
-            'COUNT(DISTINCT user_id) as total_users',
-            'SUM(used_bytes) as total_used',
-            'SUM(quota_bytes) as total_quota',
-            'SUM(total_files) as all_files',
-            'SUM(total_folders) as all_folders',
-            'SUM(r2_uploaded_bytes) as total_r2',
-            'SUM(local_only_bytes) as total_local'
-        ]);
+        if ($trackingExists) {
+            $result = $db->getOne('fm_user_storage_tracking', [
+                'COUNT(DISTINCT user_id) as total_users',
+                'SUM(used_bytes) as total_used',
+                'SUM(quota_bytes) as total_quota',
+                'SUM(total_files) as all_files',
+                'SUM(total_folders) as all_folders',
+                'SUM(r2_uploaded_bytes) as total_r2',
+                'SUM(local_only_bytes) as total_local'
+            ]);
+        } else {
+            // Fallback to fm_user_quotas
+            $result = $db->getOne('fm_user_quotas', [
+                'COUNT(DISTINCT user_id) as total_users',
+                'SUM(used_bytes) as total_used',
+                'SUM(quota_bytes) as total_quota',
+                'SUM(total_files) as all_files',
+                'SUM(total_folders) as all_folders',
+                'SUM(r2_uploaded_bytes) as total_r2',
+                'SUM(local_only_bytes) as total_local'
+            ]);
+        }
 
         if ($result) {
-            $totalUsed = (int)$result->total_used;
+            $totalUsed = (int)($result->total_used ?? 0);
             $vpsTotal = 64424509440; // 60 GB
 
             return [
-                'total_users' => (int)$result->total_users,
+                'total_users' => (int)($result->total_users ?? 0),
                 'total_used_bytes' => $totalUsed,
-                'total_quota_bytes' => (int)$result->total_quota,
-                'total_files' => (int)$result->all_files,
-                'total_folders' => (int)$result->all_folders,
-                'r2_uploaded_bytes' => (int)$result->total_r2,
-                'local_only_bytes' => (int)$result->total_local,
+                'total_quota_bytes' => (int)($result->total_quota ?? 0),
+                'total_files' => (int)($result->all_files ?? 0),
+                'total_folders' => (int)($result->all_folders ?? 0),
+                'r2_uploaded_bytes' => (int)($result->total_r2 ?? 0),
+                'local_only_bytes' => (int)($result->total_local ?? 0),
                 'vps_total_bytes' => $vpsTotal,
-                'vps_available_bytes' => $vpsTotal - $totalUsed,
+                'vps_available_bytes' => max(0, $vpsTotal - $totalUsed),
                 'vps_usage_percent' => $vpsTotal > 0 ? round(($totalUsed / $vpsTotal) * 100, 2) : 0
             ];
         }
@@ -404,11 +436,12 @@ function fm_update_storage_tracking($userId) {
 
 /**
  * Legacy compatibility: Update user quota delta
- * Note: With triggers in place, this should not be needed
+ * Note: This function is deprecated - use fm_recalculate_user_storage() instead
  * Use only for manual adjustments
  * @param int $userId
  * @param int $deltaBytes (positive to add, negative to subtract)
  * @return bool
+ * @deprecated Use fm_recalculate_user_storage() for accurate storage tracking
  */
 function fm_update_user_quota($userId, $deltaBytes) {
     global $db;
@@ -425,22 +458,47 @@ function fm_update_user_quota($userId, $deltaBytes) {
             $newUsed = max(0, (int)$current->used_bytes + $deltaBytes);
 
             $db->where('user_id', $userId);
-            return $db->update('fm_user_quotas', [
+            $db->update('fm_user_quotas', [
                 'used_bytes' => $newUsed,
                 'updated_at' => date('Y-m-d H:i:s')
             ]);
+
+            // Also update tracking table
+            $db->where('user_id', $userId);
+            $trackingExists = $db->getOne('fm_user_storage_tracking', 'user_id');
+
+            if ($trackingExists) {
+                $db->where('user_id', $userId);
+                $db->update('fm_user_storage_tracking', [
+                    'used_bytes' => $newUsed,
+                    'updated_at' => date('Y-m-d H:i:s')
+                ]);
+            }
+
+            return true;
         } else {
             // Create new record
             $cfg = fm_get_config();
             $newUsed = max(0, $deltaBytes);
 
-            return $db->insert('fm_user_quotas', [
+            $db->insert('fm_user_quotas', [
                 'user_id' => $userId,
                 'quota_bytes' => $cfg['default_quota'],
                 'used_bytes' => $newUsed,
                 'created_at' => date('Y-m-d H:i:s'),
                 'updated_at' => date('Y-m-d H:i:s')
             ]);
+
+            // Also create tracking record
+            $db->insert('fm_user_storage_tracking', [
+                'user_id' => $userId,
+                'quota_bytes' => $cfg['default_quota'],
+                'used_bytes' => $newUsed,
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+
+            return true;
         }
     } catch (Exception $e) {
         error_log("fm_update_user_quota: Failed for user {$userId}. Error: " . $e->getMessage());
