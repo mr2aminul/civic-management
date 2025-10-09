@@ -2552,6 +2552,7 @@ if (!function_exists('fm_update_storage_tracking')) {
 
         try {
             $testQuery = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+            error_log("fm_update_storage_tracking: Table check result: " . json_encode($testQuery));
             if (empty($testQuery) || count($testQuery) === 0) {
                 error_log("fm_update_storage_tracking: Table fm_user_storage_tracking does not exist yet. Skipping.");
                 return false;
