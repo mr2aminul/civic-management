@@ -2671,8 +2671,6 @@ if (!function_exists('fm_update_storage_tracking')) {
             return false;
         }
 
-        return true;
-
         // Also update fm_user_quotas table using fm_update
         $quotaUpdate = [
             'used_bytes' => (int)$totalSize,
@@ -2691,6 +2689,8 @@ if (!function_exists('fm_update_storage_tracking')) {
             }
             error_log("fm_update_storage_tracking: fm_user_quotas UPDATE failed for user {$userId}. Error: {$err} Data: " . print_r($quotaUpdate, true));
         }
+
+        return true;
     }
 }
 
