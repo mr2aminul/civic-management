@@ -1135,8 +1135,8 @@ try {
         // Get initialization data (combines multiple requests)
         case 'get_init_data':
             ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+            ini_set('display_startup_errors', 1);
+            error_reporting(E_ALL);
 
             if (!_fm_is_logged()) {
                 echo json_encode(['status' => 403, 'error' => 'Login required']);
@@ -1147,7 +1147,8 @@ error_reporting(E_ALL);
             $isAdmin = _fm_is_admin();
 
             // Update storage tracking for this user
-            fm_update_storage_tracking($userId);
+            $is_update = fm_update_storage_tracking($userId);
+            print_r($is_update);
 
             // Get common folders
             $commonFolders = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC");
