@@ -955,6 +955,9 @@ if ($tab == 'settings') {
                     <button class="fm-view-btn active" data-view="grid"><i class="bi bi-grid-3x3-gap"></i></button>
                     <button class="fm-view-btn" data-view="list"><i class="bi bi-list-ul"></i></button>
                 </div>
+                <button class="fm-btn fm-btn-danger" id="fm-bulk-delete-btn" style="display:none">
+                    <i class="bi bi-trash"></i> Delete Selected
+                </button>
             </div>
 
             <div class="fm-stats" id="fm-stats">
@@ -1352,6 +1355,13 @@ jQuery(function($) {
         $('#stat-folders').text(folders);
         $('#stat-files').text(files);
         $('#stat-selected').text(selected.size);
+
+        // Show/hide bulk delete button
+        if (selected.size > 0) {
+            $('#fm-bulk-delete-btn').show();
+        } else {
+            $('#fm-bulk-delete-btn').hide();
+        }
     }
 
     $(document).on('click', '.fm-item-card[data-type="folder"], .fm-list-item[data-type="folder"]', function(
@@ -1686,6 +1696,39 @@ jQuery(function($) {
         }, 'json');
     });
 
+    $('#fm-bulk-delete-btn').on('click', function() {
+        if (selected.size === 0) return;
+
+        if (!confirm(`Delete ${selected.size} selected item(s)?`)) return;
+
+        const paths = Array.from(selected);
+
+        // Use batch delete API
+        $.post(API + '&s=delete_local', {
+            paths: paths
+        }, res => {
+            if (res && (res.status === 200 || res.status === 207)) {
+                const successCount = res.results ? res.results.filter(r => r.success).length : paths.length;
+                const failedCount = paths.length - successCount;
+
+                if (successCount > 0) {
+                    pos5_success_noti(`Deleted ${successCount} item(s) successfully`);
+                }
+                if (failedCount > 0) {
+                    pos4_error_noti(`Failed to delete ${failedCount} item(s)`);
+                }
+
+                selected.clear();
+                loadFolder(currentPath);
+                loadQuota();
+            } else {
+                pos4_error_noti(res.error || 'Delete failed');
+            }
+        }, 'json').fail(() => {
+            pos4_error_noti('Delete request failed');
+        });
+    });
+
     $(document).on('contextmenu', '.fm-item-card, .fm-list-item', function(e) {
         e.preventDefault();
         ctxTarget = $(this);
@@ -1810,12 +1853,15 @@ jQuery(function($) {
                 pos5_success_noti('Download started');
             } else if (action === 'delete') {
                 if (!confirm('Delete ' + path + '?')) return;
+
+                // Use batch API even for single file for consistency
                 $.post(API + '&s=delete_local', {
-                    path
+                    paths: [path]
                 }, res => {
-                    if (res && res.status === 200) {
+                    if (res && (res.status === 200 || res.status === 207)) {
                         pos5_success_noti(res.message || 'Deleted successfully');
                         loadFolder(currentPath);
+                        loadQuota();
                     } else {
                         pos4_error_noti(res.error || 'Delete failed');
                     }
@@ -1875,17 +1921,30 @@ jQuery(function($) {
         if (e.key === 'Delete' && selected.size > 0 && !previewModalOpen) {
             if (confirm(`Delete ${selected.size} selected item(s)?`)) {
                 const paths = Array.from(selected);
-                let completed = 0;
-                paths.forEach(path => {
-                    $.post(API + '&s=delete_local', {
-                        path
-                    }, () => {
-                        completed++;
-                        if (completed === paths.length) {
-                            selected.clear();
-                            loadFolder(currentPath);
+
+                // Use batch delete API
+                $.post(API + '&s=delete_local', {
+                    paths: paths
+                }, res => {
+                    if (res && (res.status === 200 || res.status === 207)) {
+                        const successCount = res.results ? res.results.filter(r => r.success).length : paths.length;
+                        const failedCount = paths.length - successCount;
+
+                        if (successCount > 0) {
+                            pos5_success_noti(`Deleted ${successCount} item(s) successfully`);
                         }
-                    }, 'json');
+                        if (failedCount > 0) {
+                            pos4_error_noti(`Failed to delete ${failedCount} item(s)`);
+                        }
+
+                        selected.clear();
+                        loadFolder(currentPath);
+                        loadQuota();
+                    } else {
+                        pos4_error_noti(res.error || 'Delete failed');
+                    }
+                }, 'json').fail(() => {
+                    pos4_error_noti('Delete request failed');
                 });
             }
         } else if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !previewModalOpen) {

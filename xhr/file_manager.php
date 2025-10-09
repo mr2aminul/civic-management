@@ -386,6 +386,9 @@ try {
                 fm_recalculate_user_storage($affectedUserId);
             }
 
+            // Also trigger global storage update
+            fm_update_storage_tracking($userId);
+
             echo json_encode([
                 'status' => $allSuccess ? 200 : 207,
                 'message' => $allSuccess ? 'Deleted successfully' : 'Some deletes failed',
@@ -1158,19 +1161,29 @@ try {
             // Update storage tracking for this user
             fm_update_storage_tracking($userId);
 
-            // Get common folders
-            $commonFolders = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC");
+            // Get common folders with fallback
+            $commonFolders = fm_get_common_folders_with_stats();
+            if (empty($commonFolders)) {
+                // Fallback to direct query if views don't exist
+                $commonFolders = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC");
+                if (!$commonFolders) $commonFolders = [];
+            }
 
-            // Get special folders
-            if ($isAdmin) {
-                $specialFolders = fm_query("SELECT * FROM fm_special_folders WHERE is_active = 1 ORDER BY sort_order ASC");
-            } else {
-                $specialFolders = fm_query("
-                    SELECT sf.* FROM fm_special_folders sf
-                    INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
-                    WHERE sf.is_active = 1 AND fa.user_id = ?
-                    ORDER BY sf.sort_order ASC
-                ", [$userId]);
+            // Get special folders with fallback
+            $specialFolders = fm_get_special_folders_with_stats($isAdmin ? null : $userId);
+            if (empty($specialFolders)) {
+                // Fallback to direct query if views don't exist
+                if ($isAdmin) {
+                    $specialFolders = fm_query("SELECT * FROM fm_special_folders WHERE is_active = 1 ORDER BY sort_order ASC");
+                } else {
+                    $specialFolders = fm_query("
+                        SELECT sf.* FROM fm_special_folders sf
+                        INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                        WHERE sf.is_active = 1 AND fa.user_id = ?
+                        ORDER BY sf.sort_order ASC
+                    ", [$userId]);
+                }
+                if (!$specialFolders) $specialFolders = [];
             }
 
             // Get user storage usage (enhanced)
@@ -1188,10 +1201,11 @@ try {
             $r2 = fm_init_s3();
             $r2Enabled = !empty($r2);
 
+            // Ensure arrays are returned even if null
             $response = [
                 'status' => 200,
-                'common_folders' => $commonFolders ?: [],
-                'special_folders' => $specialFolders ?: [],
+                'common_folders' => is_array($commonFolders) ? $commonFolders : [],
+                'special_folders' => is_array($specialFolders) ? $specialFolders : [],
                 'storage_usage' => $storageUsage,
                 'r2_enabled' => $r2Enabled,
                 'r2_status' => $r2Enabled ? 'Connected' : 'Not Configured'

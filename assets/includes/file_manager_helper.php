@@ -2372,25 +2372,38 @@ if (!function_exists('fm_get_global_storage_usage')) {
             ];
         }
 
+        // Get VPS total storage limit
+        $vpsSetting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'vps_total_storage_bytes' LIMIT 1");
+        $vpsTotal = !empty($vpsSetting) ? (int)$vpsSetting[0]['setting_value'] : 64424509440; // 60 GB default
+
         // Try to get from view first
         $result = fm_query("SELECT * FROM v_global_storage_summary LIMIT 1");
 
-        // If view doesn't exist or is empty, calculate from tracking table
+        // If view doesn't exist or is empty, calculate from tracking table or quotas table
         if (empty($result)) {
-            // Get VPS total storage limit
-            $vpsSetting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'vps_total_storage_bytes' LIMIT 1");
-            $vpsTotal = !empty($vpsSetting) ? (int)$vpsSetting[0]['setting_value'] : 64424509440; // 60 GB default
-
-            // Sum up all users storage from tracking table
+            // Try fm_user_storage_tracking first
             $stats = fm_query("
                 SELECT
                     COUNT(DISTINCT user_id) as total_users,
-                    SUM(used_bytes) as total_used_bytes,
-                    SUM(total_files) as total_files_count,
-                    SUM(r2_uploaded_bytes) as total_r2_bytes,
-                    SUM(local_only_bytes) as total_local_only_bytes
+                    COALESCE(SUM(used_bytes), 0) as total_used_bytes,
+                    COALESCE(SUM(total_files), 0) as total_files_count,
+                    COALESCE(SUM(r2_uploaded_bytes), 0) as total_r2_bytes,
+                    COALESCE(SUM(local_only_bytes), 0) as total_local_only_bytes
                 FROM fm_user_storage_tracking
             ");
+
+            // Fallback to fm_user_quotas if tracking table is empty
+            if (empty($stats) || (int)($stats[0]['total_users'] ?? 0) === 0) {
+                $stats = fm_query("
+                    SELECT
+                        COUNT(DISTINCT user_id) as total_users,
+                        COALESCE(SUM(used_bytes), 0) as total_used_bytes,
+                        COALESCE(SUM(total_files), 0) as total_files_count,
+                        COALESCE(SUM(r2_uploaded_bytes), 0) as total_r2_bytes,
+                        COALESCE(SUM(local_only_bytes), 0) as total_local_only_bytes
+                    FROM fm_user_quotas
+                ");
+            }
 
             if (empty($stats)) {
                 return [
@@ -2422,8 +2435,8 @@ if (!function_exists('fm_get_global_storage_usage')) {
                 'total_local_only_bytes' => (int)($data['total_local_only_bytes'] ?? 0),
                 'used_formatted' => fm_format_bytes_enhanced($totalUsed),
                 'quota_formatted' => fm_format_bytes_enhanced($vpsTotal),
-                'available_bytes' => $vpsTotal - $totalUsed,
-                'available_formatted' => fm_format_bytes_enhanced($vpsTotal - $totalUsed)
+                'available_bytes' => max(0, $vpsTotal - $totalUsed),
+                'available_formatted' => fm_format_bytes_enhanced(max(0, $vpsTotal - $totalUsed))
             ];
         }
 
@@ -2589,10 +2602,25 @@ if (!function_exists('fm_update_storage_tracking')) {
 
 if (!function_exists('fm_get_common_folders_with_stats')) {
     function fm_get_common_folders_with_stats() {
+        // Try view first
         $result = fm_query("SELECT * FROM v_common_folders_summary ORDER BY folder_name ASC");
 
+        // If view doesn't exist, fallback to direct query
         if (empty($result)) {
-            return [];
+            $result = fm_query("
+                SELECT cf.*,
+                    COUNT(DISTINCT f.id) as actual_file_count,
+                    COALESCE(SUM(f.size), 0) as actual_size_bytes
+                FROM fm_common_folders cf
+                LEFT JOIN fm_files f ON f.common_folder_id = cf.id AND f.is_deleted = 0 AND f.is_folder = 0
+                WHERE cf.is_active = 1
+                GROUP BY cf.id
+                ORDER BY cf.sort_order ASC
+            ");
+
+            if (empty($result)) {
+                return [];
+            }
         }
 
         $folders = [];
@@ -2616,16 +2644,34 @@ if (!function_exists('fm_get_common_folders_with_stats')) {
 if (!function_exists('fm_get_special_folders_with_stats')) {
     function fm_get_special_folders_with_stats($userId = null) {
         if ($userId === null) {
+            // Admin view - try view first
             $result = fm_query("SELECT * FROM v_special_folders_summary ORDER BY folder_name ASC");
+
+            // Fallback to direct query if view doesn't exist
+            if (empty($result)) {
+                $result = fm_query("
+                    SELECT sf.*,
+                        COUNT(DISTINCT f.id) as actual_file_count,
+                        COALESCE(SUM(f.size), 0) as actual_size_bytes,
+                        COUNT(DISTINCT fa.user_id) as total_users_with_access
+                    FROM fm_special_folders sf
+                    LEFT JOIN fm_files f ON f.special_folder_id = sf.id AND f.is_deleted = 0 AND f.is_folder = 0
+                    LEFT JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                    WHERE sf.is_active = 1
+                    GROUP BY sf.id
+                    ORDER BY sf.sort_order ASC
+                ");
+            }
         } else {
+            // User-specific view
             $result = fm_query(
-                "SELECT sf.*, COUNT(f.id) as actual_file_count, COALESCE(SUM(f.size), 0) as actual_size_bytes
+                "SELECT sf.*, COUNT(DISTINCT f.id) as actual_file_count, COALESCE(SUM(f.size), 0) as actual_size_bytes
                  FROM fm_special_folders sf
                  INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
-                 LEFT JOIN fm_files f ON f.special_folder_id = sf.id AND f.is_deleted = 0
+                 LEFT JOIN fm_files f ON f.special_folder_id = sf.id AND f.is_deleted = 0 AND f.is_folder = 0
                  WHERE sf.is_active = 1 AND fa.user_id = ?
                  GROUP BY sf.id
-                 ORDER BY sf.folder_name ASC",
+                 ORDER BY sf.sort_order ASC",
                 [$userId]
             );
         }
