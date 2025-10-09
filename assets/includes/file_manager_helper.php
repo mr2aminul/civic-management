@@ -2670,52 +2670,46 @@ if (!function_exists('fm_update_storage_tracking')) {
             'updated_at' => $now
         ];
 
-        // Check existence using fm_query (returns array)
-        $existing = fm_query("SELECT user_id FROM fm_user_storage_tracking WHERE user_id = ?", [$userId]);
+        // Use INSERT ... ON DUPLICATE KEY UPDATE to handle both insert and update cases
+        $sql = "INSERT INTO `fm_user_storage_tracking`
+                (`user_id`, `total_files`, `total_folders`, `used_bytes`, `quota_bytes`,
+                 `r2_uploaded_bytes`, `local_only_bytes`, `last_calculated_at`, `last_upload_at`,
+                 `created_at`, `updated_at`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    `total_files` = VALUES(`total_files`),
+                    `total_folders` = VALUES(`total_folders`),
+                    `used_bytes` = VALUES(`used_bytes`),
+                    `quota_bytes` = VALUES(`quota_bytes`),
+                    `r2_uploaded_bytes` = VALUES(`r2_uploaded_bytes`),
+                    `local_only_bytes` = VALUES(`local_only_bytes`),
+                    `last_calculated_at` = VALUES(`last_calculated_at`),
+                    `last_upload_at` = VALUES(`last_upload_at`),
+                    `updated_at` = VALUES(`updated_at`)";
 
-        if (empty($existing)) {
-            // Use fm_insert wrapper which handles both MysqliDb and mysqli connections
-            $insertId = fm_insert('fm_user_storage_tracking', $insertData);
+        $params = [
+            (int)$userId,
+            (int)$totalFiles,
+            (int)$totalFolders,
+            (int)$totalSize,
+            (int)$quotaBytes,
+            (int)$r2UploadedBytes,
+            (int)$localOnlyBytes,
+            $now,
+            $now,
+            $now,
+            $now
+        ];
 
-            if ($insertId === false) {
-                // If fm_insert failed, attempt to get more details if $db (joshcam) is present
-                $err = '';
-                if (isset($db) && method_exists($db, 'getLastError')) {
-                    $err = $db->getLastError();
-                } else {
-                    // fallback for mysqli
-                    $conn = fm_get_db();
-                    if ($conn && $conn['type'] === 'mysqli' && $conn['db'] instanceof mysqli) {
-                        $err = $conn['db']->error;
-                    }
-                }
-                error_log("fm_update_storage_tracking: INSERT failed for user {$userId}. Error: {$err} Data: " . print_r($insertData, true));
+        $result = fm_query($sql, $params);
+
+        if ($result === false) {
+            $conn = fm_get_db();
+            $err = '';
+            if ($conn && $conn['type'] === 'mysqli' && $conn['db'] instanceof mysqli) {
+                $err = $conn['db']->error;
             }
-        } else {
-            $updateData = [
-                'used_bytes' => (int)$totalSize,
-                'quota_bytes' => (int)$quotaBytes,
-                'total_files' => (int)$totalFiles,
-                'total_folders' => (int)$totalFolders,
-                'r2_uploaded_bytes' => (int)$r2UploadedBytes,
-                'local_only_bytes' => (int)$localOnlyBytes,
-                'updated_at' => $now
-            ];
-
-            // Use fm_update wrapper which sets WHERE and updates depending on DB type
-            $ok = fm_update('fm_user_storage_tracking', $updateData, ['user_id' => $userId]);
-            if ($ok === false) {
-                $err = '';
-                if (isset($db) && method_exists($db, 'getLastError')) {
-                    $err = $db->getLastError();
-                } else {
-                    $conn = fm_get_db();
-                    if ($conn && $conn['type'] === 'mysqli' && $conn['db'] instanceof mysqli) {
-                        $err = $conn['db']->error;
-                    }
-                }
-                error_log("fm_update_storage_tracking: UPDATE failed for user {$userId}. Error: {$err} Data: " . print_r($updateData, true));
-            }
+            error_log("fm_update_storage_tracking: INSERT ON DUPLICATE KEY UPDATE failed for user {$userId}. Error: {$err}");
         }
 
         // Also update fm_user_quotas table using fm_update
