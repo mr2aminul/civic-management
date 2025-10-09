@@ -2542,10 +2542,10 @@ if (!function_exists('fm_update_storage_tracking')) {
         if (empty($existing)) {
             $insertData = [
                 'user_id' => $userId,
-                'used_bytes' => $totalSize,
-                'quota_bytes' => $quotaBytes,
                 'total_files' => $totalFiles,
                 'total_folders' => $totalFolders,
+                'used_bytes' => $totalSize,
+                'quota_bytes' => $quotaBytes,
                 'r2_uploaded_bytes' => $r2UploadedBytes,
                 'local_only_bytes' => $localOnlyBytes,
                 'created_at' => $now,
