@@ -34,6 +34,11 @@ if (!function_exists('fm_load_env')) {
 }
 fm_load_env();
 
+// Load storage tracking functions
+if (file_exists(__DIR__ . '/file_manager_storage.php')) {
+    require_once __DIR__ . '/file_manager_storage.php';
+}
+
 // ============================================
 // Configuration
 // ============================================
@@ -248,49 +253,39 @@ function fm_download_from_r2($remoteKey, $localPath) {
 
 // ============================================
 // User Quotas
+// Note: Main quota functions are now in file_manager_storage.php
+// These wrappers are kept for backward compatibility
 // ============================================
-function fm_get_user_quota($userId) {
-    global $db;
-    $result = $db->where('user_id', $userId)->getOne('fm_user_quotas', ['quota_bytes', 'used_bytes']);
-    if (!empty($result)) {
-        return ['quota' => (int)$result->quota_bytes, 'used' => (int)$result->used_bytes];
-    } else {
+
+// Storage functions are loaded from file_manager_storage.php
+// If that file is not loaded, define fallback functions
+if (!function_exists('fm_get_user_quota')) {
+    function fm_get_user_quota($userId) {
+        global $db;
+        $userId = (int)$userId;
+        try {
+            $db->where('user_id', $userId);
+            $result = $db->getOne('fm_user_quotas', ['quota_bytes', 'used_bytes']);
+            if ($result) {
+                return [
+                    'quota' => (int)$result->quota_bytes,
+                    'used' => (int)$result->used_bytes,
+                    'available' => (int)$result->quota_bytes - (int)$result->used_bytes
+                ];
+            }
+        } catch (Exception $e) {
+            error_log("fm_get_user_quota: Error - " . $e->getMessage());
+        }
         $cfg = fm_get_config();
-        fm_insert('fm_user_quotas', [
-            'user_id' => $userId,
-            'quota_bytes' => $cfg['default_quota'],
-            'used_bytes' => 0,
-            'updated_at' => date('Y-m-d H:i:s')
-        ]);
-        return ['quota' => $cfg['default_quota'], 'used' => 0];
+        return ['quota' => $cfg['default_quota'], 'used' => 0, 'available' => $cfg['default_quota']];
     }
 }
 
-function fm_update_user_quota($userId, $deltaBytes) {
-    $result = fm_query("SELECT used_bytes FROM fm_user_quotas WHERE user_id = ?", [$userId]);
-
-    if (empty($result)) {
-        $cfg = fm_get_config();
-        $newUsed = max(0, $deltaBytes);
-        fm_insert('fm_user_quotas', [
-            'user_id' => $userId,
-            'quota_bytes' => $cfg['default_quota'],
-            'used_bytes' => $newUsed,
-            'updated_at' => date('Y-m-d H:i:s')
-        ]);
-        return true;
+if (!function_exists('fm_check_quota')) {
+    function fm_check_quota($userId, $requiredBytes) {
+        $quota = fm_get_user_quota($userId);
+        return ($quota['used'] + $requiredBytes) <= $quota['quota'];
     }
-
-    $newUsed = max(0, (int)$result[0]['used_bytes'] + $deltaBytes);
-    return fm_update('fm_user_quotas', [
-        'used_bytes' => $newUsed,
-        'updated_at' => date('Y-m-d H:i:s')
-    ], ['user_id' => $userId]);
-}
-
-function fm_check_quota($userId, $requiredBytes) {
-    $quota = fm_get_user_quota($userId);
-    return ($quota['used'] + $requiredBytes) <= $quota['quota'];
 }
 
 // ============================================
@@ -2528,156 +2523,67 @@ if (!function_exists('fm_calculate_directory_size')) {
 }
 
 if (!function_exists('fm_update_storage_tracking')) {
+    /**
+     * Update storage tracking for a user
+     * Now uses the efficient fm_recalculate_user_storage from file_manager_storage.php
+     * Database triggers handle most updates automatically
+     */
     function fm_update_storage_tracking($userId) {
+        // Use the new efficient recalculation function
+        if (function_exists('fm_recalculate_user_storage')) {
+            return fm_recalculate_user_storage($userId);
+        }
+
+        // Fallback: Simple quota update if new functions not available
         global $db;
-
         try {
-            $testQuery = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
-            error_log("fm_update_storage_tracking: Table check result: " . json_encode($testQuery));
-            if (empty($testQuery) || count($testQuery) === 0) {
-                error_log("fm_update_storage_tracking: Table fm_user_storage_tracking does not exist yet. Skipping.");
-                return false;
-            }
-        } catch (Exception $e) {
-            error_log("fm_update_storage_tracking: Could not check if table exists: " . $e->getMessage());
-            return false;
-        }
+            $userId = (int)$userId;
 
-        // Calculate from database (source of truth)
-        $stats = fm_query(
-            "SELECT
-                COUNT(CASE WHEN is_folder = 0 AND is_deleted = 0 THEN 1 END) as total_files,
-                COUNT(CASE WHEN is_folder = 1 AND is_deleted = 0 THEN 1 END) as total_folders,
-                COALESCE(SUM(CASE WHEN is_folder = 0 AND is_deleted = 0 THEN size ELSE 0 END), 0) as used_bytes,
-                COALESCE(SUM(CASE WHEN is_folder = 0 AND is_deleted = 0 AND r2_uploaded = 1 THEN size ELSE 0 END), 0) as r2_uploaded_bytes
-             FROM fm_files
-             WHERE user_id = ?",
-            [$userId]
-        );
+            // Calculate totals from fm_files
+            $db->where('user_id', $userId);
+            $db->where('is_deleted', 0);
+            $db->where('is_folder', 0);
+            $files = $db->get('fm_files', null, ['size', 'r2_uploaded']);
 
-        $totalFiles = 0;
-        $totalFolders = 0;
-        $totalSize = 0;
-        $r2UploadedBytes = 0;
+            $totalSize = 0;
+            $r2Size = 0;
+            $fileCount = 0;
 
-        if (!empty($stats)) {
-            $totalFiles = (int)($stats[0]['total_files'] ?? 0);
-            $totalFolders = (int)($stats[0]['total_folders'] ?? 0);
-            $totalSize = (int)($stats[0]['used_bytes'] ?? 0);
-            $r2UploadedBytes = (int)($stats[0]['r2_uploaded_bytes'] ?? 0);
-        }
-
-        $localOnlyBytes = $totalSize - $r2UploadedBytes;
-        if ($localOnlyBytes < 0) $localOnlyBytes = 0;
-
-        // Get or create quota record (ensure fm_get_user_quota returns an array with 'quota')
-        $quota = fm_get_user_quota($userId);
-        $quotaBytes = isset($quota['quota']) ? (int)$quota['quota'] : 0;
-
-        // Build clean data arrays (only scalars)
-        $now = date('Y-m-d H:i:s');
-
-        // Ensure scalar-only values (avoid objects/arrays)
-        $insertData = [
-            'user_id' => (int)$userId,
-            'total_files' => (int)$totalFiles,
-            'total_folders' => (int)$totalFolders,
-            'used_bytes' => (int)$totalSize,
-            'quota_bytes' => (int)$quotaBytes,
-            'r2_uploaded_bytes' => (int)$r2UploadedBytes,
-            'local_only_bytes' => (int)$localOnlyBytes,
-            'last_calculated_at' => $now,
-            'last_upload_at' => $now,
-            'created_at' => $now,
-            'updated_at' => $now
-        ];
-
-        // Check if record exists first
-        $existing = fm_query("SELECT user_id FROM fm_user_storage_tracking WHERE user_id = ?", [(int)$userId]);
-
-        if (!empty($existing)) {
-            // Update existing record
-            $updateSql = "UPDATE `fm_user_storage_tracking` SET
-                          `total_files` = ?,
-                          `total_folders` = ?,
-                          `used_bytes` = ?,
-                          `quota_bytes` = ?,
-                          `r2_uploaded_bytes` = ?,
-                          `local_only_bytes` = ?,
-                          `last_calculated_at` = ?,
-                          `last_upload_at` = ?,
-                          `updated_at` = ?
-                          WHERE `user_id` = ?";
-
-            $params = [
-                (int)$totalFiles,
-                (int)$totalFolders,
-                (int)$totalSize,
-                (int)$quotaBytes,
-                (int)$r2UploadedBytes,
-                (int)$localOnlyBytes,
-                $now,
-                $now,
-                $now,
-                (int)$userId
-            ];
-
-            $result = fm_query($updateSql, $params);
-        } else {
-            // Insert new record
-            $insertSql = "INSERT INTO `fm_user_storage_tracking`
-                          (`user_id`, `total_files`, `total_folders`, `used_bytes`, `quota_bytes`,
-                           `r2_uploaded_bytes`, `local_only_bytes`, `last_calculated_at`, `last_upload_at`,
-                           `created_at`, `updated_at`)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-            $params = [
-                (int)$userId,
-                (int)$totalFiles,
-                (int)$totalFolders,
-                (int)$totalSize,
-                (int)$quotaBytes,
-                (int)$r2UploadedBytes,
-                (int)$localOnlyBytes,
-                $now,
-                $now,
-                $now,
-                $now
-            ];
-
-            $result = fm_query($insertSql, $params);
-        }
-
-        if ($result === false) {
-            $conn = fm_get_db();
-            $err = '';
-            if ($conn && $conn['type'] === 'mysqli' && $conn['db'] instanceof mysqli) {
-                $err = $conn['db']->error;
-            }
-            error_log("fm_update_storage_tracking: Query failed for user {$userId}. Error: {$err}");
-            return false;
-        }
-
-        // Also update fm_user_quotas table using fm_update
-        $quotaUpdate = [
-            'used_bytes' => (int)$totalSize,
-            'updated_at' => $now
-        ];
-        $okq = fm_update('fm_user_quotas', $quotaUpdate, ['user_id' => $userId]);
-        if ($okq === false) {
-            $err = '';
-            if (isset($db) && method_exists($db, 'getLastError')) {
-                $err = $db->getLastError();
-            } else {
-                $conn = fm_get_db();
-                if ($conn && $conn['type'] === 'mysqli' && $conn['db'] instanceof mysqli) {
-                    $err = $conn['db']->error;
+            if ($files) {
+                foreach ($files as $file) {
+                    $size = (int)$file->size;
+                    $totalSize += $size;
+                    if ($file->r2_uploaded == 1) {
+                        $r2Size += $size;
+                    }
+                    $fileCount++;
                 }
             }
-            error_log("fm_update_storage_tracking: fm_user_quotas UPDATE failed for user {$userId}. Error: {$err} Data: " . print_r($quotaUpdate, true));
-        }
 
-        return true;
+            // Update fm_user_quotas
+            $db->where('user_id', $userId);
+            $exists = $db->getOne('fm_user_quotas', 'user_id');
+
+            $data = [
+                'used_bytes' => $totalSize,
+                'total_files' => $fileCount,
+                'r2_uploaded_bytes' => $r2Size,
+                'local_only_bytes' => $totalSize - $r2Size,
+                'updated_at' => date('Y-m-d H:i:s')
+            ];
+
+            if ($exists) {
+                $db->where('user_id', $userId);
+                return $db->update('fm_user_quotas', $data);
+            } else {
+                $data['user_id'] = $userId;
+                $data['created_at'] = date('Y-m-d H:i:s');
+                return $db->insert('fm_user_quotas', $data);
+            }
+        } catch (Exception $e) {
+            error_log("fm_update_storage_tracking: Error - " . $e->getMessage());
+            return false;
+        }
     }
 }
 
