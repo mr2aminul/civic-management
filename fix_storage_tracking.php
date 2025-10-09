@@ -32,7 +32,7 @@ header('Content-Type: text/html; charset=utf-8');
 echo "Starting storage tracking fix...\n\n";
 
 // Check if table exists
-$tableExists = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+$tableExists = fm_query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_NAME = 'fm_user_storage_tracking' AND TABLE_SCHEMA = DATABASE() LIMIT 1");
 if (empty($tableExists)) {
     echo "ERROR: Table fm_user_storage_tracking does not exist. Please run migration 005 first.\n";
     exit(1);

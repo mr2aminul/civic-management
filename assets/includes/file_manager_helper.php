@@ -2307,7 +2307,7 @@ if (!function_exists('fm_create_user_storage_structure')) {
 
 if (!function_exists('fm_get_user_storage_usage')) {
     function fm_get_user_storage_usage($userId) {
-        $tableExists = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+        $tableExists = fm_query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_NAME = 'fm_user_storage_tracking' AND TABLE_SCHEMA = DATABASE() LIMIT 1");
         if (empty($tableExists)) {
             $quota = fm_get_user_quota($userId);
             return [
@@ -2370,7 +2370,7 @@ if (!function_exists('fm_get_user_storage_usage')) {
 
 if (!function_exists('fm_get_global_storage_usage')) {
     function fm_get_global_storage_usage() {
-        $tableExists = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+        $tableExists = fm_query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_NAME = 'fm_user_storage_tracking' AND TABLE_SCHEMA = DATABASE() LIMIT 1");
         if (empty($tableExists)) {
             $vpsSetting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'vps_total_storage_bytes' LIMIT 1");
             $vpsTotal = !empty($vpsSetting) ? (int)$vpsSetting[0]['setting_value'] : 64424509440;
@@ -2550,7 +2550,7 @@ if (!function_exists('fm_update_storage_tracking')) {
     function fm_update_storage_tracking($userId) {
         global $db;
 
-        $tableExists = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+        $tableExists = fm_query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_NAME = 'fm_user_storage_tracking' AND TABLE_SCHEMA = DATABASE() LIMIT 1");
         if (empty($tableExists)) {
             error_log("fm_update_storage_tracking: Table fm_user_storage_tracking does not exist yet. Skipping.");
             return false;
