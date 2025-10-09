@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS `fm_common_folders` (
   `folder_key` VARCHAR(100) NOT NULL,
   `folder_path` VARCHAR(1024) NOT NULL,
   `description` TEXT DEFAULT NULL,
-  `icon` VARCHAR(100) DEFAULT NULL,
+  `folder_icon` VARCHAR(100) DEFAULT NULL,
   `sort_order` INT(11) DEFAULT 0,
   `is_active` TINYINT(1) DEFAULT 1,
   `read_only` TINYINT(1) DEFAULT 0,
@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS `fm_special_folders` (
   `folder_key` VARCHAR(100) NOT NULL,
   `folder_path` VARCHAR(1024) NOT NULL,
   `description` TEXT DEFAULT NULL,
-  `icon` VARCHAR(100) DEFAULT NULL,
+  `folder_icon` VARCHAR(100) DEFAULT NULL,
   `requires_permission` TINYINT(1) DEFAULT 1,
   `auto_assign_roles` TEXT DEFAULT NULL,
   `max_file_size_mb` INT(11) DEFAULT NULL,
@@ -536,7 +536,7 @@ VALUES ('Auto Full Backup', 'full', 6, 1, 30, DATE_ADD(NOW(), INTERVAL 6 HOUR), 
 ON DUPLICATE KEY UPDATE `schedule_name` = `schedule_name`;
 
 -- Default Common Folders
-INSERT INTO `fm_common_folders` (`folder_name`, `folder_key`, `folder_path`, `description`, `icon`, `sort_order`, `is_active`, `created_at`)
+INSERT INTO `fm_common_folders` (`folder_name`, `folder_key`, `folder_path`, `description`, `folder_icon`, `sort_order`, `is_active`, `created_at`)
 VALUES
   ('Shared Documents', 'shared_documents', 'Common/Shared Documents', 'Documents accessible to all users', 'fa-folder-open', 1, 1, NOW()),
   ('Company Resources', 'company_resources', 'Common/Company Resources', 'Company-wide resources and materials', 'fa-building', 2, 1, NOW()),
