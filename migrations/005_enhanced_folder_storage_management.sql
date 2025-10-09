@@ -453,7 +453,7 @@ INSERT INTO fm_user_storage_tracking (user_id, created_at)
 SELECT DISTINCT user_id, NOW()
 FROM fm_files
 WHERE user_id NOT IN (SELECT user_id FROM fm_user_storage_tracking)
-ON DUPLICATE KEY UPDATE user_id = user_id;
+ON DUPLICATE KEY UPDATE fm_user_storage_tracking.updated_at = NOW();
 
 -- Update statistics for all users
 UPDATE fm_user_storage_tracking ust

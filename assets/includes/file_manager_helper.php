@@ -203,12 +203,55 @@ function fm_insert($table, $data) {
                 if (!$stmt->execute()) {
                     $errorNo = $stmt->errno;
                     $error = $stmt->error;
-                    error_log("fm_insert: execute failed: " . $error . " SQL: " . $sql . " Values: " . print_r($values, true));
 
                     if ($errorNo === 1062) {
-                        error_log("fm_insert: Duplicate entry detected for table $table");
+                        error_log("fm_insert: Duplicate entry detected for table $table - attempting update instead");
+                        $stmt->close();
+
+                        // Try to update instead for tracking table
+                        if ($table === 'fm_user_storage_tracking' && isset($clean['user_id'])) {
+                            $userId = $clean['user_id'];
+                            $updateFields = [];
+                            $updateValues = [];
+
+                            foreach ($clean as $k => $v) {
+                                if ($k !== 'user_id' && $k !== 'created_at') {
+                                    $updateFields[] = "`$k` = ?";
+                                    $updateValues[] = $v;
+                                }
+                            }
+
+                            if (!empty($updateFields)) {
+                                $updateValues[] = $userId;
+                                $updateSql = "UPDATE `$table` SET " . implode(', ', $updateFields) . " WHERE user_id = ?";
+                                $updateStmt = $mysqli->prepare($updateSql);
+
+                                if ($updateStmt) {
+                                    $types = '';
+                                    foreach ($updateValues as $v) {
+                                        if (is_int($v)) $types .= 'i';
+                                        elseif (is_double($v) || is_float($v)) $types .= 'd';
+                                        elseif (is_null($v)) $types .= 's';
+                                        else $types .= 's';
+                                    }
+
+                                    $bindParams = [&$types];
+                                    foreach ($updateValues as $i => &$bv) $bindParams[] = &$bv;
+
+                                    call_user_func_array([$updateStmt, 'bind_param'], $bindParams);
+
+                                    if ($updateStmt->execute()) {
+                                        $updateStmt->close();
+                                        return true;
+                                    }
+                                    $updateStmt->close();
+                                }
+                            }
+                        }
                         return false;
                     }
+
+                    error_log("fm_insert: execute failed: " . $error . " SQL: " . $sql . " Values: " . print_r($values, true));
                     return false;
                 }
 
