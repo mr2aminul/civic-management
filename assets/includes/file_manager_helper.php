@@ -2550,9 +2550,14 @@ if (!function_exists('fm_update_storage_tracking')) {
     function fm_update_storage_tracking($userId) {
         global $db;
 
-        $tableExists = fm_query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_NAME = 'fm_user_storage_tracking' AND TABLE_SCHEMA = DATABASE() LIMIT 1");
-        if (empty($tableExists)) {
-            error_log("fm_update_storage_tracking: Table fm_user_storage_tracking does not exist yet. Skipping.");
+        try {
+            $testQuery = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+            if (empty($testQuery) || count($testQuery) === 0) {
+                error_log("fm_update_storage_tracking: Table fm_user_storage_tracking does not exist yet. Skipping.");
+                return false;
+            }
+        } catch (Exception $e) {
+            error_log("fm_update_storage_tracking: Could not check if table exists: " . $e->getMessage());
             return false;
         }
 
