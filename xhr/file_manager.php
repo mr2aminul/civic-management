@@ -14,14 +14,11 @@ header('Content-Type: application/json; charset=utf-8');
 // Basic auth integration
 function _fm_is_logged() {
     if (function_exists('Wo_IsLogged')) return Wo_IsLogged();
-    if (function_exists('is_logged_in')) return is_logged_in();
     return isset($_SESSION['user_id']);
 }
 
 function _fm_is_admin() {
     if (function_exists('Wo_IsAdmin')) return Wo_IsAdmin();
-    if (function_exists('is_admin')) return is_admin();
-    return isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true;
 }
 
 function _fm_user_id() {
@@ -1137,6 +1134,10 @@ try {
 
         // Get initialization data (combines multiple requests)
         case 'get_init_data':
+            ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
             if (!_fm_is_logged()) {
                 echo json_encode(['status' => 403, 'error' => 'Login required']);
                 exit;
