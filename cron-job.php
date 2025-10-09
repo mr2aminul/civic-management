@@ -16,9 +16,7 @@ require_once ROOT_DIR . "assets/libraries/DB/vendor/autoload.php";
 // Connect to SQL Server
 $sqlConnect = mysqli_connect($sql_db_host, $sql_db_user, $sql_db_pass, $sql_db_name, 3306);
 $sqlConnect->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10000);
-
-
-$db        = new MysqliDb($sqlConnect);
+$db = new MysqliDb($sqlConnect);
 
 
 function Wo_Secure($string, $censored_words = 0, $br = true, $strip = 0,$cleanString = true) {

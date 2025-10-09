@@ -1464,8 +1464,8 @@ function validate_ip($ip) {
     return true;
 }
 function Wo_Backup($sql_db_host, $sql_db_user, $sql_db_pass, $sql_db_name, $tables = false, $backup_name = false) {
-    $mysqli = new mysqli($sql_db_host, $sql_db_user, $sql_db_pass, $sql_db_name);
-    $mysqli->select_db($sql_db_name);
+    global $sqlConnect;
+    $mysqli = $sqlConnect;
     $mysqli->query("SET NAMES 'utf8'");
     $queryTables = $mysqli->query('SHOW TABLES');
     while ($row = $queryTables->fetch_row()) {

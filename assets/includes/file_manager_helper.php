@@ -77,28 +77,7 @@ function fm_get_db() {
         return ['type' => 'mysqli', 'db' => $_FM_DB_CONNECTION];
     }
 
-    // Create fallback connection using environment variables
-    $host = getenv('DB_HOST') ?: 'localhost';
-    $user = getenv('DB_USER') ?: '';
-    $pass = getenv('DB_PASSWORD') ?: '';
-    $name = getenv('DB_NAME') ?: '';
-
-    if ($user && $name) {
-        try {
-            $mysqli = new mysqli($host, $user, $pass, $name);
-            if ($mysqli->connect_error) {
-                fm_log_error('Database connection failed: ' . $mysqli->connect_error);
-                return null;
-            }
-            $mysqli->set_charset('utf8mb4');
-            $_FM_DB_CONNECTION = $mysqli;
-            return ['type' => 'mysqli', 'db' => $mysqli];
-        } catch (Exception $e) {
-            fm_log_error('Database exception: ' . $e->getMessage());
-            return null;
-        }
-    }
-
+    // Return null if no connection is available
     return null;
 }
 
@@ -1208,13 +1187,15 @@ if (!function_exists('fm_create_db_dump_php')) {
     
         // Get mysqli
         $mysqli = null;
+        global $sqlConnect;
+
         if (isset($db) && method_exists($db, 'mysqli')) {
             $mysqli = $db->mysqli();
-        } elseif (function_exists('mysqli_connect')) {
-            $mysqli = mysqli_connect(getenv('DB_HOST') ?: '127.0.0.1', getenv('DB_USER') ?: '', getenv('DB_PASSWORD') ?: '', getenv('DB_NAME') ?: '');
+        } elseif (isset($sqlConnect) && $sqlConnect instanceof mysqli) {
+            $mysqli = $sqlConnect;
         }
-    
-        if (!$mysqli) {
+
+        if (!isset($mysqli) || !$mysqli) {
             return ['success' => false, 'message' => 'No mysqli connection available for PHP fallback'];
         }
     
