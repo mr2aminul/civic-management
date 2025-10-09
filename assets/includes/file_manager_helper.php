@@ -2536,38 +2536,41 @@ if (!function_exists('fm_update_storage_tracking')) {
         // Build clean data arrays (only scalars, avoid nested arrays)
         $now = date('Y-m-d H:i:s');
 
-        $trackingData = [
-            'user_id' => $userId,
-            'used_bytes' => $totalSize,
-            'quota_bytes' => $quotaBytes,
-            'total_files' => $totalFiles,
-            'total_folders' => $totalFolders,
-            'r2_uploaded_bytes' => $r2UploadedBytes,
-            'local_only_bytes' => $localOnlyBytes,
-            'updated_at' => $now
-        ];
-
-        // Check if exists
-        $existing = $db->where('user_id', $userId)->getOne('fm_user_storage_tracking');
+        // Check if exists using raw query to avoid MysqliDb parameter binding issues
+        $existing = fm_query("SELECT user_id FROM fm_user_storage_tracking WHERE user_id = ?", [$userId]);
 
         if (empty($existing)) {
-            // create created_at too
-            $insertData = $trackingData;
-            $insertData['created_at'] = $now;
+            $insertData = [
+                'user_id' => $userId,
+                'used_bytes' => $totalSize,
+                'quota_bytes' => $quotaBytes,
+                'total_files' => $totalFiles,
+                'total_folders' => $totalFolders,
+                'r2_uploaded_bytes' => $r2UploadedBytes,
+                'local_only_bytes' => $localOnlyBytes,
+                'created_at' => $now,
+                'updated_at' => $now
+            ];
 
             $insertId = $db->insert('fm_user_storage_tracking', $insertData);
             if ($insertId === false) {
-                error_log("fm_update_storage_tracking: INSERT failed for user {$userId}. Error: " . $db->getLastError() . " Data: " . print_r($insertData, true));
-            } else {
-                // optional: success log
-                // error_log("fm_update_storage_tracking: INSERT success user {$userId} id {$insertId}");
+                error_log("fm_update_storage_tracking: INSERT failed for user {$userId}. Error: " . $db->getLastError());
             }
         } else {
-            // update existing record
+            $updateData = [
+                'used_bytes' => $totalSize,
+                'quota_bytes' => $quotaBytes,
+                'total_files' => $totalFiles,
+                'total_folders' => $totalFolders,
+                'r2_uploaded_bytes' => $r2UploadedBytes,
+                'local_only_bytes' => $localOnlyBytes,
+                'updated_at' => $now
+            ];
+
             $db->where('user_id', $userId);
-            $ok = $db->update('fm_user_storage_tracking', $trackingData);
+            $ok = $db->update('fm_user_storage_tracking', $updateData);
             if ($ok === false) {
-                error_log("fm_update_storage_tracking: UPDATE failed for user {$userId}. Error: " . $db->getLastError() . " Data: " . print_r($trackingData, true));
+                error_log("fm_update_storage_tracking: UPDATE failed for user {$userId}. Error: " . $db->getLastError());
             }
         }
 
