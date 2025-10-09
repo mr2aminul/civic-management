@@ -201,7 +201,14 @@ function fm_insert($table, $data) {
                 }
 
                 if (!$stmt->execute()) {
-                    error_log("fm_insert: execute failed: " . $stmt->error . " SQL: " . $sql . " Values: " . print_r($values, true));
+                    $errorNo = $stmt->errno;
+                    $error = $stmt->error;
+                    error_log("fm_insert: execute failed: " . $error . " SQL: " . $sql . " Values: " . print_r($values, true));
+
+                    if ($errorNo === 1062) {
+                        error_log("fm_insert: Duplicate entry detected for table $table");
+                        return false;
+                    }
                     return false;
                 }
 
@@ -263,7 +270,14 @@ function fm_insert($table, $data) {
     }
 
     if (!$stmt->execute()) {
-        error_log("fm_insert: execute failed (temp mysqli): " . $stmt->error . " SQL: " . $sql . " Values: " . print_r($values, true));
+        $errorNo = $stmt->errno;
+        $error = $stmt->error;
+        error_log("fm_insert: execute failed (temp mysqli): " . $error . " SQL: " . $sql . " Values: " . print_r($values, true));
+
+        if ($errorNo === 1062) {
+            error_log("fm_insert: Duplicate entry detected for table $table");
+        }
+
         $stmt->close();
         $mysqli->close();
         return false;
@@ -2411,6 +2425,24 @@ if (!function_exists('fm_create_user_storage_structure')) {
 
 if (!function_exists('fm_get_user_storage_usage')) {
     function fm_get_user_storage_usage($userId) {
+        $tableExists = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+        if (empty($tableExists)) {
+            $quota = fm_get_user_quota($userId);
+            return [
+                'user_id' => $userId,
+                'used_bytes' => (int)($quota['used'] ?? 0),
+                'quota_bytes' => (int)($quota['quota'] ?? fm_get_config()['default_quota']),
+                'total_files' => 0,
+                'total_folders' => 0,
+                'r2_uploaded_bytes' => 0,
+                'local_only_bytes' => 0,
+                'usage_percentage' => 0,
+                'used_formatted' => fm_format_bytes_enhanced($quota['used'] ?? 0),
+                'quota_formatted' => fm_format_bytes_enhanced($quota['quota'] ?? fm_get_config()['default_quota']),
+                'last_upload_at' => null
+            ];
+        }
+
         $result = fm_query(
             "SELECT * FROM fm_user_storage_tracking WHERE user_id = ? LIMIT 1",
             [$userId]
@@ -2456,6 +2488,32 @@ if (!function_exists('fm_get_user_storage_usage')) {
 
 if (!function_exists('fm_get_global_storage_usage')) {
     function fm_get_global_storage_usage() {
+        $tableExists = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+        if (empty($tableExists)) {
+            $vpsSetting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'vps_total_storage_bytes' LIMIT 1");
+            $vpsTotal = !empty($vpsSetting) ? (int)$vpsSetting[0]['setting_value'] : 64424509440;
+
+            $quotaStats = fm_query("SELECT COUNT(DISTINCT user_id) as total_users, SUM(used_bytes) as total_used FROM fm_user_quotas");
+            $totalUsed = !empty($quotaStats) ? (int)($quotaStats[0]['total_used'] ?? 0) : 0;
+            $totalUsers = !empty($quotaStats) ? (int)($quotaStats[0]['total_users'] ?? 0) : 0;
+
+            $usagePercent = $vpsTotal > 0 ? round(($totalUsed / $vpsTotal) * 100, 2) : 0;
+
+            return [
+                'total_users' => $totalUsers,
+                'total_files_count' => 0,
+                'total_used_bytes' => $totalUsed,
+                'vps_total_bytes' => $vpsTotal,
+                'global_usage_percentage' => $usagePercent,
+                'total_r2_bytes' => 0,
+                'total_local_only_bytes' => $totalUsed,
+                'used_formatted' => fm_format_bytes_enhanced($totalUsed),
+                'quota_formatted' => fm_format_bytes_enhanced($vpsTotal),
+                'available_bytes' => $vpsTotal - $totalUsed,
+                'available_formatted' => fm_format_bytes_enhanced($vpsTotal - $totalUsed)
+            ];
+        }
+
         // Try to get from view first
         $result = fm_query("SELECT * FROM v_global_storage_summary LIMIT 1");
 
@@ -2609,6 +2667,12 @@ if (!function_exists('fm_calculate_directory_size')) {
 if (!function_exists('fm_update_storage_tracking')) {
     function fm_update_storage_tracking($userId) {
         global $db;
+
+        $tableExists = fm_query("SHOW TABLES LIKE 'fm_user_storage_tracking'");
+        if (empty($tableExists)) {
+            error_log("fm_update_storage_tracking: Table fm_user_storage_tracking does not exist yet. Skipping.");
+            return false;
+        }
 
         // Calculate actual disk usage
         $baseDir = fm_get_local_dir();

@@ -179,13 +179,18 @@ INSERT INTO `backup_schedules` (`schedule_name`, `backup_type`, `frequency_hours
 VALUES ('Auto Full Backup', 'full', 6, 1, 30, DATE_ADD(NOW(), INTERVAL 6 HOUR), NOW())
 ON DUPLICATE KEY UPDATE `schedule_name` = `schedule_name`;
 
--- Create default global folders
-INSERT INTO `fm_files` (`user_id`, `parent_folder_id`, `filename`, `original_filename`, `path`, `is_folder`, `is_global`, `created_at`)
-VALUES
-(0, NULL, 'Shared Documents', 'Shared Documents', '/Shared Documents', 1, 1, NOW()),
-(0, NULL, 'Company Resources', 'Company Resources', '/Company Resources', 1, 1, NOW()),
-(0, NULL, 'Templates', 'Templates', '/Templates', 1, 1, NOW())
-ON DUPLICATE KEY UPDATE `filename` = `filename`;
+-- Create default global folders (only if they don't exist)
+INSERT IGNORE INTO `fm_files` (`user_id`, `parent_folder_id`, `filename`, `original_filename`, `path`, `is_folder`, `is_global`, `created_at`)
+SELECT 0, NULL, 'Shared Documents', 'Shared Documents', '/Shared Documents', 1, 1, NOW()
+WHERE NOT EXISTS (SELECT 1 FROM `fm_files` WHERE `path` = '/Shared Documents' AND `is_global` = 1);
+
+INSERT IGNORE INTO `fm_files` (`user_id`, `parent_folder_id`, `filename`, `original_filename`, `path`, `is_folder`, `is_global`, `created_at`)
+SELECT 0, NULL, 'Company Resources', 'Company Resources', '/Company Resources', 1, 1, NOW()
+WHERE NOT EXISTS (SELECT 1 FROM `fm_files` WHERE `path` = '/Company Resources' AND `is_global` = 1);
+
+INSERT IGNORE INTO `fm_files` (`user_id`, `parent_folder_id`, `filename`, `original_filename`, `path`, `is_folder`, `is_global`, `created_at`)
+SELECT 0, NULL, 'Templates', 'Templates', '/Templates', 1, 1, NOW()
+WHERE NOT EXISTS (SELECT 1 FROM `fm_files` WHERE `path` = '/Templates' AND `is_global` = 1);
 
 -- =====================================================
 -- End of Migration
