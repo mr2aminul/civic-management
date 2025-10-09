@@ -2546,6 +2546,8 @@ if (!function_exists('fm_update_storage_tracking')) {
             'quota_bytes' => (int)$quotaBytes,
             'r2_uploaded_bytes' => (int)$r2UploadedBytes,
             'local_only_bytes' => (int)$localOnlyBytes,
+            'last_calculated_at' => $now,
+            'last_upload_at' => $now,
             'created_at' => $now,
             'updated_at' => $now
         ];
