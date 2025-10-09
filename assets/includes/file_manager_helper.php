@@ -375,20 +375,20 @@ function fm_download_from_r2($remoteKey, $localPath) {
 // User Quotas
 // ============================================
 function fm_get_user_quota($userId) {
-    $result = fm_query("SELECT quota_bytes, used_bytes FROM fm_user_quotas WHERE user_id = ?", [$userId]);
+    global $db;
+    $result = $db->where('user_id', $userId)->getOne('fm_user_quotas', ['quota_bytes', 'used_bytes']);
     if (!empty($result)) {
-        return ['quota' => (int)$result[0]['quota_bytes'], 'used' => (int)$result[0]['used_bytes']];
+        return ['quota' => (int)$result->quota_bytes, 'used' => (int)$result->used_bytes];
+    } else {
+        $cfg = fm_get_config();
+        fm_insert('fm_user_quotas', [
+            'user_id' => $userId,
+            'quota_bytes' => $cfg['default_quota'],
+            'used_bytes' => 0,
+            'updated_at' => date('Y-m-d H:i:s')
+        ]);
+        return ['quota' => $cfg['default_quota'], 'used' => 0];
     }
-
-    $cfg = fm_get_config();
-    fm_insert('fm_user_quotas', [
-        'user_id' => $userId,
-        'quota_bytes' => $cfg['default_quota'],
-        'used_bytes' => 0,
-        'updated_at' => date('Y-m-d H:i:s')
-    ]);
-
-    return ['quota' => $cfg['default_quota'], 'used' => 0];
 }
 
 function fm_update_user_quota($userId, $deltaBytes) {
@@ -2638,7 +2638,6 @@ if (!function_exists('fm_update_storage_tracking')) {
             "SELECT SUM(size) as r2_bytes FROM fm_files WHERE user_id = ? AND r2_uploaded = 1 AND is_deleted = 0",
             [$userId]
         );
-
         if (!empty($r2Stats) && isset($r2Stats[0]['r2_bytes'])) {
             $r2UploadedBytes = (int) $r2Stats[0]['r2_bytes'];
         } else {
