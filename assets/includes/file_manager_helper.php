@@ -942,27 +942,27 @@ if (!function_exists('fm_get_backup_dir')) {
 }
 
 if (!function_exists('fm_save_uploaded_local')) {
-    function fm_save_uploaded_local($fileData, $subdir = '') {
-        $localDir = fm_get_local_dir();
+    function fm_save_uploaded_local($fileData, $subdir = '', $userId = null) {
+        $localDir = fm_get_local_dir($userId);
         if ($subdir !== '') {
             $localDir .= '/' . trim($subdir, '/');
             if (!file_exists($localDir)) {
                 @mkdir($localDir, 0755, true);
             }
         }
-    
+
         if (!isset($fileData['tmp_name']) || !is_uploaded_file($fileData['tmp_name'])) {
             return ['success' => false, 'message' => 'Invalid file upload'];
         }
-    
+
         $safeName = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $fileData['name']);
         $uniqueName = uniqid('file_') . '_' . $safeName;
         $destPath = $localDir . '/' . $uniqueName;
-    
+
         if (!move_uploaded_file($fileData['tmp_name'], $destPath)) {
             return ['success' => false, 'message' => 'Failed to move uploaded file'];
         }
-    
+
         return ['success' => true, 'filename' => $uniqueName, 'path' => $destPath];
     }
 }
@@ -2548,7 +2548,7 @@ if (!function_exists('fm_update_storage_tracking')) {
         ];
 
         // Check if exists
-        $existing = $db->where('user_id', $userId)->getOne('fm_user_storage_tracking', 'user_id');
+        $existing = $db->where('user_id', $userId)->getOne('fm_user_storage_tracking');
 
         if (empty($existing)) {
             // create created_at too

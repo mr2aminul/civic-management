@@ -178,7 +178,7 @@ try {
                     continue;
                 }
 
-                $saveResult = fm_save_uploaded_local($file, $subdir);
+                $saveResult = fm_save_uploaded_local($file, $subdir, $userId);
 
                 if ($saveResult['success']) {
                     $relativePath = ltrim(($subdir !== '' ? trim($subdir, '/') . '/' : '') . $saveResult['filename'], '/');
