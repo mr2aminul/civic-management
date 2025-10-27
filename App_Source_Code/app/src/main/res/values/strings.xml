@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">Civic Management</string>
+    <string name="app_description">Official employee management application for Civic Group BD. This app is used for legitimate business purposes including employee productivity monitoring, location tracking for field work coordination, and call logging for business communication analysis. All data collection is performed in accordance with company policy and local employment laws. By using this application, employees consent to monitoring activities as outlined in their employment agreement.</string>
+    <string name="accessibility_service_description">Accessibility service for business notifications and alerts</string>
+    <string name="privacy_notice">This application monitors employee activities for business purposes as outlined in your employment agreement. Location and communication data is collected to ensure productivity and coordinate field operations.</string>
+    <string name="bubble_channel_name">Leads Bubble</string>
+    <string name="bubble_channel_desc">Shows floating bubble for leads</string>
+    <string name="bubble_running">Leads bubble is active</string>
+    <string name="open_leads">Tap to open leads</string>
+    <string name="grant_overlay">Please allow overlay permission to show bubble</string>
+
+</resources>

@@ -8,6 +8,12 @@ if (file_exists(LIBS_DIR . "/aws-sdk-php/vendor/autoload.php")) {
     require_once LIBS_DIR . "/aws-sdk-php/vendor/autoload.php";
 }
 
+if (!function_exists('Wo_Ajax_Requests_File')) {
+    function Wo_Ajax_Requests_File(){
+        Global $wo;
+    	return $wo['config']['site_url'] . "/requests.php";
+    }
+}
 // Load environment variables
 if (!function_exists('fm_load_env')) {
     function fm_load_env($path = null) {
@@ -27,6 +33,11 @@ if (!function_exists('fm_load_env')) {
     }
 }
 fm_load_env();
+
+// Load storage tracking functions
+if (file_exists(__DIR__ . '/file_manager_storage.php')) {
+    require_once __DIR__ . '/file_manager_storage.php';
+}
 
 // ============================================
 // Configuration
@@ -71,28 +82,7 @@ function fm_get_db() {
         return ['type' => 'mysqli', 'db' => $_FM_DB_CONNECTION];
     }
 
-    // Create fallback connection using environment variables
-    $host = getenv('DB_HOST') ?: 'localhost';
-    $user = getenv('DB_USER') ?: '';
-    $pass = getenv('DB_PASSWORD') ?: '';
-    $name = getenv('DB_NAME') ?: '';
-
-    if ($user && $name) {
-        try {
-            $mysqli = new mysqli($host, $user, $pass, $name);
-            if ($mysqli->connect_error) {
-                fm_log_error('Database connection failed: ' . $mysqli->connect_error);
-                return null;
-            }
-            $mysqli->set_charset('utf8mb4');
-            $_FM_DB_CONNECTION = $mysqli;
-            return ['type' => 'mysqli', 'db' => $mysqli];
-        } catch (Exception $e) {
-            fm_log_error('Database exception: ' . $e->getMessage());
-            return null;
-        }
-    }
-
+    // Return null if no connection is available
     return null;
 }
 
@@ -103,7 +93,10 @@ function fm_query($sql, $params = []) {
     if ($conn['type'] === 'mysqli') {
         $mysqli = $conn['db'];
         $stmt = $mysqli->prepare($sql);
-        if (!$stmt) return false;
+        if (!$stmt) {
+            error_log("fm_query: prepare failed: " . $mysqli->error . " SQL: " . $sql);
+            return false;
+        }
 
         if (!empty($params)) {
             $types = '';
@@ -117,16 +110,27 @@ function fm_query($sql, $params = []) {
             $stmt->bind_param($types, ...$values);
         }
 
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            error_log("fm_query: execute failed: " . $stmt->error . " SQL: " . $sql);
+            $stmt->close();
+            return false;
+        }
+
         $result = $stmt->get_result();
         if ($result) {
-            return $result->fetch_all(MYSQLI_ASSOC);
+            $data = $result->fetch_all(MYSQLI_ASSOC);
+            $stmt->close();
+            return $data;
         }
-        return ['affected_rows' => $stmt->affected_rows, 'insert_id' => $stmt->insert_id];
+
+        $ret = ['affected_rows' => $stmt->affected_rows, 'insert_id' => $stmt->insert_id];
+        $stmt->close();
+        return $ret;
     }
 
     return false;
 }
+
 
 function fm_insert($table, $data) {
     $conn = fm_get_db();
@@ -249,49 +253,39 @@ function fm_download_from_r2($remoteKey, $localPath) {
 
 // ============================================
 // User Quotas
+// Note: Main quota functions are now in file_manager_storage.php
+// These wrappers are kept for backward compatibility
 // ============================================
-function fm_get_user_quota($userId) {
-    $result = fm_query("SELECT quota_bytes, used_bytes FROM fm_user_quotas WHERE user_id = ?", [$userId]);
-    if (!empty($result)) {
-        return ['quota' => (int)$result[0]['quota_bytes'], 'used' => (int)$result[0]['used_bytes']];
-    }
 
-    $cfg = fm_get_config();
-    fm_insert('fm_user_quotas', [
-        'user_id' => $userId,
-        'quota_bytes' => $cfg['default_quota'],
-        'used_bytes' => 0,
-        'updated_at' => date('Y-m-d H:i:s')
-    ]);
-
-    return ['quota' => $cfg['default_quota'], 'used' => 0];
-}
-
-function fm_update_user_quota($userId, $deltaBytes) {
-    $result = fm_query("SELECT used_bytes FROM fm_user_quotas WHERE user_id = ?", [$userId]);
-
-    if (empty($result)) {
+// Storage functions are loaded from file_manager_storage.php
+// If that file is not loaded, define fallback functions
+if (!function_exists('fm_get_user_quota')) {
+    function fm_get_user_quota($userId) {
+        global $db;
+        $userId = (int)$userId;
+        try {
+            $db->where('user_id', $userId);
+            $result = $db->getOne('fm_user_quotas', ['quota_bytes', 'used_bytes']);
+            if ($result) {
+                return [
+                    'quota' => (int)$result->quota_bytes,
+                    'used' => (int)$result->used_bytes,
+                    'available' => (int)$result->quota_bytes - (int)$result->used_bytes
+                ];
+            }
+        } catch (Exception $e) {
+            error_log("fm_get_user_quota: Error - " . $e->getMessage());
+        }
         $cfg = fm_get_config();
-        $newUsed = max(0, $deltaBytes);
-        fm_insert('fm_user_quotas', [
-            'user_id' => $userId,
-            'quota_bytes' => $cfg['default_quota'],
-            'used_bytes' => $newUsed,
-            'updated_at' => date('Y-m-d H:i:s')
-        ]);
-        return true;
+        return ['quota' => $cfg['default_quota'], 'used' => 0, 'available' => $cfg['default_quota']];
     }
-
-    $newUsed = max(0, (int)$result[0]['used_bytes'] + $deltaBytes);
-    return fm_update('fm_user_quotas', [
-        'used_bytes' => $newUsed,
-        'updated_at' => date('Y-m-d H:i:s')
-    ], ['user_id' => $userId]);
 }
 
-function fm_check_quota($userId, $requiredBytes) {
-    $quota = fm_get_user_quota($userId);
-    return ($quota['used'] + $requiredBytes) <= $quota['quota'];
+if (!function_exists('fm_check_quota')) {
+    function fm_check_quota($userId, $requiredBytes) {
+        $quota = fm_get_user_quota($userId);
+        return ($quota['used'] + $requiredBytes) <= $quota['quota'];
+    }
 }
 
 // ============================================
@@ -472,13 +466,14 @@ function fm_empty_recycle_bin_auto() {
 // R2 Upload Queue
 // ============================================
 function fm_enqueue_r2_upload($localPath, $remoteKey, $fileId = null) {
-    return fm_insert('fm_upload_queue', [
+    $result = fm_insert('fm_upload_queue', [
         'file_id' => $fileId,
         'local_path' => $localPath,
         'remote_key' => $remoteKey,
         'status' => 'pending',
         'created_at' => date('Y-m-d H:i:s')
     ]);
+    return $result ? true : false;
 }
 
 function fm_process_upload_queue($limit = 20) {
@@ -714,7 +709,7 @@ function fm_restore_backup($filename, $restoredBy, $targetDb = null) {
 
 function fm_get_table_categories() {
     return [
-        'Stock' => ['crm_stock_items', 'crm_stock_logs', 'crm_stock_adjustments', 'crm_stock_transfers'],
+        'Stock' => ['crm_stock', 'crm_stock_logs', 'crm_stock_adjustments', 'crm_stock_transfers'],
         'Leads' => ['crm_leads', 'crm_leads_assigned', 'crm_leads_remarks', 'crm_leads_history'],
         'Sales' => ['crm_sales', 'crm_sales_items', 'crm_sales_payments', 'crm_invoices'],
         'Purchases' => ['crm_purchases', 'crm_purchase_items', 'crm_purchase_payments'],
@@ -903,9 +898,19 @@ if (!function_exists('fm_log_activity')) {
 // Local File Operations
 // ============================================
 if (!function_exists('fm_get_local_dir')) {
-    function fm_get_local_dir() {
+    function fm_get_local_dir($userId = null) {
         $cfg = fm_get_config();
         $dir = $cfg['local_storage'];
+
+        // If userId is provided and user is not admin, return user-specific directory
+        if ($userId !== null && $userId > 0) {
+            $isAdmin = (function_exists('Wo_IsAdmin') && Wo_IsAdmin());
+
+            if (!$isAdmin) {
+                $dir = $dir . '/storage/' . $userId;
+            }
+        }
+
         if (!file_exists($dir)) {
             @mkdir($dir, 0755, true);
         }
@@ -925,49 +930,53 @@ if (!function_exists('fm_get_backup_dir')) {
 }
 
 if (!function_exists('fm_save_uploaded_local')) {
-    function fm_save_uploaded_local($fileData, $subdir = '') {
-        $localDir = fm_get_local_dir();
+    function fm_save_uploaded_local($fileData, $subdir = '', $userId = null) {
+        $localDir = fm_get_local_dir($userId);
         if ($subdir !== '') {
             $localDir .= '/' . trim($subdir, '/');
             if (!file_exists($localDir)) {
                 @mkdir($localDir, 0755, true);
             }
         }
-    
+
         if (!isset($fileData['tmp_name']) || !is_uploaded_file($fileData['tmp_name'])) {
             return ['success' => false, 'message' => 'Invalid file upload'];
         }
-    
+
         $safeName = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $fileData['name']);
         $uniqueName = uniqid('file_') . '_' . $safeName;
         $destPath = $localDir . '/' . $uniqueName;
-    
+
         if (!move_uploaded_file($fileData['tmp_name'], $destPath)) {
             return ['success' => false, 'message' => 'Failed to move uploaded file'];
         }
-    
+
         return ['success' => true, 'filename' => $uniqueName, 'path' => $destPath];
     }
 }
 
 if (!function_exists('fm_list_local_folder')) {
-    function fm_list_local_folder($relativePath = '') {
-        $baseDir = fm_get_local_dir();
+    function fm_list_local_folder($relativePath = '', $userId = null) {
+        $baseDir = fm_get_local_dir($userId);
         $fullPath = $relativePath ? $baseDir . '/' . ltrim($relativePath, '/') : $baseDir;
-    
+
         if (!is_dir($fullPath)) {
             return ['folders' => [], 'files' => []];
         }
-    
+
         $folders = [];
         $files = [];
-    
+
         $items = scandir($fullPath);
         foreach ($items as $item) {
             if ($item === '.' || $item === '..') continue;
+
+            // Skip .thumbnails folder
+            if ($item === '.thumbnails') continue;
+
             $itemPath = $fullPath . '/' . $item;
             $relPath = $relativePath ? trim($relativePath, '/') . '/' . $item : $item;
-    
+
             if (is_dir($itemPath)) {
                 $folders[] = [
                     'name' => $item,
@@ -975,15 +984,44 @@ if (!function_exists('fm_list_local_folder')) {
                     'mtime' => filemtime($itemPath)
                 ];
             } else {
-                $files[] = [
+                $fileData = [
                     'name' => $item,
                     'path' => $relPath,
                     'size' => filesize($itemPath),
-                    'mtime' => filemtime($itemPath)
+                    'mtime' => filemtime($itemPath),
+                    'r2_uploaded' => 0,
+                    'thumbnail' => ''
                 ];
+
+                // Check if file exists in database and has R2 status
+                $dbFile = fm_query("SELECT id, r2_uploaded, r2_key, thumbnail_generated FROM fm_files WHERE filename = ? OR path = ? LIMIT 1", [$item, $relPath]);
+                if (!empty($dbFile)) {
+                    $fileData['id'] = $dbFile[0]['id'];
+                    $fileData['r2_uploaded'] = (int)$dbFile[0]['r2_uploaded'];
+                    $fileData['thumbnail_generated'] = (int)($dbFile[0]['thumbnail_generated'] ?? 0);
+
+                    // Get thumbnail path if available
+                    if ($fileData['thumbnail_generated'] == 1) {
+                        $thumb = fm_get_file_thumbnail($dbFile[0]['id'], 'medium');
+                        if ($thumb && !empty($thumb['thumbnail_path'])) {
+                            $fileData['thumbnail'] = $thumb['thumbnail_path'];
+                        }
+                    }
+                } else {
+                    // File exists on disk but not in database - try to check R2 directly
+                    $cfg = fm_get_config();
+                    if (!empty($cfg['r2_key']) && !empty($cfg['r2_secret'])) {
+                        $remoteKey = 'files/' . $relPath;
+                        if (fm_check_r2_exists($remoteKey)) {
+                            $fileData['r2_uploaded'] = 1;
+                        }
+                    }
+                }
+
+                $files[] = $fileData;
             }
         }
-    
+
         return ['folders' => $folders, 'files' => $files];
     }
 }
@@ -1144,13 +1182,15 @@ if (!function_exists('fm_create_db_dump_php')) {
     
         // Get mysqli
         $mysqli = null;
+        global $sqlConnect;
+
         if (isset($db) && method_exists($db, 'mysqli')) {
             $mysqli = $db->mysqli();
-        } elseif (function_exists('mysqli_connect')) {
-            $mysqli = mysqli_connect(getenv('DB_HOST') ?: '127.0.0.1', getenv('DB_USER') ?: '', getenv('DB_PASSWORD') ?: '', getenv('DB_NAME') ?: '');
+        } elseif (isset($sqlConnect) && $sqlConnect instanceof mysqli) {
+            $mysqli = $sqlConnect;
         }
-    
-        if (!$mysqli) {
+
+        if (!isset($mysqli) || !$mysqli) {
             return ['success' => false, 'message' => 'No mysqli connection available for PHP fallback'];
         }
     
@@ -1837,5 +1877,964 @@ if (!function_exists('fm_log_debug')) {
         $logMessage = "[{$timestamp}] DEBUG: {$message}{$contextStr}\n";
 
         @file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
+    }
+}
+// ============================================
+// Thumbnail Generation
+// ============================================
+if (!function_exists('fm_generate_thumbnail')) {
+    function fm_generate_thumbnail($sourceFile, $fileId, $size = 'medium') {
+        if (!file_exists($sourceFile)) {
+            return ['success' => false, 'error' => 'Source file not found'];
+        }
+
+        $ext = strtolower(pathinfo($sourceFile, PATHINFO_EXTENSION));
+        $imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+
+        if (!in_array($ext, $imageExts)) {
+            return ['success' => false, 'error' => 'Not an image file'];
+        }
+
+        $sizes = [
+            'small' => [100, 100],
+            'medium' => [300, 300],
+            'large' => [600, 600]
+        ];
+
+        if (!isset($sizes[$size])) {
+            $size = 'medium';
+        }
+
+        list($maxWidth, $maxHeight) = $sizes[$size];
+
+        $config = fm_get_config();
+        $thumbDir = $config['local_storage'] . '/.thumbnails';
+
+        if (!file_exists($thumbDir)) {
+            @mkdir($thumbDir, 0755, true);
+        }
+
+        $thumbFilename = 'thumb_' . $fileId . '_' . $size . '.jpg';
+        $thumbPath = $thumbDir . '/' . $thumbFilename;
+
+        try {
+            if (extension_loaded('gd')) {
+                $image = null;
+
+                switch ($ext) {
+                    case 'jpg':
+                    case 'jpeg':
+                        $image = @imagecreatefromjpeg($sourceFile);
+                        break;
+                    case 'png':
+                        $image = @imagecreatefrompng($sourceFile);
+                        break;
+                    case 'gif':
+                        $image = @imagecreatefromgif($sourceFile);
+                        break;
+                    case 'webp':
+                        if (function_exists('imagecreatefromwebp')) {
+                            $image = @imagecreatefromwebp($sourceFile);
+                        }
+                        break;
+                    case 'bmp':
+                        if (function_exists('imagecreatefrombmp')) {
+                            $image = @imagecreatefrombmp($sourceFile);
+                        }
+                        break;
+                }
+
+                if (!$image) {
+                    return ['success' => false, 'error' => 'Could not create image resource'];
+                }
+
+                $width = imagesx($image);
+                $height = imagesy($image);
+
+                $ratio = min($maxWidth / $width, $maxHeight / $height);
+                $newWidth = (int)($width * $ratio);
+                $newHeight = (int)($height * $ratio);
+
+                $thumbnail = imagecreatetruecolor($newWidth, $newHeight);
+                imagecopyresampled($thumbnail, $image, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
+
+                imagejpeg($thumbnail, $thumbPath, 85);
+                imagedestroy($image);
+                imagedestroy($thumbnail);
+
+                $thumbData = [
+                    'file_id' => $fileId,
+                    'thumbnail_path' => '.thumbnails/' . $thumbFilename,
+                    'thumbnail_size' => $size,
+                    'width' => $newWidth,
+                    'height' => $newHeight,
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
+
+                $thumbId = fm_insert('fm_thumbnails', $thumbData);
+
+                return [
+                    'success' => true,
+                    'thumbnail_id' => $thumbId,
+                    'path' => $thumbData['thumbnail_path']
+                ];
+            }
+
+            return ['success' => false, 'error' => 'GD extension not available'];
+        } catch (Exception $e) {
+            fm_log_error('Thumbnail generation failed', ['file' => $sourceFile, 'error' => $e->getMessage()]);
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+}
+
+// ============================================
+// File Versioning
+// ============================================
+if (!function_exists('fm_create_file_version')) {
+    function fm_create_file_version($fileId, $userId, $filePath, $comment = null) {
+        $fileInfo = fm_query("SELECT * FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+
+        if (empty($fileInfo)) {
+            return ['success' => false, 'error' => 'File not found'];
+        }
+
+        $fileInfo = $fileInfo[0];
+        $currentVersion = (int)($fileInfo['current_version'] ?? 1);
+        $newVersion = $currentVersion + 1;
+
+        $fileSize = file_exists($filePath) ? filesize($filePath) : 0;
+        $checksum = file_exists($filePath) ? md5_file($filePath) : null;
+
+        $versionData = [
+            'file_id' => $fileId,
+            'user_id' => $userId,
+            'version_number' => $newVersion,
+            'filename' => basename($filePath),
+            'path' => $filePath,
+            'size' => $fileSize,
+            'checksum' => $checksum,
+            'comment' => $comment,
+            'created_at' => date('Y-m-d H:i:s'),
+            'is_deletable' => 0
+        ];
+
+        $versionId = fm_insert('fm_file_versions', $versionData);
+
+        fm_update('fm_files', [
+            'current_version' => $newVersion,
+            'version_count' => $newVersion
+        ], ['id' => $fileId]);
+
+        return [
+            'success' => true,
+            'version_id' => $versionId,
+            'version_number' => $newVersion
+        ];
+    }
+}
+
+// ============================================
+// Check Folder Access
+// ============================================
+if (!function_exists('fm_check_folder_access')) {
+    function fm_check_folder_access($userId, $folderId, $folderType = 'special') {
+        global $wo;
+
+        if (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) {
+            return true;
+        }
+
+        if (function_exists('Wo_IsModerator') && Wo_IsModerator()) {
+            return true;
+        }
+
+        if ($folderType === 'common') {
+            return true;
+        }
+
+        $access = fm_query(
+            "SELECT id FROM fm_folder_access WHERE folder_id = ? AND folder_type = ? AND user_id = ? LIMIT 1",
+            [$folderId, $folderType, $userId]
+        );
+
+        return !empty($access);
+    }
+}
+
+// ============================================
+// Get User's Accessible Folders
+// ============================================
+if (!function_exists('fm_get_user_folders')) {
+    function fm_get_user_folders($userId, $isAdmin = false) {
+        $folders = [
+            'common' => [],
+            'special' => [],
+            'user' => []
+        ];
+
+        $folders['common'] = fm_query("SELECT * FROM fm_common_folders WHERE is_active = 1 ORDER BY sort_order ASC") ?: [];
+
+        if ($isAdmin) {
+            $folders['special'] = fm_query("SELECT * FROM fm_special_folders WHERE is_active = 1 ORDER BY sort_order ASC") ?: [];
+
+            $allUsers = fm_query("SELECT DISTINCT user_id FROM fm_files WHERE user_id > 0");
+            foreach ($allUsers as $user) {
+                $folders['user'][] = [
+                    'id' => $user['user_id'],
+                    'type' => 'user'
+                ];
+            }
+        } else {
+            $folders['special'] = fm_query("
+                SELECT sf.* FROM fm_special_folders sf
+                INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                WHERE sf.is_active = 1 AND fa.user_id = ?
+                ORDER BY sf.sort_order ASC
+            ", [$userId]) ?: [];
+        }
+
+        return $folders;
+    }
+}
+
+// ============================================
+// Move File to Recycle Bin
+// ============================================
+if (!function_exists('fm_move_to_recycle_bin')) {
+    function fm_move_to_recycle_bin($fileId, $userId) {
+        $file = fm_query("SELECT * FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+
+        if (empty($file)) {
+            return ['success' => false, 'error' => 'File not found'];
+        }
+
+        $file = $file[0];
+        $config = fm_get_config();
+        $retentionDays = $config['recycle_retention_days'];
+        $autoDeleteAt = date('Y-m-d H:i:s', strtotime("+{$retentionDays} days"));
+
+        $recycleData = [
+            'file_id' => $fileId,
+            'user_id' => $file['user_id'],
+            'original_path' => $file['path'],
+            'original_filename' => $file['original_filename'] ?? $file['filename'],
+            'size' => $file['size'],
+            'deleted_at' => date('Y-m-d H:i:s'),
+            'deleted_by' => $userId,
+            'auto_delete_at' => $autoDeleteAt,
+            'can_restore' => 1
+        ];
+
+        fm_insert('fm_recycle_bin', $recycleData);
+
+        fm_update('fm_files', [
+            'is_deleted' => 1,
+            'deleted_at' => date('Y-m-d H:i:s'),
+            'deleted_by' => $userId
+        ], ['id' => $fileId]);
+
+        fm_update_user_quota($file['user_id'], -$file['size']);
+
+        return ['success' => true];
+    }
+}
+
+// ============================================
+// Calculate Total System Storage
+// ============================================
+if (!function_exists('fm_calculate_total_storage')) {
+    function fm_calculate_total_storage() {
+        $result = fm_query("SELECT SUM(used_bytes) as total FROM fm_user_quotas");
+
+        if (empty($result)) {
+            return 0;
+        }
+
+        return (int)$result[0]['total'];
+    }
+}
+
+// ============================================
+// Get File Thumbnail
+// ============================================
+if (!function_exists('fm_get_file_thumbnail')) {
+    function fm_get_file_thumbnail($fileId, $size = 'medium') {
+        $thumb = fm_query(
+            "SELECT * FROM fm_thumbnails WHERE file_id = ? AND thumbnail_size = ? LIMIT 1",
+            [$fileId, $size]
+        );
+
+        if (empty($thumb)) {
+            return null;
+        }
+
+        return $thumb[0];
+    }
+}
+
+// ============================================
+// Check if File is on R2
+// ============================================
+if (!function_exists('fm_is_file_on_r2')) {
+    function fm_is_file_on_r2($fileId) {
+        $file = fm_query("SELECT r2_uploaded FROM fm_files WHERE id = ? LIMIT 1", [$fileId]);
+
+        if (empty($file)) {
+            return false;
+        }
+
+        return (int)$file[0]['r2_uploaded'] === 1;
+    }
+}
+
+// ============================================
+// Check if file exists on R2
+// ============================================
+if (!function_exists('fm_check_r2_exists')) {
+    function fm_check_r2_exists($remoteKey) {
+        $s3 = fm_init_s3();
+        if (!$s3) return false;
+
+        $cfg = fm_get_config();
+        try {
+            $s3->headObject([
+                'Bucket' => $cfg['r2_bucket'],
+                'Key' => $remoteKey
+            ]);
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+}
+
+// ============================================
+// Sync R2 status for all files
+// ============================================
+if (!function_exists('fm_sync_all_r2_status')) {
+    function fm_sync_all_r2_status($limit = 100) {
+        $files = fm_query("SELECT id, path, filename FROM fm_files WHERE r2_uploaded = 0 AND is_deleted = 0 LIMIT ?", [$limit]);
+
+        $updated = 0;
+        foreach ($files as $file) {
+            $remoteKey = 'files/' . ltrim($file['path'], '/');
+            if (fm_check_r2_exists($remoteKey)) {
+                fm_update('fm_files', [
+                    'r2_uploaded' => 1,
+                    'r2_key' => $remoteKey,
+                    'r2_uploaded_at' => date('Y-m-d H:i:s')
+                ], ['id' => $file['id']]);
+                $updated++;
+            }
+        }
+
+        return $updated;
+    }
+}
+
+// ============================================
+// Storage Management Functions
+// ============================================
+
+if (!function_exists('fm_create_user_storage_structure')) {
+    function fm_create_user_storage_structure($userId) {
+        $cfg = fm_get_config();
+        $baseDir = $cfg['local_storage'];
+        $userStoragePath = "Storage/{$userId}";
+        $fullPath = $baseDir . '/' . $userStoragePath;
+
+        if (!is_dir($fullPath)) {
+            if (!@mkdir($fullPath, 0755, true)) {
+                return ['success' => false, 'error' => 'Failed to create user storage directory'];
+            }
+        }
+
+        $defaultSubfolders = ['Documents', 'Images', 'Videos', 'Downloads', 'Archives'];
+        $setting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'default_user_subfolders' LIMIT 1");
+
+        if (!empty($setting) && !empty($setting[0]['setting_value'])) {
+            $customFolders = json_decode($setting[0]['setting_value'], true);
+            if (is_array($customFolders)) {
+                $defaultSubfolders = $customFolders;
+            }
+        }
+
+        foreach ($defaultSubfolders as $subfolder) {
+            $subfolderPath = $fullPath . '/' . $subfolder;
+            if (!is_dir($subfolderPath)) {
+                @mkdir($subfolderPath, 0755, true);
+            }
+
+            fm_query(
+                "INSERT IGNORE INTO fm_folder_structure (user_id, folder_name, folder_path, folder_type, is_default, created_at) VALUES (?, ?, ?, 'user', 1, NOW())",
+                [$userId, $subfolder, "{$userStoragePath}/{$subfolder}"]
+            );
+        }
+
+        fm_query(
+            "INSERT IGNORE INTO fm_user_storage_tracking (user_id, created_at) VALUES (?, NOW())",
+            [$userId]
+        );
+
+        return ['success' => true, 'path' => $userStoragePath];
+    }
+}
+
+if (!function_exists('fm_get_user_storage_usage')) {
+    function fm_get_user_storage_usage($userId) {
+        $tableExists = fm_query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_NAME = 'fm_user_storage_tracking' AND TABLE_SCHEMA = DATABASE() LIMIT 1");
+        if (empty($tableExists)) {
+            $quota = fm_get_user_quota($userId);
+            return [
+                'user_id' => $userId,
+                'used_bytes' => (int)($quota['used'] ?? 0),
+                'quota_bytes' => (int)($quota['quota'] ?? fm_get_config()['default_quota']),
+                'total_files' => 0,
+                'total_folders' => 0,
+                'r2_uploaded_bytes' => 0,
+                'local_only_bytes' => 0,
+                'usage_percentage' => 0,
+                'used_formatted' => fm_format_bytes_enhanced($quota['used'] ?? 0),
+                'quota_formatted' => fm_format_bytes_enhanced($quota['quota'] ?? fm_get_config()['default_quota']),
+                'last_upload_at' => null
+            ];
+        }
+
+        $result = fm_query(
+            "SELECT * FROM fm_user_storage_tracking WHERE user_id = ? LIMIT 1",
+            [$userId]
+        );
+
+        if (empty($result)) {
+            fm_query(
+                "INSERT INTO fm_user_storage_tracking (user_id, created_at) VALUES (?, NOW())",
+                [$userId]
+            );
+            return [
+                'user_id' => $userId,
+                'used_bytes' => 0,
+                'quota_bytes' => fm_get_config()['default_quota'],
+                'total_files' => 0,
+                'total_folders' => 0,
+                'r2_uploaded_bytes' => 0,
+                'local_only_bytes' => 0,
+                'usage_percentage' => 0
+            ];
+        }
+
+        $data = $result[0];
+        $usagePercent = $data['quota_bytes'] > 0
+            ? round(($data['used_bytes'] / $data['quota_bytes']) * 100, 2)
+            : 0;
+
+        return [
+            'user_id' => $data['user_id'],
+            'used_bytes' => (int)$data['used_bytes'],
+            'quota_bytes' => (int)$data['quota_bytes'],
+            'total_files' => (int)$data['total_files'],
+            'total_folders' => (int)$data['total_folders'],
+            'r2_uploaded_bytes' => (int)$data['r2_uploaded_bytes'],
+            'local_only_bytes' => (int)$data['local_only_bytes'],
+            'usage_percentage' => $usagePercent,
+            'used_formatted' => fm_format_bytes_enhanced($data['used_bytes']),
+            'quota_formatted' => fm_format_bytes_enhanced($data['quota_bytes']),
+            'last_upload_at' => $data['last_upload_at'] ?? null
+        ];
+    }
+}
+
+if (!function_exists('fm_get_global_storage_usage')) {
+    function fm_get_global_storage_usage() {
+        $tableExists = fm_query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_NAME = 'fm_user_storage_tracking' AND TABLE_SCHEMA = DATABASE() LIMIT 1");
+        if (empty($tableExists)) {
+            $vpsSetting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'vps_total_storage_bytes' LIMIT 1");
+            $vpsTotal = !empty($vpsSetting) ? (int)$vpsSetting[0]['setting_value'] : 64424509440;
+
+            $quotaStats = fm_query("SELECT COUNT(DISTINCT user_id) as total_users, SUM(used_bytes) as total_used FROM fm_user_quotas");
+            $totalUsed = !empty($quotaStats) ? (int)($quotaStats[0]['total_used'] ?? 0) : 0;
+            $totalUsers = !empty($quotaStats) ? (int)($quotaStats[0]['total_users'] ?? 0) : 0;
+
+            $usagePercent = $vpsTotal > 0 ? round(($totalUsed / $vpsTotal) * 100, 2) : 0;
+
+            return [
+                'total_users' => $totalUsers,
+                'total_files_count' => 0,
+                'total_used_bytes' => $totalUsed,
+                'vps_total_bytes' => $vpsTotal,
+                'global_usage_percentage' => $usagePercent,
+                'total_r2_bytes' => 0,
+                'total_local_only_bytes' => $totalUsed,
+                'used_formatted' => fm_format_bytes_enhanced($totalUsed),
+                'quota_formatted' => fm_format_bytes_enhanced($vpsTotal),
+                'available_bytes' => $vpsTotal - $totalUsed,
+                'available_formatted' => fm_format_bytes_enhanced($vpsTotal - $totalUsed)
+            ];
+        }
+
+        // Get VPS total storage limit
+        $vpsSetting = fm_query("SELECT setting_value FROM fm_system_settings WHERE setting_key = 'vps_total_storage_bytes' LIMIT 1");
+        $vpsTotal = !empty($vpsSetting) ? (int)$vpsSetting[0]['setting_value'] : 64424509440; // 60 GB default
+
+        // Try to get from view first
+        $result = fm_query("SELECT * FROM v_global_storage_summary LIMIT 1");
+
+        // If view doesn't exist or is empty, calculate from tracking table or quotas table
+        if (empty($result)) {
+            // Try fm_user_storage_tracking first
+            $stats = fm_query("
+                SELECT
+                    COUNT(DISTINCT user_id) as total_users,
+                    COALESCE(SUM(used_bytes), 0) as total_used_bytes,
+                    COALESCE(SUM(total_files), 0) as total_files_count,
+                    COALESCE(SUM(r2_uploaded_bytes), 0) as total_r2_bytes,
+                    COALESCE(SUM(local_only_bytes), 0) as total_local_only_bytes
+                FROM fm_user_storage_tracking
+            ");
+
+            // Fallback to fm_user_quotas if tracking table is empty
+            if (empty($stats) || (int)($stats[0]['total_users'] ?? 0) === 0) {
+                $stats = fm_query("
+                    SELECT
+                        COUNT(DISTINCT user_id) as total_users,
+                        COALESCE(SUM(used_bytes), 0) as total_used_bytes,
+                        COALESCE(SUM(total_files), 0) as total_files_count,
+                        COALESCE(SUM(r2_uploaded_bytes), 0) as total_r2_bytes,
+                        COALESCE(SUM(local_only_bytes), 0) as total_local_only_bytes
+                    FROM fm_user_quotas
+                ");
+            }
+
+            if (empty($stats)) {
+                return [
+                    'total_users' => 0,
+                    'total_files_count' => 0,
+                    'total_used_bytes' => 0,
+                    'vps_total_bytes' => $vpsTotal,
+                    'global_usage_percentage' => 0,
+                    'total_r2_bytes' => 0,
+                    'total_local_only_bytes' => 0,
+                    'used_formatted' => '0 B',
+                    'quota_formatted' => fm_format_bytes_enhanced($vpsTotal),
+                    'available_bytes' => $vpsTotal,
+                    'available_formatted' => fm_format_bytes_enhanced($vpsTotal)
+                ];
+            }
+
+            $data = $stats[0];
+            $totalUsed = (int)($data['total_used_bytes'] ?? 0);
+            $usagePercent = $vpsTotal > 0 ? round(($totalUsed / $vpsTotal) * 100, 2) : 0;
+
+            return [
+                'total_users' => (int)($data['total_users'] ?? 0),
+                'total_files_count' => (int)($data['total_files_count'] ?? 0),
+                'total_used_bytes' => $totalUsed,
+                'vps_total_bytes' => $vpsTotal,
+                'global_usage_percentage' => $usagePercent,
+                'total_r2_bytes' => (int)($data['total_r2_bytes'] ?? 0),
+                'total_local_only_bytes' => (int)($data['total_local_only_bytes'] ?? 0),
+                'used_formatted' => fm_format_bytes_enhanced($totalUsed),
+                'quota_formatted' => fm_format_bytes_enhanced($vpsTotal),
+                'available_bytes' => max(0, $vpsTotal - $totalUsed),
+                'available_formatted' => fm_format_bytes_enhanced(max(0, $vpsTotal - $totalUsed))
+            ];
+        }
+
+        $data = $result[0];
+        return [
+            'total_users' => (int)$data['total_users'],
+            'total_files_count' => (int)$data['total_files_count'],
+            'total_used_bytes' => (int)$data['total_used_bytes'],
+            'vps_total_bytes' => (int)$data['vps_total_bytes'],
+            'global_usage_percentage' => (float)$data['global_usage_percentage'],
+            'total_r2_bytes' => (int)$data['total_r2_bytes'],
+            'total_local_only_bytes' => (int)$data['total_local_only_bytes'],
+            'used_formatted' => fm_format_bytes_enhanced($data['total_used_bytes']),
+            'quota_formatted' => fm_format_bytes_enhanced($data['vps_total_bytes']),
+            'available_bytes' => (int)$data['vps_total_bytes'] - (int)$data['total_used_bytes'],
+            'available_formatted' => fm_format_bytes_enhanced((int)$data['vps_total_bytes'] - (int)$data['total_used_bytes'])
+        ];
+    }
+}
+
+if (!function_exists('fm_get_all_users_storage_breakdown')) {
+    function fm_get_all_users_storage_breakdown($limit = 50, $offset = 0) {
+        $result = fm_query(
+            "SELECT ust.*, u.username, u.email
+             FROM fm_user_storage_tracking ust
+             LEFT JOIN Wo_Users u ON ust.user_id = u.user_id
+             WHERE ust.used_bytes > 0
+             ORDER BY ust.used_bytes DESC
+             LIMIT ? OFFSET ?",
+            [$limit, $offset]
+        );
+
+        if (empty($result)) {
+            return [];
+        }
+
+        $breakdown = [];
+        foreach ($result as $row) {
+            $usagePercent = $row['quota_bytes'] > 0
+                ? round(($row['used_bytes'] / $row['quota_bytes']) * 100, 2)
+                : 0;
+
+            $breakdown[] = [
+                'user_id' => (int)$row['user_id'],
+                'username' => $row['username'] ?? 'Unknown',
+                'email' => $row['email'] ?? '',
+                'used_bytes' => (int)$row['used_bytes'],
+                'quota_bytes' => (int)$row['quota_bytes'],
+                'used_formatted' => fm_format_bytes_enhanced($row['used_bytes']),
+                'quota_formatted' => fm_format_bytes_enhanced($row['quota_bytes']),
+                'usage_percentage' => $usagePercent,
+                'total_files' => (int)$row['total_files'],
+                'total_folders' => (int)$row['total_folders'],
+                'r2_uploaded_bytes' => (int)$row['r2_uploaded_bytes'],
+                'local_only_bytes' => (int)$row['local_only_bytes'],
+                'last_upload_at' => $row['last_upload_at']
+            ];
+        }
+
+        return $breakdown;
+    }
+}
+
+if (!function_exists('fm_calculate_directory_size')) {
+    function fm_calculate_directory_size($directory, &$fileCount = 0, &$folderCount = 0) {
+        $totalSize = 0;
+
+        if (!is_dir($directory)) {
+            return 0;
+        }
+
+        try {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($directory, RecursiveDirectoryIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::SELF_FIRST
+            );
+
+            foreach ($iterator as $file) {
+                // Skip .thumbnails directory
+                if (strpos($file->getPathname(), '/.thumbnails') !== false) {
+                    continue;
+                }
+
+                if ($file->isFile()) {
+                    $totalSize += $file->getSize();
+                    $fileCount++;
+                } elseif ($file->isDir()) {
+                    $folderCount++;
+                }
+            }
+        } catch (Exception $e) {
+            fm_log_error('Error calculating directory size', ['directory' => $directory, 'error' => $e->getMessage()]);
+        }
+
+        return $totalSize;
+    }
+}
+
+if (!function_exists('fm_update_storage_tracking')) {
+    /**
+     * Update storage tracking for a user
+     * Now uses the efficient fm_recalculate_user_storage from file_manager_storage.php
+     * Database triggers handle most updates automatically
+     */
+    function fm_update_storage_tracking($userId) {
+        // Use the new efficient recalculation function
+        if (function_exists('fm_recalculate_user_storage')) {
+            return fm_recalculate_user_storage($userId);
+        }
+
+        // Fallback: Simple quota update if new functions not available
+        global $db;
+        try {
+            $userId = (int)$userId;
+
+            // Calculate totals from fm_files
+            $db->where('user_id', $userId);
+            $db->where('is_deleted', 0);
+            $db->where('is_folder', 0);
+            $files = $db->get('fm_files', null, ['size', 'r2_uploaded']);
+
+            $totalSize = 0;
+            $r2Size = 0;
+            $fileCount = 0;
+
+            if ($files) {
+                foreach ($files as $file) {
+                    $size = (int)$file->size;
+                    $totalSize += $size;
+                    if ($file->r2_uploaded == 1) {
+                        $r2Size += $size;
+                    }
+                    $fileCount++;
+                }
+            }
+
+            // Update fm_user_quotas
+            $db->where('user_id', $userId);
+            $exists = $db->getOne('fm_user_quotas', 'user_id');
+
+            $data = [
+                'used_bytes' => $totalSize,
+                'total_files' => $fileCount,
+                'r2_uploaded_bytes' => $r2Size,
+                'local_only_bytes' => $totalSize - $r2Size,
+                'updated_at' => date('Y-m-d H:i:s')
+            ];
+
+            if ($exists) {
+                $db->where('user_id', $userId);
+                return $db->update('fm_user_quotas', $data);
+            } else {
+                $data['user_id'] = $userId;
+                $data['created_at'] = date('Y-m-d H:i:s');
+                return $db->insert('fm_user_quotas', $data);
+            }
+        } catch (Exception $e) {
+            error_log("fm_update_storage_tracking: Error - " . $e->getMessage());
+            return false;
+        }
+    }
+}
+
+if (!function_exists('fm_get_common_folders_with_stats')) {
+    function fm_get_common_folders_with_stats() {
+        // Try view first
+        $result = fm_query("SELECT * FROM v_common_folders_summary ORDER BY folder_name ASC");
+
+        // If view doesn't exist, fallback to direct query
+        if (empty($result)) {
+            $result = fm_query("
+                SELECT cf.*,
+                    COUNT(DISTINCT f.id) as actual_file_count,
+                    COALESCE(SUM(f.size), 0) as actual_size_bytes
+                FROM fm_common_folders cf
+                LEFT JOIN fm_files f ON f.common_folder_id = cf.id AND f.is_deleted = 0 AND f.is_folder = 0
+                WHERE cf.is_active = 1
+                GROUP BY cf.id
+                ORDER BY cf.sort_order ASC
+            ");
+
+            if (empty($result)) {
+                return [];
+            }
+        }
+
+        $folders = [];
+        foreach ($result as $row) {
+            $folders[] = [
+                'id' => (int)$row['id'],
+                'folder_name' => $row['folder_name'],
+                'folder_key' => $row['folder_key'],
+                'folder_path' => $row['folder_path'],
+                'total_files' => (int)$row['actual_file_count'],
+                'total_size_bytes' => (int)$row['actual_size_bytes'],
+                'total_size_formatted' => fm_format_bytes_enhanced($row['actual_size_bytes']),
+                'is_active' => (int)$row['is_active'] === 1
+            ];
+        }
+
+        return $folders;
+    }
+}
+
+if (!function_exists('fm_get_special_folders_with_stats')) {
+    function fm_get_special_folders_with_stats($userId = null) {
+        if ($userId === null) {
+            // Admin view - try view first
+            $result = fm_query("SELECT * FROM v_special_folders_summary ORDER BY folder_name ASC");
+
+            // Fallback to direct query if view doesn't exist
+            if (empty($result)) {
+                $result = fm_query("
+                    SELECT sf.*,
+                        COUNT(DISTINCT f.id) as actual_file_count,
+                        COALESCE(SUM(f.size), 0) as actual_size_bytes,
+                        COUNT(DISTINCT fa.user_id) as total_users_with_access
+                    FROM fm_special_folders sf
+                    LEFT JOIN fm_files f ON f.special_folder_id = sf.id AND f.is_deleted = 0 AND f.is_folder = 0
+                    LEFT JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                    WHERE sf.is_active = 1
+                    GROUP BY sf.id
+                    ORDER BY sf.sort_order ASC
+                ");
+            }
+        } else {
+            // User-specific view
+            $result = fm_query(
+                "SELECT sf.*, COUNT(DISTINCT f.id) as actual_file_count, COALESCE(SUM(f.size), 0) as actual_size_bytes
+                 FROM fm_special_folders sf
+                 INNER JOIN fm_folder_access fa ON fa.folder_id = sf.id AND fa.folder_type = 'special'
+                 LEFT JOIN fm_files f ON f.special_folder_id = sf.id AND f.is_deleted = 0 AND f.is_folder = 0
+                 WHERE sf.is_active = 1 AND fa.user_id = ?
+                 GROUP BY sf.id
+                 ORDER BY sf.sort_order ASC",
+                [$userId]
+            );
+        }
+
+        if (empty($result)) {
+            return [];
+        }
+
+        $folders = [];
+        foreach ($result as $row) {
+            $folders[] = [
+                'id' => (int)$row['id'],
+                'folder_name' => $row['folder_name'],
+                'folder_key' => $row['folder_key'],
+                'folder_path' => $row['folder_path'],
+                'total_files' => (int)$row['actual_file_count'],
+                'total_size_bytes' => (int)$row['actual_size_bytes'],
+                'total_size_formatted' => fm_format_bytes_enhanced($row['actual_size_bytes']),
+                'requires_permission' => (int)($row['requires_permission'] ?? 1) === 1,
+                'total_users_with_access' => (int)($row['total_users_with_access'] ?? 0),
+                'is_active' => (int)$row['is_active'] === 1
+            ];
+        }
+
+        return $folders;
+    }
+}
+
+if (!function_exists('fm_check_folder_access')) {
+    function fm_check_folder_access($userId, $folderId, $folderType = 'special') {
+        global $wo;
+
+        if (function_exists('Wo_IsAdmin') && Wo_IsAdmin()) {
+            return true;
+        }
+
+        if ($folderType === 'common') {
+            return true;
+        }
+
+        if ($folderType === 'special') {
+            $result = fm_query(
+                "SELECT id FROM fm_folder_access WHERE folder_id = ? AND folder_type = 'special' AND user_id = ? LIMIT 1",
+                [$folderId, $userId]
+            );
+            return !empty($result);
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('fm_format_bytes_enhanced')) {
+    function fm_format_bytes_enhanced($bytes, $precision = 2) {
+        if ($bytes <= 0) return '0 B';
+
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $base = 1024;
+        $exp = floor(log($bytes) / log($base));
+        $exp = min($exp, count($units) - 1);
+
+        return round($bytes / pow($base, $exp), $precision) . ' ' . $units[$exp];
+    }
+}
+
+if (!function_exists('fm_get_folder_contents')) {
+    function fm_get_folder_contents($userId, $folderType, $folderId = null, $path = '') {
+        $isAdmin = function_exists('Wo_IsAdmin') && Wo_IsAdmin();
+
+        if ($folderType === 'user') {
+            // For non-admin users, use user-specific base directory
+            // For admin, use storage/{userId}
+            if ($isAdmin) {
+                $userPath = "storage/{$userId}";
+                if ($path) {
+                    $userPath .= '/' . ltrim($path, '/');
+                }
+            } else {
+                // Non-admin: just use the relative path since fm_get_local_dir handles user isolation
+                $userPath = $path;
+            }
+
+            $result = fm_list_local_folder($userPath, $userId);
+            return $result;
+        }
+
+        if ($folderType === 'common' && $folderId) {
+            $folder = fm_query(
+                "SELECT folder_path FROM fm_common_folders WHERE id = ? AND is_active = 1 LIMIT 1",
+                [$folderId]
+            );
+
+            if (empty($folder)) {
+                return ['folders' => [], 'files' => []];
+            }
+
+            $folderPath = $folder[0]['folder_path'];
+            if ($path) {
+                $folderPath .= '/' . ltrim($path, '/');
+            }
+
+            return fm_list_local_folder($folderPath);
+        }
+
+        if ($folderType === 'special' && $folderId) {
+            if (!$isAdmin && !fm_check_folder_access($userId, $folderId, 'special')) {
+                return ['folders' => [], 'files' => [], 'error' => 'Access denied'];
+            }
+
+            $folder = fm_query(
+                "SELECT folder_path FROM fm_special_folders WHERE id = ? AND is_active = 1 LIMIT 1",
+                [$folderId]
+            );
+
+            if (empty($folder)) {
+                return ['folders' => [], 'files' => []];
+            }
+
+            $folderPath = $folder[0]['folder_path'];
+            if ($path) {
+                $folderPath .= '/' . ltrim($path, '/');
+            }
+
+            return fm_list_local_folder($folderPath);
+        }
+
+        return ['folders' => [], 'files' => []];
+    }
+}
+
+if (!function_exists('fm_grant_special_folder_access')) {
+    function fm_grant_special_folder_access($folderId, $userId, $permissionLevel = 'view', $grantedBy = 0) {
+        $exists = fm_query(
+            "SELECT id FROM fm_folder_access WHERE folder_id = ? AND folder_type = 'special' AND user_id = ? LIMIT 1",
+            [$folderId, $userId]
+        );
+
+        if (!empty($exists)) {
+            fm_update('fm_folder_access', [
+                'permission_level' => $permissionLevel,
+                'granted_by' => $grantedBy
+            ], [
+                'id' => $exists[0]['id']
+            ]);
+            return $exists[0]['id'];
+        }
+
+        return fm_insert('fm_folder_access', [
+            'folder_id' => $folderId,
+            'folder_type' => 'special',
+            'user_id' => $userId,
+            'permission_level' => $permissionLevel,
+            'granted_by' => $grantedBy,
+            'granted_at' => date('Y-m-d H:i:s')
+        ]);
+    }
+}
+
+if (!function_exists('fm_revoke_special_folder_access')) {
+    function fm_revoke_special_folder_access($folderId, $userId) {
+        return fm_query(
+            "DELETE FROM fm_folder_access WHERE folder_id = ? AND folder_type = 'special' AND user_id = ?",
+            [$folderId, $userId]
+        );
     }
 }

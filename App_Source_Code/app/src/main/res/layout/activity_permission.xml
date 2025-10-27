@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/permission_background"
+    android:padding="24dp"
+    android:gravity="center">
+
+    <!-- App Logo -->
+    <ImageView
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:src="@mipmap/ic_launcher"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Permission Icon -->
+    <ImageView
+        android:id="@+id/permissionIcon"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:layout_marginBottom="32dp"
+        android:scaleType="centerInside" />
+
+    <!-- Permission Title -->
+    <TextView
+        android:id="@+id/permissionTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Permission Required"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:textColor="#2C3E50"
+        android:gravity="center"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Permission Description -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginBottom="32dp">
+
+        <TextView
+            android:id="@+id/permissionDescription"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Permission description goes here"
+            android:textSize="16sp"
+            android:textColor="#5A6C7D"
+            android:lineSpacingMultiplier="1.2"
+            android:gravity="center"
+            android:padding="16dp"
+            android:background="@drawable/description_background" />
+
+    </ScrollView>
+
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <!-- Allow Button -->
+        <Button
+            android:id="@+id/allowButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Allow Permission"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/allow_button_bg"
+            android:layout_marginBottom="12dp"
+            android:elevation="4dp" />
+
+        <!-- Settings Button -->
+        <Button
+            android:id="@+id/settingsButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Open Settings"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/settings_button_bg"
+            android:layout_marginBottom="12dp"
+            android:elevation="4dp"
+            android:visibility="gone" />
+
+        <!-- Info Text -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="All permissions are required to use this app"
+            android:textSize="12sp"
+            android:textColor="#95A5A6"
+            android:gravity="center"
+            android:layout_marginTop="8dp" />
+
+    </LinearLayout>
+
+</LinearLayout>

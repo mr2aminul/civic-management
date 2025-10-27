@@ -129,6 +129,9 @@ if (!defined('ASSETS_DIR')) define('ASSETS_DIR', ROOT_DIR . '/assets');
 if (!defined('INCLUDES_DIR')) define('INCLUDES_DIR', ASSETS_DIR . '/includes');
 if (!defined('LIBS_DIR')) define('LIBS_DIR', ASSETS_DIR . '/libraries');
 if (!defined('XHR_DIR')) define('XHR_DIR', ROOT_DIR . '/xhr');
+if (!defined('HOLIDAY_FILE')) define('HOLIDAY_FILE', ROOT_DIR . '/data/holidays.json');
+if (!defined('HOLIDAY_API_KEY')) define('HOLIDAY_API_KEY', 'kd2zb4lB910W7riVecBS5CZuLLpuVbuL');
+
 
 /**
  * Error reporting preference:
@@ -153,9 +156,9 @@ $requires = [
     INCLUDES_DIR . '/cache.php',
     INCLUDES_DIR . '/functions_general.php',
     INCLUDES_DIR . '/tabels.php',
-    INCLUDES_DIR . '/file_manager_helper.php',
     INCLUDES_DIR . '/functions_one.php',
     INCLUDES_DIR . '/functions_two.php',
+    INCLUDES_DIR . '/file_manager_helper.php',
     INCLUDES_DIR . '/functions_three.php',
 ];
 

@@ -9510,3 +9510,266 @@ function create_booking_with_nominees($booking_data) {
     if ($ins) return $ins;
     return false;
 }
+
+// ------------------------
+// Reusable functions
+// ------------------------
+function is_user_punished($user_id) {
+    global $db;
+    $punished = $db->where('user_id', $user_id)->getOne('crm_punished_users');
+    return $punished ? 'Yes' : 'No';
+}
+
+function get_user_avg_response_time($user_id, $date_start = null, $date_end = null) {
+    global $db, $wo;
+
+    // normalize user id
+    $uid = (int)$user_id;
+
+    // Normalize date inputs (accept Y-m-d, Y-m-d H:i:s, or timestamps)
+    if (empty($date_start) || empty($date_end)) {
+        $date_end_raw   = date('Y-m-d');
+        $date_start_raw = date('Y-m-d', strtotime('-30 days'));
+    } else {
+        $date_start_raw = $date_start;
+        $date_end_raw   = $date_end;
+    }
+
+    $toTimestamp = function($val, $isEnd = false) {
+        if (is_numeric($val)) return (int)$val;
+        if (preg_match('/\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(:\d{2})?/', $val)) return strtotime($val);
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $val)) return strtotime($val . ($isEnd ? ' 23:59:59' : ' 00:00:00'));
+        return strtotime($val);
+    };
+
+    $start_ts = $toTimestamp($date_start_raw, false);
+    $end_ts   = $toTimestamp($date_end_raw, true);
+
+    if ($start_ts > $end_ts) { $tmp = $start_ts; $start_ts = $end_ts; $end_ts = $tmp; }
+
+    // Fetch records: ensure (member OR assigned) is grouped so created-range applies properly
+    $db->where("(member = {$uid} OR assigned = {$uid})");
+    $db->where('created', $start_ts, '>=');
+    $db->where('created', $end_ts, '<=');
+    $records = $db->get('crm_leads', null, ['created','response']);
+
+    if (empty($records)) return 'No followup';
+
+    $totalSeconds = 0;
+    $count = 0;
+
+    $followup_start = $wo['config']['followup_start'] ?? '08:30:00';
+    $followup_end   = $wo['config']['followup_end'] ?? '21:30:00';
+    $now = time();
+
+    foreach ($records as $r) {
+        // Normalize created timestamp
+        $created = is_numeric($r->created) ? (int)$r->created : strtotime($r->created);
+        if (!$created) continue;
+
+        // Interpret response:
+        // - if numeric > 0 or datetime string => actual response time
+        // - if '0' / 0 / null / '' => not followed up yet => treat response as NOW (time())
+        $response_raw = $r->response ?? null;
+        if ($response_raw === null || $response_raw === '' || $response_raw === '0' || $response_raw === 0) {
+            // not followed up yet -> use "now" as candidate response time
+            $response = $now;
+            $is_unfollowed = true;
+        } else {
+            $response = is_numeric($response_raw) ? (int)$response_raw : strtotime($response_raw);
+            $is_unfollowed = false;
+        }
+
+        if ($response === false || $response <= $created) {
+            // invalid or earlier than created => skip
+            continue;
+        }
+
+        // Office hours anchored to creation date
+        $office_start = strtotime(date('Y-m-d', $created) . ' ' . $followup_start);
+        $office_end   = strtotime(date('Y-m-d', $created) . ' ' . $followup_end);
+
+        // Compute interval: from max(created, office_start) to min(response, office_end)
+        $start_time = max($created, $office_start);
+        $end_time   = min($response, $office_end);
+
+        // Special handling: if lead is unfollowed (we used 'now') and 'now' is beyond office_end,
+        // we still only count up to office_end of the creation date (so we don't count non-office hours).
+        // (That logic is already handled via min($response, $office_end))
+
+        if ($end_time > $start_time) {
+            $totalSeconds += ($end_time - $start_time);
+            $count++;
+        }
+        // otherwise skip records that produce zero/negative durations
+    }
+
+    if ($count === 0) return 'No followup';
+
+    $avg = (int) floor($totalSeconds / $count);
+    $hours = (int) floor($avg / 3600);
+    $minutes = (int) floor(($avg % 3600) / 60);
+    $seconds = (int) ($avg % 60);
+
+    // Format result - max 2 units
+    if ($hours > 0) {
+        return $minutes > 0 ? sprintf('%dh %dm', $hours, $minutes) : sprintf('%dh', $hours);
+    } elseif ($minutes > 0) {
+        return $seconds > 0 ? sprintf('%dm %ds', $minutes, $seconds) : sprintf('%dm', $minutes);
+    } else {
+        return sprintf('%ds', $seconds);
+    }
+}
+
+
+function get_user_leads_gone($user_id, $date_start = null, $date_end = null) {
+    global $db;
+
+    if (!$date_start || !$date_end) {
+        $date_end   = date('Y-m-d');
+        $date_start = date('Y-m-d', strtotime('-30 days'));
+    }
+
+    $start_ts = strtotime($date_start . ' 00:00:00');
+    $end_ts   = strtotime($date_end . ' 23:59:59');
+
+    $leads = $db->where('(member = ? OR assigned > ?)', [$user_id, $user_id])
+                ->where('created', $start_ts, '>=')
+                ->where('created', $end_ts, '<=')
+                ->get('crm_leads', null, ['lead_id']);
+
+    $gone = 0;
+    foreach ($leads as $l) {
+        $gone += (int)$db->where('lead_id', $l->lead_id)->getValue('crm_lead_reassignments','count(id)');
+    }
+
+    return $gone;
+}
+
+/**
+ * Get CRM user status summary
+ *
+ * @param int $user_id
+ * @param string|null $date_start
+ * @param string|null $date_end
+ * @param string|null $project
+ * @return array
+ */
+function get_user_crm_summary($user_id, $date_start = null, $date_end = null, $project = null) {
+    global $db;
+
+    $summary = [];
+
+    // ------------------------
+    // Quotas
+    // ------------------------
+    $quotas = $db->where('user_id', $user_id)
+                 ->get('crm_assignment_rules', null, ['project','user_id','raw_weight']);
+    $allZeroQuota = true;
+    foreach ($quotas as $q) {
+        if ((int)$q->raw_weight > 0) {
+            $allZeroQuota = false;
+            break;
+        }
+    }
+
+    // ------------------------
+    // Avg Followup
+    // ------------------------
+    $avgResponse = get_user_avg_response_time($user_id, $date_start, $date_end);
+
+    // ------------------------
+    // Pending Leads
+    // ------------------------
+    $db->where('member', $user_id);
+    if ($project && $project != 'all') $db->where('project', $project);
+    $pendingLeads = $db->where('status', 4)->getValue('crm_leads', 'count(lead_id)');
+
+    // ------------------------
+    // Total Leads
+    // ------------------------
+    $db->where('member', $user_id);
+    if ($project && $project != 'all') $db->where('project', $project);
+    $totalLeads = $db->getValue('crm_leads', 'count(lead_id)');
+
+    // ------------------------
+    // Gone Leads
+    // ------------------------
+    $goneLeads = get_user_leads_gone($user_id, $date_start, $date_end);
+
+    // ------------------------
+    // Punished
+    // ------------------------
+    $isPunished = is_user_punished($user_id);
+
+    // ------------------------
+    // Format followup status
+    // ------------------------
+    if ($allZeroQuota || $totalLeads == 0) {
+        $summary['followup'] = [
+            'color' => 'text-warning',
+            'label' => 'Quota: <strong>Not configured</strong>',
+            'value' => 0
+        ];
+    } elseif ($avgResponse === '0s' || $avgResponse === 'No followup') {
+        $summary['followup'] = [
+            'color' => 'text-danger',
+            'label' => 'Followup status: <strong>Inactive</strong>',
+            'value' => 0
+        ];
+    } else {
+        preg_match_all('/(\d+)([hms])/', $avgResponse, $matches, PREG_SET_ORDER);
+        $totalSeconds = 0;
+        foreach ($matches as $m) {
+            $num = (int)$m[1];
+            switch ($m[2]) {
+                case 'h': $totalSeconds += $num * 3600; break;
+                case 'm': $totalSeconds += $num * 60; break;
+                case 's': $totalSeconds += $num; break;
+            }
+        }
+
+        if ($totalSeconds <= 3600) { // <=1h
+            $color = 'text-success';
+        } elseif ($totalSeconds <= 7200) { // <=2h
+            $color = 'text-warning';
+        } else {
+            $color = 'text-danger';
+        }
+
+        $summary['followup'] = [
+            'color' => $color,
+            'label' => 'Avg Followup: <strong>' . $avgResponse . '</strong>',
+            'value' => $totalSeconds
+        ];
+    }
+
+    // ------------------------
+    // Pending Leads
+    // ------------------------
+    $summary['pending'] = [
+        'color' => $pendingLeads > 0 ? 'text-warning' : 'text-success',
+        'label' => 'Pending Leads: <strong>' . $pendingLeads . '</strong>',
+        'value' => $pendingLeads
+    ];
+
+    // ------------------------
+    // Gone Leads
+    // ------------------------
+    $summary['gone'] = [
+        'color' => $goneLeads > 0 ? 'text-danger' : 'text-success',
+        'label' => 'Lost Leads: <strong>' . $goneLeads . '</strong>',
+        'value' => $goneLeads
+    ];
+
+    // ------------------------
+    // Punished Status
+    // ------------------------
+    $summary['punished'] = [
+        'color' => $isPunished == 'Yes' ? 'text-danger' : 'text-success',
+        'label' => $isPunished == 'Yes' ? 'Inactive' : 'Active',
+        'value' => $isPunished == 'Yes' ? 1 : 0
+    ];
+
+    return $summary;
+}

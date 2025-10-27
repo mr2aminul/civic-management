@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Civic Management - Offline</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px 30px;
+            text-align: center;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 400px;
+            width: 100%;
+            animation: slideUp 0.6s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 30px;
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        .icon::before {
+            content: "📡";
+            font-size: 36px;
+            filter: grayscale(1) brightness(0) invert(1);
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+
+        .subtitle {
+            font-size: 16px;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+
+        .status {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-left: 4px solid #e74c3c;
+        }
+
+        .status-title {
+            font-weight: 600;
+            color: #e74c3c;
+            margin-bottom: 8px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-message {
+            color: #5a6c7d;
+            font-size: 15px;
+            line-height: 1.4;
+        }
+
+        .retry-btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .retry-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .retry-btn:active {
+            transform: translateY(0);
+        }
+
+        .tips {
+            margin-top: 30px;
+            text-align: left;
+        }
+
+        .tips-title {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+
+        .tips-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .tips-list li {
+            padding: 8px 0;
+            color: #5a6c7d;
+            font-size: 14px;
+            position: relative;
+            padding-left: 25px;
+        }
+
+        .tips-list li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #27ae60;
+            font-weight: bold;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ecf0f1;
+            color: #95a5a6;
+            font-size: 12px;
+        }
+
+        .loading-dots {
+            display: inline-block;
+            margin-left: 5px;
+        }
+
+        .loading-dots span {
+            display: inline-block;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #667eea;
+            margin: 0 1px;
+            animation: loading 1.4s infinite ease-in-out both;
+        }
+
+        .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes loading {
+            0%, 80%, 100% {
+                transform: scale(0);
+                opacity: 0.5;
+            }
+            40% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 30px 20px;
+                margin: 10px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+            
+            .icon {
+                width: 60px;
+                height: 60px;
+                margin-bottom: 20px;
+            }
+            
+            .icon::before {
+                font-size: 28px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon"></div>
+        
+        <h1>Connection Lost</h1>
+        <p class="subtitle">Unable to connect to Civic Management servers</p>
+        
+        <div class="status">
+            <div class="status-title">Connection Status</div>
+            <div class="status-message" id="statusMessage">
+                Checking connection<span class="loading-dots"><span></span><span></span><span></span></span>
+            </div>
+        </div>
+        
+        <button class="retry-btn" onclick="retryConnection()">
+            <span id="retryText">Retry Connection</span>
+        </button>
+        
+        <div class="tips">
+            <div class="tips-title">Troubleshooting Tips:</div>
+            <ul class="tips-list">
+                <li>Check your internet connection</li>
+                <li>Try switching between WiFi and mobile data</li>
+                <li>Ensure you have a stable network signal</li>
+                <li>Contact IT support if the problem persists</li>
+            </ul>
+        </div>
+        
+        <div class="footer">
+            Civic Management System<br>
+            Employee Portal v2.0
+        </div>
+    </div>
+
+    <script>
+        let retryCount = 0;
+        let isRetrying = false;
+
+        function updateStatus(message, isError = true) {
+            const statusMessage = document.getElementById('statusMessage');
+            statusMessage.innerHTML = message;
+            
+            const statusDiv = document.querySelector('.status');
+            statusDiv.style.borderLeftColor = isError ? '#e74c3c' : '#27ae60';
+            
+            const statusTitle = document.querySelector('.status-title');
+            statusTitle.style.color = isError ? '#e74c3c' : '#27ae60';
+            statusTitle.textContent = isError ? 'CONNECTION ERROR' : 'CONNECTION STATUS';
+        }
+
+        function retryConnection() {
+            if (isRetrying) return;
+            
+            isRetrying = true;
+            retryCount++;
+            
+            const retryBtn = document.querySelector('.retry-btn');
+            const retryText = document.getElementById('retryText');
+            
+            retryBtn.disabled = true;
+            retryBtn.style.opacity = '0.7';
+            retryText.innerHTML = 'Connecting<span class="loading-dots"><span></span><span></span><span></span></span>';
+            
+            updateStatus('Attempting to reconnect...', false);
+            
+            // Simulate connection attempt
+            setTimeout(() => {
+                // Try to reload the page
+                if (navigator.onLine) {
+                    updateStatus('Connection restored! Redirecting...', false);
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
+                } else {
+                    updateStatus(`Connection failed (Attempt ${retryCount}). Please check your network.`);
+                    
+                    retryBtn.disabled = false;
+                    retryBtn.style.opacity = '1';
+                    retryText.textContent = 'Retry Connection';
+                    isRetrying = false;
+                }
+            }, 2000);
+        }
+
+        // Check connection status periodically
+        function checkConnection() {
+            if (navigator.onLine) {
+                updateStatus('Network detected. Attempting to reconnect...', false);
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1500);
+            } else {
+                updateStatus('No internet connection detected');
+            }
+        }
+
+        // Listen for online/offline events
+        window.addEventListener('online', () => {
+            updateStatus('Connection restored! Redirecting...', false);
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        });
+
+        window.addEventListener('offline', () => {
+            updateStatus('Internet connection lost');
+        });
+
+        // Initial connection check
+        setTimeout(checkConnection, 1000);
+        
+        // Periodic connection check
+        setInterval(checkConnection, 10000);
+    </script>
+</body>
+</html>

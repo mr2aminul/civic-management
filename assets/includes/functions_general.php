@@ -3477,81 +3477,436 @@ function correctNumber($number) {
 		return $number;
 	}
 }
+
+// Requires: global $db (MysqliDb instance) already available
+// Optional constants: HOLIDAY_API_KEY
+
+if (!defined('HOLIDAY_API_KEY')) {
+    define('HOLIDAY_API_KEY', ''); // set in config
+}
+
+/* ---------------------------
+ * Utilities
+ * --------------------------- */
+
+function _generate_holiday_id_db() {
+    // id is auto-increment in DB; this is unused for insert but kept for parity
+    return null;
+}
+
+function _decode_row_fields(&$row) {
+    if (!$row) return;
+    // make sure type is an array
+    if (isset($row->type) && $row->type !== null && $row->type !== '') {
+        $json = json_decode($row->type, true);
+        $row->type = is_array($json) ? $json : explode(', ', $row->type);
+    } else {
+        $row->type = [];
+    }
+    // import_meta decode
+    if (isset($row->import_meta) && $row->import_meta !== null && $row->import_meta !== '') {
+        $row->import_meta = json_decode($row->import_meta, true);
+    } else {
+        $row->import_meta = null;
+    }
+}
+
+/* ---------------------------
+ * Create
+ * --------------------------- */
+/**
+ * create_holiday_db(array $payload)
+ * Required: holiday (slug), full_date
+ * Optional: title, description, year, type (array|string), official, recurring, source, manual_override, import_meta (array)
+ */
+function create_holiday_db(array $payload) {
+    global $db;
+
+    if (empty($payload['holiday']) || empty($payload['full_date'])) {
+        throw new InvalidArgumentException('holiday (slug) and full_date are required.');
+    }
+
+    $year = !empty($payload['year']) ? (int)$payload['year'] : (int)date('Y', strtotime($payload['full_date']));
+    $full_date = date('Y-m-d', strtotime($payload['full_date']));
+    $slug = $payload['holiday'];
+
+    // prepare type field as JSON string (prefer JSON)
+    $typeVal = null;
+    if (isset($payload['type'])) {
+        if (is_array($payload['type'])) $typeVal = json_encode(array_values($payload['type']));
+        else $typeVal = json_encode(array_values(array_map('trim', explode(',', (string)$payload['type']))));
+    }
+
+    $insert = [
+        'holiday' => $slug,
+        'title' => $payload['title'] ?? ucwords(str_replace(['-', '_'], ' ', $slug)),
+        'description' => $payload['description'] ?? null,
+        'year' => $year,
+        'full_date' => $full_date,
+        'type' => $typeVal,
+        'official' => !empty($payload['official']) ? 1 : 0,
+        'recurring' => !empty($payload['recurring']) ? 1 : 0,
+        'source' => $payload['source'] ?? 'manual',
+        'manual_override' => !empty($payload['manual_override']) ? 1 : 0,
+        'import_meta' => isset($payload['import_meta']) ? json_encode($payload['import_meta']) : null,
+        'created_at' => date('Y-m-d H:i:s'),
+        'modified_at' => null
+    ];
+
+    $res = $db->insert('crm_holidays', $insert);
+    if ($res === false) {
+        throw new RuntimeException('DB insert failed: ' . $db->getLastError());
+    }
+
+    // return created row (as object)
+    $id = $db->getInsertId();
+    return get_holiday_db($id);
+}
+
+/* ---------------------------
+ * Read (single)
+ * --------------------------- */
+function get_holiday_db($id) {
+    global $db;
+    $db->where('id', (int)$id);
+    $r = $db->getOne('crm_holidays');
+    if (!$r) return null;
+    _decode_row_fields($r);
+    return $r;
+}
+
+/* ---------------------------
+ * List / Query
+ * --------------------------- */
+function list_holidays_db($year = null, $limit = 0, $offset = 0) {
+    global $db;
+    if ($year !== null) $db->where('year', (int)$year);
+    if ($limit > 0) {
+        $rows = $db->get('crm_holidays', [$offset, $limit]);
+    } else {
+        $rows = $db->get('crm_holidays');
+    }
+    foreach ($rows as &$r) _decode_row_fields($r);
+    unset($r);
+    return $rows;
+}
+
+function find_holidays_by_date_db($date) {
+    global $db;
+    $d = date('Y-m-d', strtotime($date));
+    $db->where('full_date', $d);
+    $rows = $db->get('crm_holidays');
+    foreach ($rows as &$r) _decode_row_fields($r);
+    unset($r);
+    return $rows;
+}
+
+function find_holidays_by_range_db($start_date, $end_date) {
+    global $db;
+    $s = date('Y-m-d', strtotime($start_date));
+    $e = date('Y-m-d', strtotime($end_date));
+    $db->where('full_date', $s, '>=');
+    $db->where('full_date', $e, '<=');
+    $rows = $db->get('crm_holidays');
+    foreach ($rows as &$r) _decode_row_fields($r);
+    unset($r);
+    return $rows;
+}
+
+/* ---------------------------
+ * Update
+ * --------------------------- */
+/**
+ * update_holiday_db(int $id, array $updates)
+ * Allowed fields: holiday, title, description, full_date, year, type (array|string), official, recurring, source, manual_override, import_meta
+ */
+function update_holiday_db($id, array $updates) {
+    global $db;
+    $db->where('id', (int)$id);
+    $exists = $db->getOne('crm_holidays');
+    if (!$exists) return null;
+
+    $toUpdate = [];
+
+    if (isset($updates['holiday'])) $toUpdate['holiday'] = $updates['holiday'];
+    if (isset($updates['title'])) $toUpdate['title'] = $updates['title'];
+    if (array_key_exists('description', $updates)) $toUpdate['description'] = $updates['description'];
+    if (isset($updates['full_date'])) {
+        $toUpdate['full_date'] = date('Y-m-d', strtotime($updates['full_date']));
+    }
+    if (isset($updates['year'])) {
+        $toUpdate['year'] = (int)$updates['year'];
+    } elseif (isset($toUpdate['full_date']) && !isset($toUpdate['year'])) {
+        $toUpdate['year'] = (int)date('Y', strtotime($toUpdate['full_date']));
+    }
+
+    if (isset($updates['type'])) {
+        if (is_array($updates['type'])) $toUpdate['type'] = json_encode(array_values($updates['type']));
+        else $toUpdate['type'] = json_encode(array_values(array_map('trim', explode(',', (string)$updates['type']))));
+    }
+
+    if (isset($updates['official'])) $toUpdate['official'] = $updates['official'] ? 1 : 0;
+    if (isset($updates['recurring'])) $toUpdate['recurring'] = $updates['recurring'] ? 1 : 0;
+    if (isset($updates['source'])) $toUpdate['source'] = $updates['source'];
+    if (isset($updates['manual_override'])) $toUpdate['manual_override'] = $updates['manual_override'] ? 1 : 0;
+    if (isset($updates['import_meta'])) $toUpdate['import_meta'] = json_encode($updates['import_meta']);
+
+    if (empty($toUpdate)) return get_holiday_db($id); // nothing to update
+
+    $toUpdate['modified_at'] = date('Y-m-d H:i:s');
+
+    $db->where('id', (int)$id);
+    $ok = $db->update('crm_holidays', $toUpdate);
+    if ($ok === false) {
+        throw new RuntimeException('DB update failed: ' . $db->getLastError());
+    }
+    return get_holiday_db($id);
+}
+
+/* ---------------------------
+ * Delete
+ * --------------------------- */
+function delete_holiday_db($id) {
+    global $db;
+    $db->where('id', (int)$id);
+    $exists = $db->getOne('crm_holidays');
+    if (!$exists) return null;
+    $db->where('id', (int)$id);
+    $ok = $db->delete('crm_holidays');
+    if ($ok === false) {
+        throw new RuntimeException('DB delete failed: ' . $db->getLastError());
+    }
+    _decode_row_fields($exists);
+    return $exists;
+}
+
+/* ---------------------------
+ * Mark manual override
+ * --------------------------- */
+function mark_manual_override_db($id, $value = true) {
+    return update_holiday_db($id, ['manual_override' => $value ? 1 : 0]);
+}
+
+/* ---------------------------
+ * Importer: Calendarific (DB-friendly, idempotent)
+ * import_calendarific_db(int $year, bool $force = false)
+ *
+ * Respects manual_override and official unless $force === true.
+ * Returns: ['added'=>int,'updated'=>int,'skipped'=>int,'total'=>int,'warning'=>?]
+ */
+function import_calendarific_db($year, $force = false) {
+    global $db;
+
+    if (!defined('HOLIDAY_API_KEY') || HOLIDAY_API_KEY === '') {
+        throw new RuntimeException('HOLIDAY_API_KEY is not defined.');
+    }
+
+    $api_key = HOLIDAY_API_KEY;
+    $url = "https://calendarific.com/api/v2/holidays?api_key=" . urlencode($api_key) . "&country=BD&year=" . intval($year);
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => true
+    ]);
+    $resp = curl_exec($ch);
+    $err  = curl_error($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($resp === false) {
+        throw new RuntimeException('Calendarific request failed: ' . $err);
+    }
+
+    $data = json_decode($resp, true);
+    if (!is_array($data) || !isset($data['response']) || !isset($data['response']['holidays']) || !is_array($data['response']['holidays'])) {
+        // empty or unexpected response — do nothing destructive
+        return [
+            'added' => 0,
+            'updated' => 0,
+            'skipped' => 0,
+            'total' => (int)$db->getValue('crm_holidays', 'COUNT(*)'),
+            'warning' => 'empty_or_unexpected_response',
+            'http_code' => $http_code
+        ];
+    }
+
+    $remote = $data['response']['holidays'];
+    $added = 0; $updated = 0; $skipped = 0;
+    $now = date('Y-m-d H:i:s');
+
+    foreach ($remote as $h) {
+        $name = $h['name'] ?? 'Unnamed';
+        $dateIso = $h['date']['iso'] ?? null;
+        if (!$dateIso) continue;
+        $date = date('Y-m-d', strtotime($dateIso));
+        $slug = strtolower(preg_replace('/[^a-z0-9\-_]/', '_', str_replace(' ', '_', $name)));
+
+        // find existing by holiday slug + date
+        $db->where('holiday', $slug);
+        $db->where('full_date', $date);
+        $exists = $db->getOne('crm_holidays');
+
+        if ($exists) {
+            if ((!empty($exists->manual_override) || !empty($exists->official)) && !$force) {
+                $skipped++;
+                continue;
+            }
+
+            // Determine if update needed
+            $updates = [];
+            if ($exists->title !== $name) $updates['title'] = $name;
+            $desc = $h['description'] ?? ($exists->description ?? null);
+            if (($exists->description ?? null) !== $desc) $updates['description'] = $desc;
+
+            $typeArray = isset($h['type']) ? (array)$h['type'] : (json_decode($exists->type, true) ?: []);
+            if (!empty($typeArray)) $updates['type'] = json_encode(array_values($typeArray));
+
+            // import meta & source
+            $updates['import_meta'] = json_encode(['provider' => 'calendarific', 'year' => (int)$year, 'imported_at' => gmdate('c')]);
+            $updates['source'] = 'calendarific';
+            $updates['modified_at'] = $now;
+
+            // apply update
+            if (!empty($updates)) {
+                $db->where('id', $exists->id);
+                $ok = $db->update('crm_holidays', $updates);
+                if ($ok === false) {
+                    throw new RuntimeException('DB update failed: ' . $db->getLastError());
+                }
+                $updated++;
+            } else {
+                $skipped++;
+            }
+        } else {
+            // insert new
+            $row = [
+                'holiday' => $slug,
+                'title' => $name,
+                'description' => $h['description'] ?? null,
+                'year' => (int)date('Y', strtotime($date)),
+                'full_date' => $date,
+                'type' => isset($h['type']) ? json_encode(array_values((array)$h['type'])) : null,
+                'official' => 0,
+                'recurring' => 0,
+                'source' => 'calendarific',
+                'manual_override' => 0,
+                'import_meta' => json_encode(['provider'=>'calendarific','year'=>(int)$year,'imported_at'=>gmdate('c')]),
+                'created_at' => $now,
+                'modified_at' => null
+            ];
+            $res = $db->insert('crm_holidays', $row);
+            if ($res === false) {
+                throw new RuntimeException('DB insert failed: ' . $db->getLastError());
+            }
+            $added++;
+        }
+    }
+
+    $total = (int)$db->getValue('crm_holidays', 'COUNT(*)');
+    return ['added' => $added, 'updated' => $updated, 'skipped' => $skipped, 'total' => $total];
+}
+
+/* ---------------------------
+ * Migrate JSON -> DB (optional)
+ * --------------------------- */
+function migrate_json_to_db($filepath) {
+    global $db;
+    if (!file_exists($filepath)) throw new InvalidArgumentException('File not found: ' . $filepath);
+    $json = file_get_contents($filepath);
+    $arr = json_decode($json, true);
+    if (!is_array($arr)) throw new RuntimeException('Invalid JSON.');
+
+    $added = 0;
+    foreach ($arr as $h) {
+        $slug = $h['holiday'] ?? null;
+        $date = isset($h['full_date']) ? date('Y-m-d', strtotime($h['full_date'])) : null;
+        if (!$slug || !$date) continue;
+
+        $db->where('holiday', $slug);
+        $db->where('full_date', $date);
+        $exists = $db->getOne('crm_holidays');
+        if ($exists) continue;
+
+        $row = [
+            'holiday' => $slug,
+            'title' => $h['title'] ?? ucwords(str_replace(['-','_'],' ',$slug)),
+            'description' => $h['description'] ?? null,
+            'year' => !empty($h['year']) ? (int)$h['year'] : (int)date('Y', strtotime($date)),
+            'full_date' => $date,
+            'type' => isset($h['type']) ? (is_array($h['type']) ? json_encode($h['type']) : $h['type']) : null,
+            'official' => !empty($h['official']) ? 1 : 0,
+            'recurring' => !empty($h['recurring']) ? 1 : 0,
+            'source' => $h['source'] ?? 'manual',
+            'manual_override' => !empty($h['manual_override']) ? 1 : 0,
+            'import_meta' => isset($h['import_meta']) ? json_encode($h['import_meta']) : null,
+            'created_at' => $h['created_at'] ?? date('Y-m-d H:i:s'),
+            'modified_at' => $h['modified_at'] ?? null
+        ];
+        $res = $db->insert('crm_holidays', $row);
+        if ($res === false) {
+            throw new RuntimeException('DB insert failed during migration: ' . $db->getLastError());
+        }
+        $added++;
+    }
+    return $added;
+}
+
+
+/**
+ * File-based Holiday Manager for Bangladesh END
+ */
+
+
 // Function to process holiday data for a specific date
 function processHolidaydata($currentDate) {
-    // Define holidays
-    $year = date('Y', strtotime($currentDate));
-    $holidays = array(
-        'friday' => 'weekend',
-        'eid_ajha' => '2024-06-29',
-        '16_december' => $year . '-12-16',
-        'christmas' => $year . '-12-25',
-        'election' => array('2024-01-06', '2024-01-07'),
-        '21st_february' => $year . '-02-21',
-        'shab_e_barat' => '2024-02-26',
-        'independence_day' => $year . '-03-26',
-        'pôhela_boishakh' => '2024-04-14',
-        'international_workers_day' => $year . '-05-01',
-        'eid-E-Miladunnabi' => '2024-09-16',
-        'sabe_barat' => '2025-02-15',
-        'July_Andolonon' => '2025-08-05',
-        'government-holiday' => array('2024-08-04', '2024-08-05', '2024-08-06', '2024-08-07', '2024-08-08'),
-        'EID-UL-FITAR' => array('2025-03-29', '2025-03-30', '2025-03-31', '2025-04-01', '2025-04-02', '2025-04-03', '2025-04-04', '2025-04-05'),
-        'EID-UL-AZHA' => array('2025-06-05', '2025-06-06', '2025-06-07', '2025-06-08', '2025-06-09', '2025-06-10', '2025-06-11', '2025-06-12', '2025-06-13', '2025-06-14'),
-        'durga-puja' => array('2024-10-10', '2024-10-13'),
-        'Janmashtami' => '2024-08-26',
-        'Pohela_Boishakh' => '2025-04-14',
-        'Buddha_Purnima' => '2025-05-11',
-        'Ashura' => '2025-07-06',
-        'Janmashtami' => '2025-08-16',
-    );
+    global $db;
 
     // Convert current date to Y-m-d format for consistency
     $currentDate = date('Y-m-d', strtotime($currentDate));
+    $year = date('Y', strtotime($currentDate));
 
-    // Check if the current date is in any range or list of specific holidays
-    foreach ($holidays as $holiday_key => $holiday_dates) {
-        if (is_array($holiday_dates)) {
-            // Handle multiple specific dates or date ranges
-            foreach ($holiday_dates as $holiday_date) {
-                if (strpos($holiday_date, 'to') !== false) {
-                    // Handle date ranges
-                    list($start_date, $end_date) = explode('to', $holiday_date);
-                    $start_date = date('Y-m-d', strtotime($start_date));
-                    $end_date = date('Y-m-d', strtotime($end_date));
-                    if ($currentDate >= $start_date && $currentDate <= $end_date) {
-                        $holiday_name = str_replace('_', ' ', $holiday_key);
-                        $holiday_name = ucwords($holiday_name);
-                        return (object) array('key' => $holiday_key, 'name' => $holiday_name);
-                    }
-                } else {
-                    // Handle single specific dates
-                    if ($currentDate === $holiday_date) {
-                        $holiday_name = str_replace('_', ' ', $holiday_key);
-                        $holiday_name = ucwords($holiday_name);
-                        return (object) array('key' => $holiday_key, 'name' => $holiday_name);
-                    }
+    // Fetch holidays from database, excluding deleted ones
+    $db->where('year', $year);
+    $db->where('deleted', 0); // Exclude deleted holidays
+    $holidaysDb = $db->get('crm_holidays'); // returns array of objects
+
+    // Loop through holidays
+    foreach ($holidaysDb as $h) {
+        if (!empty($h->full_date)) {
+            if (strpos($h->full_date, 'to') !== false) {
+                // Handle date ranges stored as "YYYY-MM-DD to YYYY-MM-DD"
+                list($start_date, $end_date) = explode('to', $h->full_date);
+                $start_date = date('Y-m-d', strtotime($start_date));
+                $end_date = date('Y-m-d', strtotime($end_date));
+                if ($currentDate >= $start_date && $currentDate <= $end_date) {
+                    $holiday_name = str_replace('_', ' ', $h->holiday);
+                    $holiday_name = ucwords($holiday_name);
+                    return (object) ['key' => $h->holiday, 'name' => $holiday_name];
                 }
-            }
-        } else {
-            // Handle single specific holiday date
-            if ($currentDate === $holiday_dates) {
-                $holiday_name = str_replace('_', ' ', $holiday_key);
-                $holiday_name = ucwords($holiday_name);
-                return (object) array('key' => $holiday_key, 'name' => $holiday_name);
+            } else {
+                // Single date
+                if ($currentDate === date('Y-m-d', strtotime($h->full_date))) {
+                    $holiday_name = str_replace('_', ' ', $h->holiday);
+                    $holiday_name = ucwords($holiday_name);
+                    return (object) ['key' => $h->holiday, 'name' => $holiday_name];
+                }
             }
         }
     }
 
-    // Check if the current date is a Friday
+    // Check if the current date is a Friday (weekend)
     $dayOfWeek = date('l', strtotime($currentDate));
     if ($dayOfWeek === 'Friday') {
-        return (object) array('key' => 'weekend', 'name' => 'Weekend');
+        return (object) ['key' => 'weekend', 'name' => 'Weekend'];
     }
 
-    // If not a holiday or Friday, return null
+    // Not a holiday or weekend
     return null;
 }
+
+
 function calculateDurationInDays($startTimestamp, $endTimestamp) {
     $dateFrom = (new DateTime())->setTimestamp($startTimestamp)->setTime(0,0);
     $dateTo   = (new DateTime())->setTimestamp($endTimestamp)->setTime(0,0);

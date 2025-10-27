@@ -1,20 +1,88 @@
 <?php
+// (Your existing top-of-file settings remain; I only added/changed a few lines)
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(1);
 @ini_set("max_execution_time", 0);
 @ini_set("memory_limit", "-1");
 @set_time_limit(0);
+
 require_once ROOT_DIR . '/config.php';
 require_once LIBS_DIR . "/DB/vendor/autoload.php";
 
+// ---------------------- UTF-8 / Locale / Encoding guards ----------------------
+// Ensure PHP internal encoding and default charset are UTF-8
+// mb_internal_encoding('UTF-8');
+// mb_regex_encoding('UTF-8');
+// if (!ini_get('default_charset') || strtolower(ini_get('default_charset')) !== 'utf-8') {
+//     ini_set('default_charset', 'UTF-8');
+// }
+// setlocale(LC_ALL, 'en_US.UTF-8');
+
+// Helper: try to fix common double-encoded sequences (latin1 interpreted as UTF-8)
+// function fix_double_encoded_utf8($s) {
+//     // If not a string or already valid UTF-8, return as-is (but still normalize)
+//     if ($s === null) return '';
+//     $s = (string)$s;
+//     // quick guard: if it's valid UTF-8 and contains multi-byte characters, assume OK
+//     if (mb_check_encoding($s, 'UTF-8')) {
+//         // But some mojibake sequences are valid UTF-8 (C3A0... etc). Detect those hex patterns:
+//         $hex = bin2hex($s);
+//         // pattern C3A0 is common for doubled E0 A6 .. sequences; if found, try latin1->utf8 conversion
+//         if (stripos($hex, 'c3a0') !== false || stripos($hex, 'c3a6') !== false || stripos($hex, 'c2a6') !== false) {
+//             // convert as if the bytes are latin1 to UTF-8
+//             $try = @mb_convert_encoding($s, 'UTF-8', 'ISO-8859-1');
+//             if ($try && mb_check_encoding($try, 'UTF-8')) return $try;
+//         }
+//         return $s;
+//     } else {
+//         // not valid UTF-8 -> convert from latin1
+//         $conv = @mb_convert_encoding($s, 'UTF-8', 'ISO-8859-1');
+//         if ($conv && mb_check_encoding($conv, 'UTF-8')) return $conv;
+//         // fallback attempt: replace invalid bytes
+//         return @mb_convert_encoding($s, 'UTF-8', 'UTF-8');
+//     }
+// }
+
+// // Robust sanitiser used for name/profession/company and other lead text
+// function sanitize_lead_field($s, $maxLen = 300) {
+//     if ($s === null) return '';
+//     $s = (string)$s;
+//     $s = trim($s);
+
+//     // First attempt to repair double encoding if present
+//     $s = fix_double_encoded_utf8($s);
+
+//     // Remove control characters except newline and tab
+//     $s = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $s);
+
+//     // Normalize to NFC if extension available
+//     if (function_exists('normalizer_normalize')) {
+//         $norm = normalizer_normalize($s, Normalizer::FORM_C);
+//         if ($norm !== false) $s = $norm;
+//     }
+
+//     // Ensure valid UTF-8 finally
+//     if (!mb_check_encoding($s, 'UTF-8')) {
+//         $s = @mb_convert_encoding($s, 'UTF-8', 'UTF-8');
+//     }
+
+//     // Truncate safely
+//     if (mb_strlen($s, 'UTF-8') > $maxLen) {
+//         $s = mb_substr($s, 0, $maxLen, 'UTF-8');
+//     }
+
+//     return $s;
+// }
+// ------------------------------------------------------------------------------
 
 
 // Array of allowed domains
 $allowedDomains = [
-    ['www.civicgroupbd.com', 'civicgroup', 'civicgroup_menu.php'],
     ['civicgroupbd.local', 'civicgroup', 'civicgroup_menu.php'],
     ['www.civicgroupbd.local', 'civicgroup', 'civicgroup_menu.php'],
+    ['www.civicgroupbd.com', 'civicgroup', 'civicgroup_menu.php'],
+    ['new.civicgroupbd.com', 'new_civic_group', 'civicgroup_menu.php'],
     ['civicgroupbd.com', 'civicgroup', 'civicgroup_menu.php'],
     ['www.civicbd.com', 'vrbel', 'civicbd_menu.php'],
     ['civicbd.com', 'vrbel', 'civicbd_menu.php'],
@@ -36,7 +104,7 @@ function getDomainInfo(array $allowedDomains) {
     // Build the full domain URL
     $currentDomain = "{$schema}://{$currentHost}";
 
-// Check if the host matches an allowed domain and get its theme
+    // Check if the host matches an allowed domain and get its theme
     foreach ($allowedDomains as $domainConfig) {
         if ($currentHost === $domainConfig[0]) {
             return [
@@ -65,20 +133,32 @@ function read_fb_api_setup_data() {
         // Decode the JSON data into a PHP array
         $data = json_decode($json_data, true);
         
-        foreach ($data['pages'] as $page_id => $page_data) {
-            $data['pages'][$page_id]['picture'] = $site_url . '/' . $data['pages'][$page_id]['picture'];
-        }
-        
-        // Check if the decoding was successful
-        if ($data !== null) {
-            return $data; // Return the decoded array
-        } else {
+        if (!is_array($data)) {
             return ['error' => 'Error decoding JSON data.'];
         }
+
+        // sanitize page data values (particularly names/pictures)
+        if (!empty($data['pages']) && is_array($data['pages'])) {
+            foreach ($data['pages'] as $page_id => $page_data) {
+                if (isset($page_data['picture'])) {
+                    // safe join to site url if available
+                    $data['pages'][$page_id]['picture'] = (isset($site_url) ? rtrim($site_url, '/') . '/' : '') . ltrim($data['pages'][$page_id]['picture'], '/');
+                }
+                // sanitize any textual fields if present
+                if (isset($page_data['name'])) {
+                    $data['pages'][$page_id]['name'] = sanitize_lead_field($page_data['name'], 200);
+                }
+            }
+        }
+        
+        // Return the cleaned array
+        return $data;
     } else {
         return ['error' => 'File does not exist.'];
     }
 }
+
+//-------
 
 $wo           = array();
 $fb_api_data = $wo['fb_api_data'] = read_fb_api_setup_data();
@@ -103,7 +183,7 @@ if (!extension_loaded("gd") && !function_exists("gd_info")) {
 if (!extension_loaded("zip")) {
     $ServerErrors[] = "ZipArchive extension is NOT installed on your web server !";
 }
-$query = mysqli_query($sqlConnect, "SET NAMES utf8mb4");
+
 if (isset($ServerErrors) && !empty($ServerErrors)) {
     foreach ($ServerErrors as $Error) {
         echo "<h3>" . $Error . "</h3>";
@@ -121,6 +201,18 @@ if ($config['developer_mode'] == 1) {
     error_reporting(E_ALL);
 }
 $db        = new MysqliDb($sqlConnect);
+
+// IMPORTANT: ensure MysqliDb also uses charset (if unsupported, ensure you call SET NAMES before)
+if (!defined('IS_CRON')) {
+    if (isset($db) && method_exists($db, 'rawQuery')) {
+        // Use utf8mb4 for app runtime (cron or web)
+        $db->rawQuery("SET NAMES utf8mb4");
+        $db->rawQuery("SET CHARACTER SET utf8mb4");
+        $db->rawQuery("SET collation_connection = 'utf8mb4_unicode_ci'");
+    }
+}
+
+
 $all_langs = Wo_LangsNamesFromDB();
 $wo['iso'] = GetIso();
 foreach ($all_langs as $key => $value) {
@@ -150,18 +242,18 @@ if (isset($_SESSION["theme"]) && !empty($_SESSION["theme"])) {
         header("Location: " . $_SERVER["HTTP_REFERER"]);
     }
 }
-if ($wo['domain_details']['theme']) {
-$config["theme"] = $wo['domain_details']['theme'];
+if ($wo['domain_details'] && isset($wo['domain_details']['theme'])) {
+    $config["theme"] = $wo['domain_details']['theme'];
 }
 $config["withdrawal_payment_method"] = json_decode($config['withdrawal_payment_method'],true);
 
 // Config Url
-$config["theme_url"] = $wo['domain_details']['domain'] . "/themes/" . $config["theme"];
-$config["site_url"]  = $wo['domain_details']['domain'];
-$wo["site_url"]      = $wo['domain_details']['domain'];
-$wo["server"]["url"]		= !empty($hosting_server) ? $hosting_server : '';
-$wo["server"]["username"]	= !empty($hosting_username) ? $hosting_username : '';
-$wo["server"]["password"]	= !empty($hosting_password) ? $hosting_password : '';
+$config["theme_url"] = ($wo['domain_details']['domain'] ?? '') . "/themes/" . $config["theme"];
+$config["site_url"]  = $wo['domain_details']['domain'] ?? '';
+$wo["site_url"]      = $wo['domain_details']['domain'] ?? '';
+$wo["server"]["url"]        = !empty($hosting_server) ? $hosting_server : '';
+$wo["server"]["username"]   = !empty($hosting_username) ? $hosting_username : '';
+$wo["server"]["password"]   = !empty($hosting_password) ? $hosting_password : '';
 
 $config["wasabi_site_url"]         = "https://s3.".$config["wasabi_bucket_region"].".wasabisys.com";
 if (!empty($config["wasabi_bucket_name"])) {

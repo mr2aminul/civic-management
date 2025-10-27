@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center">
+
+    <ImageView
+        android:id="@+id/bubbleAvatar"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/bubble_bg"
+        android:padding="2dp"
+        android:src="@drawable/ic_avatar" />
+
+</LinearLayout>
