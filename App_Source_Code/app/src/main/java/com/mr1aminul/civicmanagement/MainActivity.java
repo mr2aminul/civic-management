@@ -227,8 +227,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startServices() {
-        // Start enhanced background service
-        Intent serviceIntent = new Intent(this, EnhancedBackgroundService.class);
+        Intent serviceIntent = new Intent(this, UnifiedBackgroundService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
         } else {

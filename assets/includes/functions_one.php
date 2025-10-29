@@ -11788,4 +11788,3 @@ function logActivity($feature, $activityType, $details = null, $userId = false) 
     // Already logged in this timeframe
     return false;
 }
-

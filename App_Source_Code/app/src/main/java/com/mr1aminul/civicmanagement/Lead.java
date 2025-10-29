@@ -13,4 +13,3 @@ public class Lead {
         this.source = source;
     }
 }
-

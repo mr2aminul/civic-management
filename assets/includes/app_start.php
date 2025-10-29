@@ -874,4 +874,3 @@ function sendWebNotification($user_id, $title, $message, $url = '', $image = '')
         return false;
     }
 }
-

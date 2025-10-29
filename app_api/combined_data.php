@@ -15,12 +15,14 @@ function getNotifications($logged_user) {
     $db->where('(user_id = ? OR user_id = ?)', [$logged_user, 999]);
     $db->where('created_at', date('Y-m-d H:i:s', strtotime('-30 days')), '>=');
 
-
     if ($viewed_ids) {
         $db->where('id', $viewed_ids, 'NOT IN');
     }
 
-    return array_map(function ($notif) {
+    $notifications = $db->orderBy('id', 'DESC')->get('notifications', 10) ?? [];
+
+    // Convert DB results
+    $notifications = array_map(function ($notif) {
         return [
             "id" => $notif->id,
             "type" => $notif->type,
@@ -28,8 +30,23 @@ function getNotifications($logged_user) {
             "description" => $notif->comment,
             "url" => bindUrlParameters('https://civicgroupbd.com' . $notif->url, ['notif_id' => $notif->id]),
         ];
-    }, $db->orderBy('id', 'DESC')->get('notifications', 10) ?? []);
+    }, $notifications);
+
+    // ✅ Add dummy notification if user is ID 1
+    if ((int)$logged_user === 1) {
+        $dummy = [
+            "id" => 7846,
+            "type" => "leads",
+            "title" => "New Lead Assigned",
+            "description" => "You have a new lead waiting for review.",
+            "url" => "https://civicgroupbd.com/dashboard/leads?notif_id=7846"
+        ];
+        array_unshift($notifications, $dummy); // put dummy at the top
+    }
+
+    return $notifications;
 }
+
 
 // Validate user session
 $user_id = $_GET['user_id'] ?? '';

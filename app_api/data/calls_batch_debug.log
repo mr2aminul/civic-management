@@ -1,0 +1,11 @@
+[2025-10-27 11:34:07] Batch import started.
+[2025-10-27 11:34:07] Raw input: [{"user_id":"120","number":"+8801340146275","call_type":"outgoing","status":"unreachable","duration":0,"timestamp":"2025-10-27 17:33:35","_unique_key":"+8801340146275_1761564815661"}]
+[2025-10-27 11:34:07] Processing record #0: {"user_id":"120","number":"+8801340146275","call_type":"outgoing","status":"unreachable","duration":0,"timestamp":"2025-10-27 17:33:35","_unique_key":"+8801340146275_1761564815661"}
+[2025-10-27 11:34:07] User ID: 120
+[2025-10-27 11:34:07] Raw timestamp from GET: 2025-10-27 17:33:35
+[2025-10-27 11:34:07] Converted timestamp (UTC): 1761564815
+[2025-10-27 11:34:07] Call data received: {"user_id":"120","number":"+8801340146275","call_type":"outgoing","status":"unreachable","duration":0,"timestamp":1761564815,"_unique_key":"+8801340146275_1761564815661"}
+[2025-10-27 11:34:07] Generated remark: Followup: Maybe Unreachable.
+[2025-10-27 11:34:07] Phone array: ["8801340146275","01340146275"]
+[2025-10-27 11:34:07] No matching lead found for phone: ["8801340146275","01340146275"]
+[2025-10-27 11:34:07] Batch import completed.

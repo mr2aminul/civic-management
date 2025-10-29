@@ -34,6 +34,12 @@
 <!--     File permissions for APK updates -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INSTALL_PACKAGES" />
+    
+<!-- Added QUERY_ALL_PACKAGES for app tracking (Google Play compliant) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    
+<!-- Added PACKAGE_USAGE_STATS for app usage tracking -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
     <application
         android:allowBackup="true"
@@ -77,9 +83,9 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
-<!--         Enhanced Background Service -->
+<!-- Updated to use UnifiedBackgroundService instead of EnhancedBackgroundService -->
         <service
-            android:name=".EnhancedBackgroundService"
+            android:name=".UnifiedBackgroundService"
             android:exported="false"
             android:foregroundServiceType="location|dataSync"
             android:stopWithTask="false" />
@@ -90,6 +96,11 @@
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
+
+<!-- Added LeadBubbleService for lead notifications -->
+        <service
+            android:name=".LeadBubbleService"
+            android:exported="false" />
 
 <!--         Alarm Receiver -->
         <receiver 
