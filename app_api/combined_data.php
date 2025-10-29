@@ -23,6 +23,7 @@ function getNotifications($logged_user) {
     return array_map(function ($notif) {
         return [
             "id" => $notif->id,
+            "type" => $notif->type,
             "title" => $notif->subject,
             "description" => $notif->comment,
             "url" => bindUrlParameters('https://civicgroupbd.com' . $notif->url, ['notif_id' => $notif->id]),
@@ -42,7 +43,7 @@ if (!$user_id) {
 if ($user_id == '1') {
     $alarms = [
         [
-            "id" => 53,
+            "id" => 54,
             "title" => "Test Client Visit",
             "description" => "Client: Test Client Reminder\nLocation: Office",
             "url" => "https://civicgroupbd.com/management/leads",

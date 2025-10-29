@@ -2,16 +2,16 @@
 <manifest package="com.mr1aminul.civicmanagement"
     xmlns:android="http://schemas.android.com/apk/res/android">
 
-     Essential permissions 
+<!--     Essential permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     
-     Location permissions 
+<!--     Location permissions -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     
-     Service and notification permissions 
+<!--     Service and notification permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -21,17 +21,17 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     
-     Alarm and wake permissions 
+<!--     Alarm and wake permissions -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
     
-     Call tracking permissions 
+<!--     Call tracking permissions -->
     <uses-permission android:name="android.permission.READ_CALL_LOG"/>
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
     
-     File permissions for APK updates 
+<!--     File permissions for APK updates -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INSTALL_PACKAGES" />
 
@@ -44,7 +44,7 @@
         android:theme="@style/Theme.AppCompat.Light.NoActionBar"
         android:requestLegacyExternalStorage="true">
 
-         Splash Activity (Launcher) 
+<!--         Splash Activity (Launcher) -->
         <activity
             android:name=".SplashActivity"
             android:exported="true"
@@ -55,19 +55,19 @@
             </intent-filter>
         </activity>
 
-         Permission Activity 
+<!--         Permission Activity -->
         <activity
             android:name=".PermissionActivity"
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
-         Main Activity 
+<!--         Main Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="false"
             android:launchMode="singleTop" />
 
-         Alarm Activity 
+<!--         Alarm Activity -->
         <activity
             android:name=".AlarmActivity"
             android:exported="false"
@@ -77,27 +77,27 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
-         Enhanced Background Service 
+<!--         Enhanced Background Service -->
         <service
             android:name=".EnhancedBackgroundService"
             android:exported="false"
             android:foregroundServiceType="location|dataSync"
             android:stopWithTask="false" />
 
-         Call Tracking Service 
+<!--         Call Tracking Service -->
         <service
             android:name=".CallTrackingService"
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
 
-         Alarm Receiver 
+<!--         Alarm Receiver -->
         <receiver 
             android:name=".AlarmReceiver"
             android:exported="false"
             android:enabled="true" />
 
-         Boot Receiver 
+<!--         Boot Receiver -->
         <receiver 
             android:name=".BootReceiver"
             android:enabled="true"
@@ -111,12 +111,12 @@
             </intent-filter>
         </receiver>
 
-         Service Restart Receiver 
+<!--         Service Restart Receiver -->
         <receiver 
             android:name=".ServiceRestartReceiver"
             android:exported="false" />
 
-         File Provider 
+<!--         File Provider -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -127,7 +127,7 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-         Floating Notification Service
+<!--         Floating Notification Service-->
         <service
             android:name=".FloatingNotificationService"
             android:exported="false" />

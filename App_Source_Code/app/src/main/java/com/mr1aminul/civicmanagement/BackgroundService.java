@@ -73,7 +73,7 @@ public class BackgroundService extends Service {
 
     // Endpoints (ensure these are defined in your Config.java)
     private static final String LOCATION_ENDPOINT = Config.LOCATION_UPDATE_ENDPOINT;
-    private static final String NOTIFICATIONS_ENDPOINT = Config.NOTIFICATIONS_ENDPOINT;
+//    private static final String NOTIFICATIONS_ENDPOINT = Config.NOTIFICATIONS_ENDPOINT;
     private static final String ALARMS_ENDPOINT = Config.ALARMS_ENDPOINT;
 
     private Handler handler;
@@ -167,7 +167,7 @@ public class BackgroundService extends Service {
         new Thread(() -> {
             try {
                 String appVersion = getAppVersion();
-                URL url = new URL(Config.SERVER_BASE_URL + "combined_data.php?user_id=" + userId + "&app_version=" + appVersion);
+                URL url = new URL(Config.COMBINED_DATA_ENDPOINT + "?user_id=" + userId + "&app_version=" + appVersion);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(10000);
@@ -522,10 +522,11 @@ public class BackgroundService extends Service {
                 JSONObject notif = notifications.getJSONObject(i);
                 String notifId = notif.getString("id");
                 String title = notif.optString("title", "Notification");
+                String type = notif.optString("type", "general");
                 String description = notif.optString("description", "");
                 String urlLink = notif.optString("url", Config.DEFAULT_URL);
                 if (!isTriggered(notifId)) {
-                    triggerNotification(notifId, title, description, urlLink);
+                    triggerNotification(notifId, title, description, urlLink, type);
                 }
             }
         } catch (Exception e) {
@@ -572,7 +573,9 @@ public class BackgroundService extends Service {
     }
 
     // Triggers a notification.
-    private void triggerNotification(String id, String title, String description, String urlLink) {
+    private void triggerNotification(String id, String title, String description, String urlLink, String type) {
+        //`type` can be leads, leave_report, general, etc
+
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("url", urlLink);
         PendingIntent pendingIntent = PendingIntent.getActivity(
