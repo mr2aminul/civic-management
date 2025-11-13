@@ -418,7 +418,7 @@ ion-icon {
                             $proj_raw = ucwords($proj_raw);
                             $proj_html = htmlspecialchars($proj_raw, ENT_QUOTES);
                             if ($proj_html === '') $proj_html = '-';
-
+                    
                             // --- pass everything into the template ---
                             echo Wo_LoadManagePage('clients/booking_form_template', [
                                 'p' => $p,
@@ -467,16 +467,6 @@ ion-icon {
                               </a>
                             </li>
                             <li>
-                              <a class="dropdown-item print_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
-                                <i class="lni lni-calendar me-2 text-primary"></i> Print Schedule
-                              </a>
-                            </li>
-                            <li>
-                              <a class="dropdown-item update_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
-                                <i class="lni lni-calendar me-2 text-primary"></i> Manage Schedule
-                              </a>
-                            </li>
-                            <li>
                               <a class="dropdown-item change_plot_btn" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
                                 <i class="lni lni-shuffle me-2 text-warning"></i> Change Plot
                               </a>
@@ -484,6 +474,11 @@ ion-icon {
                             <li>
                               <a class="dropdown-item manage-schedule" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
                                 <i class="lni lni-calendar me-2 text-primary"></i> Manage Payment Schedule
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item print_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-calendar me-2 text-primary"></i> Print Payment Schedule
                               </a>
                             </li>
                             <li>
@@ -593,6 +588,141 @@ ion-icon {
             </div>
           </div>
         </section>
+
+        <!-- Analytics Cards Section -->
+        <section id="client_analytics" class="no-print mt-4 px-4 mb-4">
+          <h5 class="fw-bold mb-3">Client Analytics & Key Metrics</h5>
+          
+          <div class="row g-3">
+            <!-- Total Investment -->
+            <div class="col-md-3 col-sm-6">
+              <div class="card h-100 border-0 shadow-sm analytics-card">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <p class="text-muted mb-1 small fw-medium">Total Investment</p>
+                      <h4 class="mb-0 fw-bold text-primary">৳<?php echo number_format($total_amount, 0); ?></h4>
+                      <small class="text-success">
+                        <i class="lni lni-trending-up"></i> 
+                        <?php echo count($wo['booking_helper'] ?? []); ?> plots
+                      </small>
+                    </div>
+                    <div class="fs-3 text-primary opacity-50">
+                      <ion-icon name="bag-handle-sharp"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Total Paid -->
+            <div class="col-md-3 col-sm-6">
+              <div class="card h-100 border-0 shadow-sm analytics-card">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <p class="text-muted mb-1 small fw-medium">Total Paid</p>
+                      <h4 class="mb-0 fw-bold text-success">৳<?php echo number_format($total_paid, 0); ?></h4>
+                      <small class="text-info">
+                        <span class="badge bg-success"><?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%</span> Completed
+                      </small>
+                    </div>
+                    <div class="fs-3 text-success opacity-50">
+                      <ion-icon name="checkmark-circle"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Remaining Due -->
+            <div class="col-md-3 col-sm-6">
+              <div class="card h-100 border-0 shadow-sm analytics-card">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <p class="text-muted mb-1 small fw-medium">Remaining Due</p>
+                      <h4 class="mb-0 fw-bold text-warning">৳<?php echo number_format($total_due, 0); ?></h4>
+                      <small class="text-muted">
+                        <?php echo round(($total_due / ($total_amount ?: 1)) * 100, 1); ?>% Remaining
+                      </small>
+                    </div>
+                    <div class="fs-3 text-warning opacity-50">
+                      <ion-icon name="time"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Invoice Count -->
+            <div class="col-md-3 col-sm-6">
+              <div class="card h-100 border-0 shadow-sm analytics-card">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <p class="text-muted mb-1 small fw-medium">Invoices</p>
+                      <h4 class="mb-0 fw-bold text-info"><?php echo $total_invoice; ?></h4>
+                      <small class="text-muted">Total Transactions</small>
+                    </div>
+                    <div class="fs-3 text-info opacity-50">
+                      <ion-icon name="document"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Progress Chart -->
+          <div class="card border-0 shadow-sm mt-3">
+            <div class="card-body">
+              <h6 class="fw-bold mb-3">Payment Progress</h6>
+              <div class="progress" style="height: 30px; border-radius: 8px;">
+                <div class="progress-bar bg-success" role="progressbar" style="width: <?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%">
+                  <small class="text-white fw-bold">Paid: <?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%</small>
+                </div>
+              </div>
+              <div class="row mt-3 text-center small">
+                <div class="col">
+                  <strong>৳<?php echo number_format($total_paid, 0); ?></strong><br><small class="text-muted">Paid Amount</small>
+                </div>
+                <div class="col">
+                  <strong>৳<?php echo number_format($total_amount, 0); ?></strong><br><small class="text-muted">Total Amount</small>
+                </div>
+                <div class="col">
+                  <strong>৳<?php echo number_format($total_due, 0); ?></strong><br><small class="text-muted">Remaining Due</small>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Activity -->
+          <div class="card border-0 shadow-sm mt-3">
+            <div class="card-header bg-light border-0 py-3">
+              <h6 class="mb-0 fw-bold">Recent Activity</h6>
+            </div>
+            <div class="card-body">
+              <div class="activity-timeline">
+                <?php
+                  $audit_logs = $db->where('module', 'payment_schedule')->where('record_id', $clientId)->orderBy('created_at', 'DESC')->get('crm_audit_log', 5) ?: [];
+                  
+                  if (empty($audit_logs)) {
+                    echo '<p class="text-muted mb-0">No recent activity</p>';
+                  } else {
+                    foreach ($audit_logs as $log) {
+                      echo '<div class="d-flex gap-3 mb-2 pb-2 border-bottom">';
+                      echo '<div class="text-muted small">' . date('M d, Y H:i', strtotime($log->created_at)) . '</div>';
+                      echo '<div><strong>' . ucfirst($log->action) . '</strong> - ' . $log->notes . '</div>';
+                      echo '</div>';
+                    }
+                  }
+                ?>
+              </div>
+            </div>
+          </div>
+        </section>
+
       </div>
       
 
@@ -605,7 +735,6 @@ ion-icon {
       <?= Wo_LoadManagePage('clients/refund_modal') ?>
       <?= Wo_LoadManagePage('clients/cancel_purchase_modal') ?>
       <?= Wo_LoadManagePage('clients/change_plot_modal') ?>
-      <?= Wo_LoadManagePage('clients/update_installment_modal') ?>
 
 <!-- Core JavaScript for View Client -->
 <script>
