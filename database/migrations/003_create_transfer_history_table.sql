@@ -8,7 +8,7 @@
   ## Tables Created
   - `crm_transfer_history`
     - `id` (int, primary key, auto increment)
-    - `booking_helper_id` (int, references wo_booking_helper.id)
+    - `purchase_id` (int, references wo_booking_helper.id)
     - `transfer_type` (varchar, 'name_transfer' or 'plot_transfer')
     - `from_client_id` (int, original client)
     - `to_client_id` (int, new client)
@@ -36,7 +36,7 @@
 
   ## Indexes
   - Primary key on id
-  - Index on booking_helper_id
+  - Index on purchase_id
   - Index on from_client_id
   - Index on to_client_id
   - Index on transfer_type
@@ -55,7 +55,7 @@
 -- Create transfer history table
 CREATE TABLE IF NOT EXISTS `crm_transfer_history` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `booking_helper_id` int(11) NOT NULL COMMENT 'References wo_booking_helper.id',
+  `purchase_id` int(11) NOT NULL COMMENT 'References wo_booking_helper.id',
   `transfer_type` varchar(50) NOT NULL COMMENT 'name_transfer or plot_transfer',
   `from_client_id` int(11) NOT NULL COMMENT 'Original client',
   `to_client_id` int(11) NOT NULL COMMENT 'New client',
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS `crm_transfer_history` (
   `created_by` int(11) DEFAULT NULL COMMENT 'User ID who initiated',
   `updated_by` int(11) DEFAULT NULL COMMENT 'User ID who last updated',
   PRIMARY KEY (`id`),
-  KEY `idx_booking_helper` (`booking_helper_id`),
+  KEY `idx_booking_helper` (`purchase_id`),
   KEY `idx_from_client` (`from_client_id`),
   KEY `idx_to_client` (`to_client_id`),
   KEY `idx_transfer_type` (`transfer_type`),

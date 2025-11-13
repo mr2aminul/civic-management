@@ -7,7 +7,7 @@
   ## Tables Created
   - `crm_payment_schedule`
     - `id` (int, primary key, auto increment)
-    - `booking_helper_id` (int, references wo_booking_helper.id)
+    - `purchase_id` (int, references wo_booking_helper.id)
     - `client_id` (int, references crm_customers.id)
     - `installment_number` (int, sequence number)
     - `particular` (varchar, description like "1st Installment")
@@ -27,7 +27,7 @@
 
   ## Indexes
   - Primary key on id
-  - Index on booking_helper_id
+  - Index on purchase_id
   - Index on client_id
   - Index on due_date
   - Index on status
@@ -43,7 +43,7 @@
 -- Create payment schedule table
 CREATE TABLE IF NOT EXISTS `crm_payment_schedule` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `booking_helper_id` int(11) NOT NULL COMMENT 'References wo_booking_helper.id',
+  `purchase_id` int(11) NOT NULL COMMENT 'References wo_booking_helper.id',
   `client_id` int(11) NOT NULL COMMENT 'References crm_customers.id',
   `installment_number` int(11) NOT NULL COMMENT 'Sequence number (1, 2, 3...)',
   `particular` varchar(255) DEFAULT NULL COMMENT 'e.g., "1st Installment", "Booking Money"',
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS `crm_payment_schedule` (
   `created_by` int(11) DEFAULT NULL COMMENT 'User ID who created',
   `updated_by` int(11) DEFAULT NULL COMMENT 'User ID who last updated',
   PRIMARY KEY (`id`),
-  KEY `idx_booking_helper` (`booking_helper_id`),
+  KEY `idx_booking_helper` (`purchase_id`),
   KEY `idx_client` (`client_id`),
   KEY `idx_due_date` (`due_date`),
   KEY `idx_status` (`status`),

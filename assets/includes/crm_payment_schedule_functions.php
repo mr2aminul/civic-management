@@ -6,9 +6,7 @@
  * Phase 2 - Step 2.1: Payment Schedule Functions
  */
 
-if (!defined('ROOT_DIR')) {
-    exit('Direct access not permitted');
-}
+
 
 // ===============================
 //  CREATE PAYMENT SCHEDULE
@@ -17,17 +15,17 @@ if (!defined('ROOT_DIR')) {
 /**
  * Create payment schedule entries for a booking
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param int $client_id The client ID
  * @param array $installments Array of installment data
  * @param int $created_by User ID who created the schedule
  * @return array Result with status and message
  */
-function create_payment_schedule($booking_helper_id, $client_id, $installments, $created_by = null) {
+function create_payment_schedule($purchase_id, $client_id, $installments, $created_by = null) {
     global $db;
 
     // Validation
-    if (empty($booking_helper_id) || empty($client_id) || empty($installments)) {
+    if (empty($purchase_id) || empty($client_id) || empty($installments)) {
         return ['status' => 400, 'message' => 'Missing required parameters'];
     }
 
@@ -43,7 +41,7 @@ function create_payment_schedule($booking_helper_id, $client_id, $installments, 
 
         foreach ($installments as $index => $installment) {
             $data = [
-                'booking_helper_id' => (int)$booking_helper_id,
+                'purchase_id' => (int)$purchase_id,
                 'client_id' => (int)$client_id,
                 'installment_number' => isset($installment['installment_number']) ? (int)$installment['installment_number'] : ($index + 1),
                 'particular' => isset($installment['particular']) ? trim($installment['particular']) : null,
@@ -87,18 +85,18 @@ function create_payment_schedule($booking_helper_id, $client_id, $installments, 
 /**
  * Get payment schedule for a booking
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param array $filters Optional filters (status, date_from, date_to)
  * @return array Payment schedule entries
  */
-function get_payment_schedule($booking_helper_id, $filters = []) {
+function get_payment_schedule($purchase_id, $filters = []) {
     global $db;
 
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return [];
     }
 
-    $db->where('booking_helper_id', (int)$booking_helper_id);
+    $db->where('purchase_id', (int)$purchase_id);
 
     // Apply filters
     if (isset($filters['status']) && $filters['status'] !== '') {
@@ -137,17 +135,17 @@ function get_payment_schedule_entry($schedule_id) {
 /**
  * Get payment schedule summary for a booking
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @return array Summary data (total, paid, due, pending_count, overdue_count)
  */
-function get_payment_schedule_summary($booking_helper_id) {
+function get_payment_schedule_summary($purchase_id) {
     global $db;
 
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return null;
     }
 
-    $schedule = get_payment_schedule($booking_helper_id);
+    $schedule = get_payment_schedule($purchase_id);
 
     if (empty($schedule)) {
         return null;
@@ -414,25 +412,25 @@ function get_ordinal($number) {
 /**
  * Migrate serialized installment data to payment schedule table
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @return array Result with status and message
  */
-function migrate_installment_to_schedule($booking_helper_id) {
+function migrate_installment_to_schedule($purchase_id) {
     global $db;
 
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return ['status' => 400, 'message' => 'Booking helper ID required'];
     }
 
     // Get booking helper record
-    $helper = $db->where('id', (int)$booking_helper_id)->getOne(T_BOOKING_HELPER);
+    $helper = $db->where('id', (int)$purchase_id)->getOne(T_BOOKING_HELPER);
 
     if (!$helper) {
         return ['status' => 404, 'message' => 'Booking helper not found'];
     }
 
     // Check if already migrated
-    $existing = get_payment_schedule($booking_helper_id);
+    $existing = get_payment_schedule($purchase_id);
     if (!empty($existing)) {
         return ['status' => 400, 'message' => 'Payment schedule already exists'];
     }
@@ -458,7 +456,7 @@ function migrate_installment_to_schedule($booking_helper_id) {
 
     // Create payment schedule
     return create_payment_schedule(
-        $booking_helper_id,
+        $purchase_id,
         $helper->client_id,
         $installment_data,
         null // system migration
@@ -477,7 +475,7 @@ function bulk_migrate_installments() {
     $sql = "
         SELECT bh.id, bh.client_id, bh.installment
         FROM " . T_BOOKING_HELPER . " bh
-        LEFT JOIN crm_payment_schedule ps ON ps.booking_helper_id = bh.id
+        LEFT JOIN crm_payment_schedule ps ON ps.purchase_id = bh.id
         WHERE bh.installment IS NOT NULL
         AND bh.installment != ''
         AND ps.id IS NULL

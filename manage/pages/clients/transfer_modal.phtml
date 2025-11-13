@@ -1,0 +1,245 @@
+<!-- Transfer Modal (Plot/Name Transfer) -->
+<div class="modal fade" id="transferModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-warning text-dark border-0">
+        <h5 class="modal-title">
+          <i class="lni lni-shuffle me-2"></i>Transfer Management
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-4">
+        <!-- Transfer Type Selection -->
+        <div class="mb-4">
+          <label class="form-label fw-semibold">Transfer Type</label>
+          <div class="btn-group w-100" role="group">
+            <input type="radio" class="btn-check" name="transferType" id="nameTransferRadio" value="name" checked>
+            <label class="btn btn-outline-primary" for="nameTransferRadio">
+              <i class="lni lni-user me-1"></i>Name Transfer
+            </label>
+
+            <input type="radio" class="btn-check" name="transferType" id="plotTransferRadio" value="plot">
+            <label class="btn btn-outline-primary" for="plotTransferRadio">
+              <i class="lni lni-map-marker me-1"></i>Plot Transfer
+            </label>
+          </div>
+        </div>
+
+        <!-- Name Transfer Form -->
+        <div id="nameTransferForm" class="transfer-form">
+          <div class="card border-0 bg-light p-3 mb-3">
+            <h6 class="mb-3">Name Transfer Details</h6>
+            
+            <div class="mb-3">
+              <label class="form-label">Current Name</label>
+              <input type="text" class="form-control" id="currentName" readonly>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">New Client Name *</label>
+              <input type="text" class="form-control" id="newClientName" placeholder="Enter new client name">
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Transfer Reason *</label>
+              <select class="form-select" id="transferReason">
+                <option selected disabled>Select reason...</option>
+                <option value="marriage">Marriage</option>
+                <option value="inheritance">Inheritance</option>
+                <option value="gift">Gift</option>
+                <option value="sale">Sale</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Transfer Date *</label>
+              <input type="date" class="form-control" id="transferDate">
+            </div>
+
+            <div class="alert alert-info mb-0">
+              <i class="lni lni-info-circle me-2"></i>
+              <strong>Note:</strong> The payment schedule will remain intact. The new name will be recorded in the transfer history for audit purposes.
+            </div>
+          </div>
+        </div>
+
+        <!-- Plot Transfer Form -->
+        <div id="plotTransferForm" class="transfer-form d-none">
+          <div class="card border-0 bg-light p-3 mb-3">
+            <h6 class="mb-3">Plot Transfer Details</h6>
+            
+            <div class="mb-3">
+              <label class="form-label">Current Plot</label>
+              <input type="text" class="form-control" id="currentPlot" readonly>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Current Per Katha Rate</label>
+              <input type="number" class="form-control" id="currentPerKatha" readonly step="0.01">
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">New Plot *</label>
+              <select class="form-select" id="newPlotSelect">
+                <option selected disabled>Select new plot...</option>
+                <!-- Will be populated by JS -->
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">New Per Katha Rate *</label>
+              <input type="number" class="form-control" id="newPerKatha" placeholder="0.00" step="0.01">
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Transfer Reason *</label>
+              <select class="form-select" id="plotTransferReason">
+                <option selected disabled>Select reason...</option>
+                <option value="upgrade">Upgrade</option>
+                <option value="downgrade">Downgrade</option>
+                <option value="preference">Preference Change</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Transfer Date *</label>
+              <input type="date" class="form-control" id="plotTransferDate">
+            </div>
+
+            <div class="alert alert-warning mb-0">
+              <i class="lni lni-alert-triangle me-2"></i>
+              <strong>Important:</strong> Plot transfer will require admin approval. The payment schedule will be recalculated based on the new plot size and per katha rate.
+            </div>
+          </div>
+        </div>
+
+        <!-- Status Display -->
+        <div class="alert alert-light border mb-3">
+          <small><strong>Status:</strong> <span id="transferStatus">Ready to proceed</span></small>
+        </div>
+      </div>
+
+      <div class="modal-footer border-top">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-warning" id="submitTransferBtn">
+          <i class="lni lni-check-circle me-1"></i>Submit for Review
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  window.openTransferModal = function(purchaseId) {
+    if (!purchaseId) { alert('Purchase ID missing'); return; }
+
+    // Fetch transfer data
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=initiate_transfer',
+      { purchase_id: purchaseId, action: 'get_data' },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          populateTransferModal(data, purchaseId);
+          $('#transferModal').modal('show');
+        } else {
+          alert(data.message || 'Failed to load transfer data');
+        }
+      }
+    );
+  };
+
+  function populateTransferModal(data, purchaseId) {
+    $('#currentName').val(data.current_name || '');
+    $('#currentPlot').val(data.current_plot || '');
+    $('#currentPerKatha').val(data.current_per_katha || 0);
+
+    $('#transferModal').data('purchaseId', purchaseId);
+
+    // Populate available plots
+    if (data.available_plots) {
+      var plotSelect = $('#newPlotSelect');
+      plotSelect.empty().append('<option selected disabled>Select new plot...</option>');
+      $.each(data.available_plots, function(i, plot) {
+        plotSelect.append('<option value="' + plot.id + '" data-per-katha="' + plot.per_katha + '">' +
+          plot.plot + ' (' + plot.katha + ' katha)</option>');
+      });
+    }
+  }
+
+  // Toggle transfer forms
+  $('input[name="transferType"]').off('change').on('change', function() {
+    if ($(this).val() === 'name') {
+      $('#nameTransferForm').removeClass('d-none');
+      $('#plotTransferForm').addClass('d-none');
+    } else {
+      $('#nameTransferForm').addClass('d-none');
+      $('#plotTransferForm').removeClass('d-none');
+    }
+  });
+
+  // Auto-fill new per katha rate
+  $('#newPlotSelect').off('change').on('change', function() {
+    var perKatha = $(this).find('option:selected').data('per-katha');
+    $('#newPerKatha').val(perKatha || 0);
+  });
+
+  // Submit Transfer
+  $(document).off('click', '#submitTransferBtn').on('click', '#submitTransferBtn', function() {
+    var purchaseId = $('#transferModal').data('purchaseId');
+    var transferType = $('input[name="transferType"]:checked').val();
+
+    if (transferType === 'name') {
+      var newName = $('#newClientName').val();
+      var reason = $('#transferReason').val();
+      var date = $('#transferDate').val();
+
+      if (!newName || !reason || !date) {
+        alert('Please fill all required fields');
+        return;
+      }
+
+      $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=initiate_transfer',
+        { purchase_id: purchaseId, type: 'name', new_name: newName, reason: reason, date: date },
+        function(resp) {
+          var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+          if (data.status === 200) {
+            alert('Name transfer submitted for review!');
+            $('#transferModal').modal('hide');
+          } else {
+            alert(data.message || 'Failed to submit transfer');
+          }
+        }
+      );
+    } else {
+      var newPlotId = $('#newPlotSelect').val();
+      var newPerKatha = parseFloat($('#newPerKatha').val()) || 0;
+      var reason = $('#plotTransferReason').val();
+      var date = $('#plotTransferDate').val();
+
+      if (!newPlotId || !newPerKatha || !reason || !date) {
+        alert('Please fill all required fields');
+        return;
+      }
+
+      $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=initiate_transfer',
+        { purchase_id: purchaseId, type: 'plot', new_plot_id: newPlotId, new_per_katha: newPerKatha, reason: reason, date: date },
+        function(resp) {
+          var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+          if (data.status === 200) {
+            alert('Plot transfer submitted for review!');
+            $('#transferModal').modal('hide');
+          } else {
+            alert(data.message || 'Failed to submit transfer');
+          }
+        }
+      );
+    }
+  });
+});
+</script>

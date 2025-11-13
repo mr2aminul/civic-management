@@ -6,10 +6,6 @@
  * Phase 2 - Step 2.3: Refund Functions
  */
 
-if (!defined('ROOT_DIR')) {
-    exit('Direct access not permitted');
-}
-
 // ===============================
 //  CALCULATE REFUND
 // ===============================
@@ -17,15 +13,15 @@ if (!defined('ROOT_DIR')) {
 /**
  * Calculate refund amount with deduction
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param float $deduction_percentage Deduction percentage (5-25%)
  * @return array Result with refund calculation details
  */
-function calculate_refund($booking_helper_id, $deduction_percentage = 10.00) {
+function calculate_refund($purchase_id, $deduction_percentage = 10.00) {
     global $db;
 
     // Validation
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return ['status' => 400, 'message' => 'Booking helper ID required'];
     }
 
@@ -34,14 +30,14 @@ function calculate_refund($booking_helper_id, $deduction_percentage = 10.00) {
     }
 
     // Get booking helper
-    $helper = $db->where('id', (int)$booking_helper_id)->getOne(T_BOOKING_HELPER);
+    $helper = $db->where('id', (int)$purchase_id)->getOne(T_BOOKING_HELPER);
     if (!$helper) {
         return ['status' => 404, 'message' => 'Booking not found'];
     }
 
     // Calculate total paid from payment schedule
     $total_paid = 0;
-    $payments = $db->where('booking_helper_id', (int)$booking_helper_id)
+    $payments = $db->where('purchase_id', (int)$purchase_id)
                    ->where('status', 1) // paid only
                    ->get('crm_payment_schedule');
 
@@ -65,7 +61,7 @@ function calculate_refund($booking_helper_id, $deduction_percentage = 10.00) {
         'deduction_percentage' => $deduction_percentage,
         'deduction_amount' => $deduction_amount,
         'refundable_amount' => $refundable_amount,
-        'booking_helper_id' => $booking_helper_id,
+        'purchase_id' => $purchase_id,
         'client_id' => $helper->client_id
     ];
 }
@@ -77,18 +73,18 @@ function calculate_refund($booking_helper_id, $deduction_percentage = 10.00) {
 /**
  * Create refund schedule with installments
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param float $deduction_percentage Deduction percentage (5-25%)
  * @param int $num_installments Number of refund installments
  * @param string $start_date Start date for refunds (Y-m-d)
  * @param int $created_by User ID who created
  * @return array Result with status and message
  */
-function create_refund_schedule($booking_helper_id, $deduction_percentage, $num_installments = 1, $start_date = null, $created_by = null) {
+function create_refund_schedule($purchase_id, $deduction_percentage, $num_installments = 1, $start_date = null, $created_by = null) {
     global $db;
 
     // Validation
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return ['status' => 400, 'message' => 'Booking helper ID required'];
     }
 
@@ -97,13 +93,13 @@ function create_refund_schedule($booking_helper_id, $deduction_percentage, $num_
     }
 
     // Calculate refund
-    $calc = calculate_refund($booking_helper_id, $deduction_percentage);
+    $calc = calculate_refund($purchase_id, $deduction_percentage);
     if ($calc['status'] !== 200) {
         return $calc;
     }
 
     // Check for existing refund schedule
-    $existing = $db->where('booking_helper_id', (int)$booking_helper_id)
+    $existing = $db->where('purchase_id', (int)$purchase_id)
                    ->where('status', [0, 1, 2], 'IN') // pending, paid, partial
                    ->getOne('crm_refund_schedule');
 
@@ -129,7 +125,7 @@ function create_refund_schedule($booking_helper_id, $deduction_percentage, $num_
             $due_date = date('Y-m-d', strtotime($start_date . " +{$i} month"));
 
             $data = [
-                'booking_helper_id' => (int)$booking_helper_id,
+                'purchase_id' => (int)$purchase_id,
                 'client_id' => (int)$calc['client_id'],
                 'refund_initiation_date' => date('Y-m-d'),
                 'total_paid_amount' => $calc['total_paid'],
@@ -174,18 +170,18 @@ function create_refund_schedule($booking_helper_id, $deduction_percentage, $num_
 /**
  * Get refund schedule for a booking
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param array $filters Optional filters (status)
  * @return array Refund schedule entries
  */
-function get_refund_schedule($booking_helper_id, $filters = []) {
+function get_refund_schedule($purchase_id, $filters = []) {
     global $db;
 
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return [];
     }
 
-    $db->where('booking_helper_id', (int)$booking_helper_id);
+    $db->where('purchase_id', (int)$purchase_id);
 
     if (isset($filters['status']) && $filters['status'] !== '') {
         $db->where('status', (int)$filters['status']);
@@ -199,17 +195,17 @@ function get_refund_schedule($booking_helper_id, $filters = []) {
 /**
  * Get refund schedule summary
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @return array|null Summary data
  */
-function get_refund_schedule_summary($booking_helper_id) {
+function get_refund_schedule_summary($purchase_id) {
     global $db;
 
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return null;
     }
 
-    $schedule = get_refund_schedule($booking_helper_id);
+    $schedule = get_refund_schedule($purchase_id);
 
     if (empty($schedule)) {
         return null;
@@ -339,20 +335,20 @@ function add_refund_payment($refund_schedule_id, $amount, $payment_date = null, 
 /**
  * Cancel a refund schedule
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param string $reason Cancellation reason
  * @param int $updated_by User ID
  * @return array Result with status and message
  */
-function cancel_refund_schedule($booking_helper_id, $reason = null, $updated_by = null) {
+function cancel_refund_schedule($purchase_id, $reason = null, $updated_by = null) {
     global $db;
 
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return ['status' => 400, 'message' => 'Booking helper ID required'];
     }
 
     // Get pending refund entries
-    $entries = $db->where('booking_helper_id', (int)$booking_helper_id)
+    $entries = $db->where('purchase_id', (int)$purchase_id)
                   ->where('status', [0, 2], 'IN') // pending or partial
                   ->get('crm_refund_schedule');
 

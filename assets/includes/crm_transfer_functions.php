@@ -6,10 +6,6 @@
  * Phase 2 - Step 2.2: Transfer Functions
  */
 
-if (!defined('ROOT_DIR')) {
-    exit('Direct access not permitted');
-}
-
 // ===============================
 //  NAME TRANSFER FUNCTIONS
 // ===============================
@@ -17,18 +13,18 @@ if (!defined('ROOT_DIR')) {
 /**
  * Initiate name transfer (change client while keeping plot and history)
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param int $from_client_id Original client ID
  * @param int $to_client_id New client ID
  * @param array $details Additional transfer details
  * @param int $created_by User ID who initiated
  * @return array Result with status and message
  */
-function initiate_name_transfer($booking_helper_id, $from_client_id, $to_client_id, $details = [], $created_by = null) {
+function initiate_name_transfer($purchase_id, $from_client_id, $to_client_id, $details = [], $created_by = null) {
     global $db;
 
     // Validation
-    if (empty($booking_helper_id) || empty($from_client_id) || empty($to_client_id)) {
+    if (empty($purchase_id) || empty($from_client_id) || empty($to_client_id)) {
         return ['status' => 400, 'message' => 'Missing required parameters'];
     }
 
@@ -37,7 +33,7 @@ function initiate_name_transfer($booking_helper_id, $from_client_id, $to_client_
     }
 
     // Check if booking helper exists
-    $helper = $db->where('id', (int)$booking_helper_id)->getOne(T_BOOKING_HELPER);
+    $helper = $db->where('id', (int)$purchase_id)->getOne(T_BOOKING_HELPER);
     if (!$helper) {
         return ['status' => 404, 'message' => 'Booking not found'];
     }
@@ -56,7 +52,7 @@ function initiate_name_transfer($booking_helper_id, $from_client_id, $to_client_
     }
 
     // Check for pending transfers
-    $pending = $db->where('booking_helper_id', (int)$booking_helper_id)
+    $pending = $db->where('purchase_id', (int)$purchase_id)
                   ->where('approval_status', 0)
                   ->getOne('crm_transfer_history');
 
@@ -69,7 +65,7 @@ function initiate_name_transfer($booking_helper_id, $from_client_id, $to_client_
 
         // Create transfer record
         $transfer_data = [
-            'booking_helper_id' => (int)$booking_helper_id,
+            'purchase_id' => (int)$purchase_id,
             'transfer_type' => 'name_transfer',
             'from_client_id' => (int)$from_client_id,
             'to_client_id' => (int)$to_client_id,
@@ -134,7 +130,7 @@ function approve_name_transfer($transfer_id, $approved_by = null) {
         $db->startTransaction();
 
         // Update booking helper client_id
-        $update_result = $db->where('id', (int)$transfer->booking_helper_id)
+        $update_result = $db->where('id', (int)$transfer->purchase_id)
                             ->update(T_BOOKING_HELPER, ['client_id' => (int)$transfer->to_client_id]);
 
         if (!$update_result) {
@@ -172,7 +168,7 @@ function approve_name_transfer($transfer_id, $approved_by = null) {
 /**
  * Initiate plot transfer with rate adjustment
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param int $new_purchase_id New plot purchase ID
  * @param float $new_rate New rate per katha
  * @param string $rate_adjustment_reason Reason for rate change
@@ -180,16 +176,16 @@ function approve_name_transfer($transfer_id, $approved_by = null) {
  * @param int $created_by User ID who initiated
  * @return array Result with status and message
  */
-function initiate_plot_transfer($booking_helper_id, $new_purchase_id, $new_rate = null, $rate_adjustment_reason = null, $details = [], $created_by = null) {
+function initiate_plot_transfer($purchase_id, $new_purchase_id, $new_rate = null, $rate_adjustment_reason = null, $details = [], $created_by = null) {
     global $db;
 
     // Validation
-    if (empty($booking_helper_id) || empty($new_purchase_id)) {
+    if (empty($purchase_id) || empty($new_purchase_id)) {
         return ['status' => 400, 'message' => 'Missing required parameters'];
     }
 
     // Get current booking helper
-    $helper = $db->where('id', (int)$booking_helper_id)->getOne(T_BOOKING_HELPER);
+    $helper = $db->where('id', (int)$purchase_id)->getOne(T_BOOKING_HELPER);
     if (!$helper) {
         return ['status' => 404, 'message' => 'Booking not found'];
     }
@@ -208,7 +204,7 @@ function initiate_plot_transfer($booking_helper_id, $new_purchase_id, $new_rate 
     }
 
     // Check for pending transfers
-    $pending = $db->where('booking_helper_id', (int)$booking_helper_id)
+    $pending = $db->where('purchase_id', (int)$purchase_id)
                   ->where('approval_status', 0)
                   ->getOne('crm_transfer_history');
 
@@ -232,7 +228,7 @@ function initiate_plot_transfer($booking_helper_id, $new_purchase_id, $new_rate 
 
         // Create transfer record
         $transfer_data = [
-            'booking_helper_id' => (int)$booking_helper_id,
+            'purchase_id' => (int)$purchase_id,
             'transfer_type' => 'plot_transfer',
             'from_client_id' => (int)$helper->client_id,
             'to_client_id' => (int)$helper->client_id, // same client
@@ -323,7 +319,7 @@ function approve_plot_transfer($transfer_id, $approved_by = null) {
             'per_katha' => (float)$transfer->plot_transfer_rate_new
         ];
 
-        $update_result = $db->where('id', (int)$transfer->booking_helper_id)
+        $update_result = $db->where('id', (int)$transfer->purchase_id)
                             ->update(T_BOOKING_HELPER, $update_data);
 
         if (!$update_result) {
@@ -429,18 +425,18 @@ function reject_transfer($transfer_id, $rejection_reason = null, $approved_by = 
 /**
  * Get transfer history for a booking
  *
- * @param int $booking_helper_id The booking helper ID
+ * @param int $purchase_id The booking helper ID
  * @param array $filters Optional filters
  * @return array Transfer history records
  */
-function get_transfer_history($booking_helper_id, $filters = []) {
+function get_transfer_history($purchase_id, $filters = []) {
     global $db;
 
-    if (empty($booking_helper_id)) {
+    if (empty($purchase_id)) {
         return [];
     }
 
-    $db->where('booking_helper_id', (int)$booking_helper_id);
+    $db->where('purchase_id', (int)$purchase_id);
 
     if (isset($filters['transfer_type']) && $filters['transfer_type'] !== '') {
         $db->where('transfer_type', $filters['transfer_type']);

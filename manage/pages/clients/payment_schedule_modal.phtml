@@ -1,0 +1,278 @@
+<!-- Payment Schedule Modal -->
+<div class="modal fade" id="paymentScheduleModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-primary text-white border-0">
+        <h5 class="modal-title">
+          <i class="lni lni-calendar me-2"></i>Payment Schedule Management
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-4">
+        <!-- Schedule Summary Cards -->
+        <div class="row g-3 mb-4" id="scheduleSummary">
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Total Installments</small>
+                <h5 class="mb-0" id="totalInstallments">0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Paid</small>
+                <h5 class="mb-0" id="totalPaid">৳0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Pending</small>
+                <h5 class="mb-0" id="totalPending">৳0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Balance</small>
+                <h5 class="mb-0" id="totalBalance">৳0</h5>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Schedule Table -->
+        <div class="table-responsive mb-4">
+          <table class="table table-hover" id="scheduleTable">
+            <thead class="table-light">
+              <tr>
+                <th>#</th>
+                <th>Due Date</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th>Paid Date</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="scheduleTableBody">
+              <!-- Will be populated by JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="row g-2 mb-3">
+          <div class="col-md-6">
+            <button type="button" class="btn btn-outline-secondary w-100" id="printScheduleBtn">
+              <i class="lni lni-printer me-1"></i>Print Schedule
+            </button>
+          </div>
+          <div class="col-md-6">
+            <button type="button" class="btn btn-outline-info w-100" id="sendScheduleEmailBtn">
+              <i class="lni lni-email me-1"></i>Send via Email
+            </button>
+          </div>
+        </div>
+
+        <!-- Auto Email Toggle -->
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="autoEmailToggle">
+          <label class="form-check-label" for="autoEmailToggle">
+            Enable automatic email notifications for payment schedule
+          </label>
+        </div>
+
+        <!-- Add Payment Form -->
+        <div class="card border-0 bg-light p-3">
+          <h6 class="mb-3">Record Payment</h6>
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label">Installment #</label>
+              <select class="form-select" id="paymentInstallmentSelect">
+                <option selected disabled>Select installment...</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Amount</label>
+              <input type="number" class="form-control" id="paymentAmount" placeholder="0.00" step="0.01">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Payment Date</label>
+              <input type="date" class="form-control" id="paymentDate">
+            </div>
+          </div>
+          <button type="button" class="btn btn-success mt-3" id="recordPaymentBtn">
+            <i class="lni lni-check-circle me-1"></i>Record Payment
+          </button>
+        </div>
+      </div>
+
+      <div class="modal-footer border-top">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  window.openPaymentSchedule = function(purchaseId) {
+    if (!purchaseId) { alert('Purchase ID missing'); return; }
+    
+    // Fetch schedule data
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=get_payment_schedule', 
+      { purchase_id: purchaseId },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.schedule) {
+          populateScheduleModal(data.schedule, purchaseId);
+          $('#paymentScheduleModal').modal('show');
+        } else {
+          alert(data.message || 'Failed to load schedule');
+        }
+      }
+    );
+  };
+
+  function populateScheduleModal(schedule, purchaseId) {
+    var tbody = $('#scheduleTableBody');
+    tbody.empty();
+
+    if (!schedule || !schedule.installments) {
+      tbody.html('<tr><td colspan="6" class="text-center text-muted">No schedule data</td></tr>');
+      return;
+    }
+
+    var totalPaid = 0, totalPending = 0, totalAmount = 0;
+    var installments = schedule.installments;
+
+    $.each(installments, function(idx, inst) {
+      var status = inst.status || 0;
+      var statusBadge = '';
+      
+      if (status === 1) statusBadge = '<span class="badge bg-success">Paid</span>';
+      else if (status === 2) statusBadge = '<span class="badge bg-warning text-dark">Pending</span>';
+      else statusBadge = '<span class="badge bg-secondary">Unpaid</span>';
+
+      var paidDate = inst.paid_date ? new Date(inst.paid_date * 1000).toLocaleDateString() : '-';
+      var amount = parseFloat(inst.amount || 0);
+      var dueDate = inst.due_date ? new Date(inst.due_date * 1000).toLocaleDateString() : '-';
+
+      if (status === 1) totalPaid += amount;
+      else totalPending += amount;
+      totalAmount += amount;
+
+      var row = '<tr>' +
+        '<td>' + (idx + 1) + '</td>' +
+        '<td>' + dueDate + '</td>' +
+        '<td>৳' + amount.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+        '<td>' + statusBadge + '</td>' +
+        '<td>' + paidDate + '</td>' +
+        '<td>' +
+          '<button class="btn btn-sm btn-outline-primary" onclick="markPaymentPaid(' + inst.id + ', ' + purchaseId + ')">Mark Paid</button>' +
+        '</td>' +
+        '</tr>';
+      
+      tbody.append(row);
+    });
+
+    // Update summary
+    $('#totalInstallments').text(installments.length);
+    $('#totalPaid').text('৳' + totalPaid.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    $('#totalPending').text('৳' + totalPending.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    $('#totalBalance').text('৳' + (totalAmount - totalPaid).toLocaleString('en-US', {minimumFractionDigits: 2}));
+
+    // Store purchase ID for later use
+    $('#paymentScheduleModal').data('purchaseId', purchaseId);
+  }
+
+  // Print Schedule
+  $(document).off('click', '#printScheduleBtn').on('click', '#printScheduleBtn', function() {
+    var purchaseId = $('#paymentScheduleModal').data('purchaseId');
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=get_payment_schedule', 
+      { purchase_id: purchaseId },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.pdf_url) {
+          window.open(data.pdf_url, '_blank');
+        }
+      }
+    );
+  });
+
+  // Send Email
+  $(document).off('click', '#sendScheduleEmailBtn').on('click', '#sendScheduleEmailBtn', function() {
+    var purchaseId = $('#paymentScheduleModal').data('purchaseId');
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=send_schedule_email', 
+      { purchase_id: purchaseId },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Schedule sent successfully!');
+        } else {
+          alert(data.message || 'Failed to send schedule');
+        }
+      }
+    );
+  });
+
+  // Auto Email Toggle
+  $(document).off('change', '#autoEmailToggle').on('change', '#autoEmailToggle', function() {
+    var purchaseId = $('#paymentScheduleModal').data('purchaseId');
+    var enabled = $(this).is(':checked') ? 1 : 0;
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=toggle_auto_email',
+      { purchase_id: purchaseId, enabled: enabled },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status !== 200) {
+          alert(data.message || 'Failed to update setting');
+        }
+      }
+    );
+  });
+
+  // Record Payment
+  $(document).off('click', '#recordPaymentBtn').on('click', '#recordPaymentBtn', function() {
+    var purchaseId = $('#paymentScheduleModal').data('purchaseId');
+    var amount = parseFloat($('#paymentAmount').val()) || 0;
+    var paymentDate = $('#paymentDate').val();
+
+    if (!amount || !paymentDate) {
+      alert('Please fill all fields');
+      return;
+    }
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=update_payment_status',
+      { purchase_id: purchaseId, amount: amount, payment_date: paymentDate },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Payment recorded!');
+          window.openPaymentSchedule(purchaseId);
+        } else {
+          alert(data.message || 'Failed to record payment');
+        }
+      }
+    );
+  });
+
+  window.markPaymentPaid = function(installmentId, purchaseId) {
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=update_payment_status',
+      { installment_id: installmentId, purchase_id: purchaseId, amount: 0, status: 1 },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          window.openPaymentSchedule(purchaseId);
+        }
+      }
+    );
+  };
+});
+</script>

@@ -1,0 +1,220 @@
+<!-- Refund Management Modal -->
+<div class="modal fade" id="refundModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-danger text-white border-0">
+        <h5 class="modal-title">
+          <i class="lni lni-money-location me-2"></i>Refund Management
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-4">
+        <!-- Refund Summary -->
+        <div class="row g-3 mb-4">
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Total Paid</small>
+                <h5 class="mb-0" id="refundTotalPaid">৳0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Deduction (Interest)</small>
+                <h5 class="mb-0" id="refundDeduction">৳0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Refundable Amount</small>
+                <h5 class="mb-0" id="refundAmount">৳0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Refund Balance</small>
+                <h5 class="mb-0" id="refundBalance">৳0</h5>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Refund Schedule Table -->
+        <div class="table-responsive mb-4">
+          <table class="table table-hover" id="refundTable">
+            <thead class="table-light">
+              <tr>
+                <th>#</th>
+                <th>Date</th>
+                <th>Amount</th>
+                <th>Balance</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="refundTableBody">
+              <!-- Will be populated by JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Add New Refund Installment -->
+        <div class="card border-0 bg-light p-3 mb-3">
+          <h6 class="mb-3">Add New Refund Installment</h6>
+          <div class="row g-2">
+            <div class="col-md-3">
+              <label class="form-label">Refund Amount *</label>
+              <input type="number" class="form-control" id="refundAmountInput" placeholder="0.00" step="0.01">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Deduction % (5-25%) *</label>
+              <select class="form-select" id="deductionPercent">
+                <option selected disabled>Select...</option>
+                <option value="5">5%</option>
+                <option value="10">10%</option>
+                <option value="15">15%</option>
+                <option value="20">20%</option>
+                <option value="25">25%</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Refund Date *</label>
+              <input type="date" class="form-control" id="refundDateInput">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">&nbsp;</label>
+              <button type="button" class="btn btn-success w-100" id="addRefundBtn">
+                <i class="lni lni-plus me-1"></i>Add Installment
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Refund Report -->
+        <div class="card border-0 bg-light p-3">
+          <h6 class="mb-3">Refund Report</h6>
+          <button type="button" class="btn btn-sm btn-outline-danger" id="exportRefundReportBtn">
+            <i class="lni lni-download me-1"></i>Export Report
+          </button>
+        </div>
+      </div>
+
+      <div class="modal-footer border-top">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  window.openRefundModal = function(purchaseId) {
+    if (!purchaseId) { alert('Purchase ID missing'); return; }
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=get_refund_status',
+      { purchase_id: purchaseId },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.refund) {
+          populateRefundModal(data.refund, purchaseId);
+          $('#refundModal').modal('show');
+        } else {
+          alert(data.message || 'No refund data available');
+        }
+      }
+    );
+  };
+
+  function populateRefundModal(refund, purchaseId) {
+    var tbody = $('#refundTableBody');
+    tbody.empty();
+
+    var totalPaid = parseFloat(refund.total_paid || 0);
+    var totalDeduction = parseFloat(refund.total_deduction || 0);
+    var refundableAmount = totalPaid - totalDeduction;
+    var refundBalance = parseFloat(refund.refund_balance || refundableAmount);
+
+    $('#refundTotalPaid').text('৳' + totalPaid.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    $('#refundDeduction').text('৳' + totalDeduction.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    $('#refundAmount').text('৳' + refundableAmount.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    $('#refundBalance').text('৳' + refundBalance.toLocaleString('en-US', {minimumFractionDigits: 2}));
+
+    if (refund.installments && refund.installments.length > 0) {
+      $.each(refund.installments, function(idx, inst) {
+        var statusBadge = inst.status === 1 ? '<span class="badge bg-success">Refunded</span>' : '<span class="badge bg-warning text-dark">Pending</span>';
+        var instDate = new Date(inst.date * 1000).toLocaleDateString();
+        var amount = parseFloat(inst.amount || 0);
+        var balance = parseFloat(inst.balance || 0);
+
+        var row = '<tr>' +
+          '<td>' + (idx + 1) + '</td>' +
+          '<td>' + instDate + '</td>' +
+          '<td>৳' + amount.toLocaleString('en-US', {minimumFractionDigits: 2}) + '</td>' +
+          '<td>৳' + balance.toLocaleString('en-US', {minimumFractionDigits: 2}) + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td><button class="btn btn-sm btn-outline-warning" onclick="markRefundDone(' + inst.id + ', ' + purchaseId + ')">Mark Done</button></td>' +
+          '</tr>';
+        
+        tbody.append(row);
+      });
+    } else {
+      tbody.html('<tr><td colspan="6" class="text-center text-muted">No refund schedule</td></tr>');
+    }
+
+    $('#refundModal').data('purchaseId', purchaseId);
+  }
+
+  // Add Refund Installment
+  $(document).off('click', '#addRefundBtn').on('click', '#addRefundBtn', function() {
+    var purchaseId = $('#refundModal').data('purchaseId');
+    var amount = parseFloat($('#refundAmountInput').val()) || 0;
+    var deductPercent = parseInt($('#deductionPercent').val()) || 0;
+    var refundDate = $('#refundDateInput').val();
+
+    if (!amount || !deductPercent || !refundDate) {
+      alert('Please fill all fields');
+      return;
+    }
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=add_refund_payment',
+      { purchase_id: purchaseId, amount: amount, deduction_percent: deductPercent, refund_date: refundDate },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Refund installment added!');
+          window.openRefundModal(purchaseId);
+        } else {
+          alert(data.message || 'Failed to add refund');
+        }
+      }
+    );
+  });
+
+  window.markRefundDone = function(refundId, purchaseId) {
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=add_refund_payment',
+      { refund_id: refundId, purchase_id: purchaseId, status: 1 },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          window.openRefundModal(purchaseId);
+        }
+      }
+    );
+  };
+
+  // Export Report
+  $(document).off('click', '#exportRefundReportBtn').on('click', '#exportRefundReportBtn', function() {
+    var purchaseId = $('#refundModal').data('purchaseId');
+    window.open(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=get_refund_status&purchase_id=' + purchaseId + '&export=1', '_blank');
+  });
+});
+</script>

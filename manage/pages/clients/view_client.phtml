@@ -481,6 +481,21 @@ ion-icon {
                                 <i class="lni lni-shuffle me-2 text-warning"></i> Change Plot
                               </a>
                             </li>
+                            <li>
+                              <a class="dropdown-item manage-schedule" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-calendar me-2 text-primary"></i> Manage Payment Schedule
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-shuffle me-2 text-warning"></i> Transfer Ownership
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item manage-refund" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-money-location me-2 text-danger"></i> Manage Refund
+                              </a>
+                            </li>
                             <li><hr class="dropdown-divider"></li>
                             <li>
                               <a class="dropdown-item cancel-purchase" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
@@ -585,6 +600,9 @@ ion-icon {
   </div>
 </div>
       <!-- Load all modals -->
+      <?= Wo_LoadManagePage('clients/payment_schedule_modal') ?>
+      <?= Wo_LoadManagePage('clients/transfer_modal') ?>
+      <?= Wo_LoadManagePage('clients/refund_modal') ?>
       <?= Wo_LoadManagePage('clients/cancel_purchase_modal') ?>
       <?= Wo_LoadManagePage('clients/change_plot_modal') ?>
       <?= Wo_LoadManagePage('clients/update_installment_modal') ?>
@@ -756,6 +774,27 @@ jQuery(function($){
       alert('Server error while exporting data');
     });
   };
+
+  $(document).off('click', '.manage-schedule').on('click', '.manage-schedule', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    if (!id) { alert('Purchase id missing'); return; }
+    window.openPaymentSchedule(id);
+  });
+
+  $(document).off('click', '.transfer-plot').on('click', '.transfer-plot', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    if (!id) { alert('Purchase id missing'); return; }
+    window.openTransferModal(id);
+  });
+
+  $(document).off('click', '.manage-refund').on('click', '.manage-refund', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    if (!id) { alert('Purchase id missing'); return; }
+    window.openRefundModal(id);
+  });
 
 });
 </script>

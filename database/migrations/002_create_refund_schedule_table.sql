@@ -7,7 +7,7 @@
   ## Tables Created
   - `crm_refund_schedule`
     - `id` (int, primary key, auto increment)
-    - `booking_helper_id` (int, references wo_booking_helper.id)
+    - `purchase_id` (int, references wo_booking_helper.id)
     - `client_id` (int, references crm_customers.id)
     - `refund_initiation_date` (date, when refund was requested)
     - `total_paid_amount` (decimal, total amount client has paid)
@@ -30,7 +30,7 @@
 
   ## Indexes
   - Primary key on id
-  - Index on booking_helper_id
+  - Index on purchase_id
   - Index on client_id
   - Index on due_date
   - Index on status
@@ -45,7 +45,7 @@
 -- Create refund schedule table
 CREATE TABLE IF NOT EXISTS `crm_refund_schedule` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `booking_helper_id` int(11) NOT NULL COMMENT 'References wo_booking_helper.id',
+  `purchase_id` int(11) NOT NULL COMMENT 'References wo_booking_helper.id',
   `client_id` int(11) NOT NULL COMMENT 'References crm_customers.id',
   `refund_initiation_date` date NOT NULL COMMENT 'Date when refund was requested',
   `total_paid_amount` decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Total amount client has paid',
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS `crm_refund_schedule` (
   `created_by` int(11) DEFAULT NULL COMMENT 'User ID who created',
   `updated_by` int(11) DEFAULT NULL COMMENT 'User ID who last updated',
   PRIMARY KEY (`id`),
-  KEY `idx_booking_helper` (`booking_helper_id`),
+  KEY `idx_booking_helper` (`purchase_id`),
   KEY `idx_client` (`client_id`),
   KEY `idx_due_date` (`due_date`),
   KEY `idx_status` (`status`),
