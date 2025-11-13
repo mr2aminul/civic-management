@@ -7,5 +7,3 @@ function Wo_Ajax_Requests_File(){
     return "<?php echo $wo['config']['site_url'].'/requests.php';?>"
 }
 </script>
-
-also note this, we are working with raw php, no framework, with mysql database, the database's dump are already given in `/Database Structure Dump/civicbd_group___database_dump.sql`
