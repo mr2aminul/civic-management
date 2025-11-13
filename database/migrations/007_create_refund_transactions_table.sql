@@ -1,0 +1,26 @@
+-- Create refund transactions table for flexible, custom-amount refunds (not installment-based)
+CREATE TABLE IF NOT EXISTS `crm_refund_transactions` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `purchase_id` int(11) NOT NULL COMMENT 'References wo_booking_helper.id',
+  `client_id` int(11) NOT NULL COMMENT 'References crm_customers.id',
+  `refund_request_date` date NOT NULL COMMENT 'Date refund was requested',
+  `total_paid_amount` decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Total amount client paid',
+  `deduction_percentage` decimal(5,2) NOT NULL DEFAULT 0.00 COMMENT 'Penalty percentage (5-25%)',
+  `deduction_amount` decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Calculated penalty amount',
+  `refundable_amount` decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Total amount available for refund',
+  `transaction_date` date NOT NULL COMMENT 'Date of this refund transaction',
+  `transaction_amount` decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Amount refunded in this transaction (custom)',
+  `payment_method` varchar(100) DEFAULT NULL COMMENT 'Cash/Bank Transfer/Cheque/bKash',
+  `money_receipt_no` varchar(100) DEFAULT NULL COMMENT 'Receipt/transaction reference',
+  `remarks` text DEFAULT NULL COMMENT 'Transaction notes',
+  `status` tinyint(4) NOT NULL DEFAULT 0 COMMENT '0=pending, 1=completed, 3=cancelled',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `created_by` int(11) DEFAULT NULL COMMENT 'User who created',
+  `updated_by` int(11) DEFAULT NULL COMMENT 'User who last updated',
+  PRIMARY KEY (`id`),
+  KEY `idx_purchase_id` (`purchase_id`),
+  KEY `idx_client_id` (`client_id`),
+  KEY `idx_transaction_date` (`transaction_date`),
+  KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Flexible refund transactions with custom amounts per transaction';
