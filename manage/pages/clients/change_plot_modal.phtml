@@ -1,0 +1,400 @@
+<!-- Simplified Change Plot Modal Component -->
+<div class="modal fade" id="changePlotModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-gradient-warning text-white border-0">
+        <h5 class="modal-title mb-0">
+          <i class="lni lni-shuffle me-2"></i>Change Plot Assignment
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body py-4">
+
+        <input type="hidden" id="change_plot_purchase_id" value="">
+        <input type="hidden" id="change_plot_project_slug" value="">
+
+        <!-- Current Plot Information -->
+        <div class="card border-0 bg-light mb-4">
+          <div class="card-body">
+            <h6 class="fw-semibold mb-3">
+              <i class="lni lni-home me-2"></i>Current Plot Information
+            </h6>
+            <div class="row g-3">
+              <div class="col-md-3">
+                <label class="form-label fw-medium">Current Project</label>
+                <input type="text" id="current_project" class="form-control" readonly>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-medium">Current Block</label>
+                <input type="text" id="current_block" class="form-control" readonly>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-medium">Current Plot</label>
+                <input type="text" id="current_plot" class="form-control" readonly>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-medium">Current Katha</label>
+                <input type="text" id="current_katha" class="form-control" readonly>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Simplified New Plot Selection -->
+        <div class="card border-0 shadow-sm">
+          <div class="card-body">
+            <h6 class="fw-semibold mb-3">
+              <i class="lni lni-map me-2"></i>Select New Plot
+            </h6>
+
+            <div class="row g-3">
+                <label class="form-label fw-medium">
+                  <i class="lni lni-map-marker me-1"></i>Available Plots (within current project)
+                </label>
+                <select id="new_plot_select" class="form-control" style="width:100%">
+                  <option value="">Search plots (block/plot/katha/road)...</option>
+                </select>
+                <small class="form-text text-muted mt-1">Search by: block, plot number, katha, road</small>
+            </div>
+
+            <!-- Plot Details (shown after selection) -->
+            <div id="new_plot_details" class="mt-3" style="display:none;">
+              <div class="alert alert-success">
+                <strong>Selected Plot Details:</strong> Review the information below before confirming the change.
+              </div>
+              <div class="alert alert-danger">
+                <strong>By changing plot:</strong> Your all calculations eg: Payment Schedule, etc will be reset.
+              </div>
+
+              <div class="row g-2">
+                <div class="col-md-2">
+                  <label class="form-label fw-medium">Block</label>
+                  <input type="text" id="new_detail_block" class="form-control" readonly>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-medium">Plot</label>
+                  <input type="text" id="new_detail_plot" class="form-control" readonly>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-medium">Road</label>
+                  <input type="text" id="new_detail_road" class="form-control" readonly>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-medium">Katha</label>
+                  <input type="text" id="new_detail_katha" class="form-control" readonly>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-medium">Facing</label>
+                  <input type="text" id="new_detail_facing" class="form-control" readonly>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="alert alert-danger d-none" id="change_plot_error" role="alert"></div>
+      </div>
+
+      <div class="modal-footer border-0 bg-light">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+          <i class="lni lni-close me-1"></i>Cancel
+        </button>
+        <button id="change_plot_save" class="btn btn-warning text-white">
+          <i class="lni lni-shuffle me-1"></i>Change Plot
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  var bsChangePlotModal = null;
+
+  // Initialize change plot functionality
+  function initChangePlot() {
+    try {
+      var modalEl = document.getElementById('changePlotModal');
+      if (modalEl) bsChangePlotModal = new bootstrap.Modal(modalEl, { backdrop: 'static' });
+    } catch(e) { console.warn('Bootstrap modal init failed', e); }
+
+    window.changePlot = function(purchaseId) {
+      if (!purchaseId) return;
+      $('#change_plot_purchase_id').val(purchaseId);
+      $('#change_plot_project_slug').val('');
+      $('#change_plot_error').addClass('d-none').text('');
+      $('#new_plot_details').hide();
+      destroyPlotSelect2();
+      $('#new_plot_select').html('<option value="">Search plots (block/plot/katha/road)...</option>');
+
+      // load current purchase details (to get project_slug)
+      loadCurrentPlotDetails(purchaseId, function(success, projectSlug) {
+        if (!success) {
+          $('#change_plot_error').removeClass('d-none').text('Unable to load current project details.');
+          return;
+        }
+        $('#change_plot_project_slug').val(projectSlug || '');
+        initPlotSelect2();
+      });
+
+      if (bsChangePlotModal) bsChangePlotModal.show(); else $('#changePlotModal').modal('show');
+    };
+
+    // attach to buttons
+    $(document).off('click.changePlot').on('click.changePlot', '.change_plot_btn', function(e){
+      e.preventDefault();
+      var id = $(this).data('id');
+      if (id) changePlot(id);
+    });
+
+    // select handler
+    $(document).off('select2:select.changePlot').on('select2:select.changePlot', '#new_plot_select', function(e){
+      var item = e.params && e.params.data ? e.params.data : null;
+      if (item) {
+        populateNewPlotDetails(item);
+        $('#new_plot_details').show();
+      } else {
+        $('#new_plot_details').hide();
+      }
+    });
+
+    // save
+    $('#change_plot_save').off('click').on('click', function(){
+      var purchaseId = $('#change_plot_purchase_id').val();
+      var newPlotId = $('#new_plot_select').val();
+      var errors = [];
+      if (!newPlotId) errors.push('Please select a new plot.');
+      if (errors.length) {
+        $('#change_plot_error').removeClass('d-none').html(errors.join('<br>'));
+        return;
+      }
+      if (!confirm('Are you sure you want to change the plot assignment? This action cannot be undone.')) return;
+
+      var $btn = $(this).prop('disabled', true).html('<i class="spinner-border spinner-border-sm me-1"></i>Changing...');
+      $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=change_plot', {
+        purchase_id: purchaseId,
+        new_plot_id: newPlotId
+      })
+      .done(function(resp){
+        var data = safeParse(resp);
+        if (data && (data.status === 200 || data.status === '200')) {
+          if (bsChangePlotModal) bsChangePlotModal.hide(); else $('#changePlotModal').modal('hide');
+          var $alert = $('<div class="alert alert-success alert-dismissible fade show" role="alert">' +
+            '<i class="lni lni-checkmark me-2"></i>Plot has been changed successfully.' +
+            '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
+            '</div>');
+          $('#client_details').prepend($alert);
+          setTimeout(function(){ location.reload(); }, 1200);
+        } else {
+          var msg = data && data.message ? data.message : 'Failed to change plot';
+          $('#change_plot_error').removeClass('d-none').text(msg);
+        }
+      })
+      .fail(function(){ $('#change_plot_error').removeClass('d-none').text('Server error occurred. Please try again.'); })
+      .always(function(){ $btn.prop('disabled', false).html('<i class="lni lni-shuffle me-1"></i>Change Plot'); });
+    });
+  }
+    
+    // init Plot select2 - searches using project_slug and excludes current purchase id
+    function initPlotSelect2() {
+      destroyPlotSelect2();
+      var projectSlug = $('#change_plot_project_slug').val() || '';
+      var excludeId = $('#change_plot_purchase_id').val() || '';
+    
+      $('#new_plot_select').select2({
+        dropdownParent: $('#changePlotModal'),
+        placeholder: 'Search plots (block/plot/katha/road)...',
+        allowClear: true,
+        minimumInputLength: 0,
+        closeOnSelect: true,
+        width: '100%',
+        ajax: {
+          url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=search_purchases',
+          dataType: 'json',
+          delay: 250,
+          cache: true,
+          data: function(params) {
+            return {
+              q: params.term || '',
+              page: params.page || 1,
+              per_page: 30,
+              project_slug: projectSlug || '',
+              project_id: projectSlug || '',   // fallback
+              available_only: true,
+              exclude_purchase_id: excludeId || ''
+            };
+          },
+          processResults: function(data, params) {
+            try {
+              var rows = (data && data.results) ? data.results : (data && data.data ? data.data : (Array.isArray(data) ? data : []));
+              var mapped = rows.map(function(it){ return normalizePlotItem(it); })
+                .filter(function(it){
+                  return it && it.available !== false && it.id && String(it.id) !== String($('#change_plot_purchase_id').val());
+                });
+              var more = !!(data && (data.more || (data.pagination && data.pagination.more)));
+              return { results: mapped, pagination: { more: more } };
+            } catch(e) {
+              console.error('processResults error', e);
+              return { results: [], pagination: { more: false } };
+            }
+          }
+        },
+        templateResult: function(item) {
+          if (!item || !item.id) return item && item.text ? item.text : null;
+          var $wrap = $('<div class="select2-result-item d-flex justify-content-between align-items-center"></div>');
+          var $label = $('<div class="select2-main-text flex-grow-1"></div>').text(item.text);
+          $wrap.append($label);
+          if (item.status_label) {
+            var cls = getBadgeClass(item.status || '');
+            var $badge = $('<span class="select2-result-badge ' + cls + '"></span>').text(item.status_label);
+            $wrap.append($badge);
+          }
+          return $wrap;
+        },
+        templateSelection: function(item) { return item && item.text ? item.text : null; }
+      });
+    
+      // Ensure search input is focused when select2 opens
+      $('#new_plot_select').off('select2:open.autoFocus').on('select2:open.autoFocus', function() {
+        try {
+          // small timeout to wait for Select2 to render DOM
+          setTimeout(function() {
+            // Prefer querySelector for a single exact element
+            var search = document.querySelector('.select2-container--open .select2-search__field');
+            if (search) {
+              search.focus();
+              // place caret at end (helps some browsers)
+              try { search.setSelectionRange && search.setSelectionRange(search.value.length, search.value.length); } catch(e){}
+            }
+          }, 20);
+        } catch (err) {
+          // noop
+          console.warn('select2 autofocus failed', err);
+        }
+      });
+    
+      // Defensive: when dropdown closes, hide details (optional)
+      $('#new_plot_select').off('select2:close.autoHide').on('select2:close.autoHide', function() {
+        // keep details shown only when a selection exists
+        var val = $(this).val();
+        if (!val) $('#new_plot_details').hide();
+      });
+    }
+
+
+  function destroyPlotSelect2() {
+    try { if ($('#new_plot_select').hasClass('select2-hidden-accessible')) $('#new_plot_select').select2('destroy'); } catch(e) {}
+  }
+
+  // helpers similar to backend fields
+  function normalizePlotItem(item) {
+    if (!item) return null;
+    var id = item.id || item.purchase_id || '';
+    var plot = item.plot || item.plot_number || '';
+    var katha = (item.katha !== undefined) ? String(item.katha) : '';
+    var block = item.block || item.block_name || '';
+    var road = item.road || item.road_name || '';
+    var facing = item.facing || '';
+    var status = item.status || '';
+    var statusLabel = item.status_label || getStatusLabel(status);
+    var available = (item.available === 1 || item.available === true || String(item.available) === '1');
+
+    var parts = [];
+    if (block) parts.push('Block ' + String(block).toUpperCase());
+    if (plot) parts.push('Plot ' + String(plot));
+    if (katha) parts.push(String(katha) + ' katha');
+    if (road) parts.push('Road ' + String(road));
+    if (facing) parts.push('Facing ' + String(facing));
+
+    return {
+      id: id,
+      text: parts.join(' • ') || String(id),
+      plot: plot,
+      katha: katha,
+      block: block,
+      road: road,
+      facing: facing,
+      status: status,
+      status_label: statusLabel,
+      available: available,
+      blocked: !available,
+      raw: item
+    };
+  }
+
+  function getStatusLabel(status) {
+    var s = String(status || '').toLowerCase();
+    if (s === '0' || s === '1' || s === 'available') return 'Available';
+    if (s === '2' || s === 'sold' || s === 'booked') return 'Sold';
+    if (s === '3' || s === 'complete') return 'Complete';
+    if (s === '4' || s.indexOf('cancel') !== -1) return 'Cancelled';
+    return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : '';
+  }
+
+  function getBadgeClass(status) {
+    var s = String(status || '').toLowerCase();
+    if (/(sold|2|booked)/.test(s)) return 'sold';
+    if (/(cancel|4)/.test(s)) return 'cancelled';
+    if (/(complete|3)/.test(s)) return 'completed';
+    if (/(available|0|1)/.test(s)) return 'available';
+    return 'other';
+  }
+
+  // load current purchase details and return project_slug via callback
+  function loadCurrentPlotDetails(purchaseId, cb) {
+    if (!purchaseId) { if (typeof cb === 'function') cb(false, null); return; }
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_purchase_details&purchase_id=' + encodeURIComponent(purchaseId))
+      .done(function(resp){
+        var data = safeParse(resp);
+        if (data && (data.status === 200 || data.status === '200')) {
+          $('#current_project').val(data.project_name || '-');
+          $('#current_block').val(data.block || '-');
+          $('#current_plot').val(data.plot || '-');
+          $('#current_katha').val(data.katha || '-');
+          var slug = data.project_slug || data.project_id || data.proj_id || data.project || '';
+          if (typeof cb === 'function') cb(true, slug);
+        } else {
+          if (typeof cb === 'function') cb(false, null);
+        }
+      })
+      .fail(function(){ console.warn('Failed to load current plot details'); if (typeof cb === 'function') cb(false, null); });
+  }
+
+  function populateNewPlotDetails(plotData) {
+    $('#new_detail_block').val(plotData.block || plotData.block_name || '');
+    $('#new_detail_plot').val(plotData.plot || plotData.plot_number || '');
+    $('#new_detail_road').val(plotData.road || plotData.road_name || '');
+    $('#new_detail_katha').val(plotData.katha || '');
+    $('#new_detail_facing').val(plotData.facing || '');
+  }
+
+  function safeParse(resp) {
+    if (!resp) return null;
+    if (typeof resp === 'object') return resp;
+    try { return JSON.parse(resp); } catch(e) {
+      try { return (new Function('return ' + resp))(); } catch(e2) { return null; }
+    }
+  }
+
+  // integrate with existing initialization
+  if (typeof window.initViewClientComponents !== 'function') {
+    window.initViewClientComponents = function(){ initChangePlot(); };
+  } else {
+    var originalInit = window.initViewClientComponents;
+    window.initViewClientComponents = function(){ originalInit(); initChangePlot(); };
+  }
+
+  // cleanup: destroy select2 when view modal closes
+  $('#viewClient-modal').on('hidden.bs.modal.changePlot', function(){
+    try { if (bsChangePlotModal) { bsChangePlotModal.dispose(); bsChangePlotModal = null; } } catch(e){}
+    destroyPlotSelect2();
+    $(document).off('.changePlot');
+  });
+
+  // initialize immediately in case view already active
+  initChangePlot();
+});
+</script>

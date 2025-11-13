@@ -1,0 +1,763 @@
+<div class="self_remove_on_close">
+<?php
+/* view_client.phtml - Complete client view with enhanced payment schedule functionality */
+Global $project_mapping;
+global $db, $wo;
+
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// Fetch users
+$get_users = $db->orderBy('position', 'ASC')->where('active', '1')->where('banned', '0')->get(T_USERS);
+
+// Totals - Fixed calculations
+$clientId = $wo['client']['id'];
+
+// Fixed total amount calculation
+$total_amount = 0;
+$total_purchase = 0;
+try {
+    $helpers = $db->rawQuery("
+        SELECT bh.per_katha, b.katha 
+        FROM `" . T_BOOKING_HELPER . "` bh
+        JOIN `" . T_BOOKING . "` b ON b.id = bh.booking_id
+        WHERE bh.client_id = ? AND bh.status != '4'
+    ", [$clientId]);
+    
+    foreach ($helpers as $helper) {
+        $per_katha = (float)($helper->per_katha ?? 0);
+        $katha = (float)($helper->katha ?? 0);
+        $total_amount += ($per_katha * $katha);
+        $total_purchase++;
+    }
+} catch (Exception $e) {
+    $total_amount = 0;
+    $total_purchase = 0;
+}
+
+$total_paid    = (float) $db->where('customer_id', $clientId)->getValue(T_INVOICE, 'SUM(pay_amount)') ?: 0;
+$total_due     = $total_amount - $total_paid;
+$total_invoice = (int)   $db->where('customer_id', $clientId)->getValue(T_INVOICE, 'COUNT(*)');
+
+$get_nominees = $db->where('customer_id', $clientId)->orderBy('name', 'ASC')->get(T_CRM_NOMINEES);
+?>
+
+<!-- ===== Custom modal styles (drop into page head or here) ===== -->
+<style>
+/* Fix Select2 dropdown positioning issues */
+.select2-container {
+  z-index: 2050 !important;
+}
+
+.select2-dropdown {
+  z-index: 2050 !important;
+  position: fixed !important;
+}
+
+/* Specific fixes for nested modals */
+#viewClient-modal .select2-container {
+  z-index: 2060 !important;
+}
+
+#viewClient-modal .select2-dropdown {
+  z-index: 2060 !important;
+  position: fixed !important;
+}
+
+#updateInstallmentModal .select2-container {
+  z-index: 2070 !important;
+}
+
+#updateInstallmentModal .select2-dropdown {
+  z-index: 2070 !important;
+  position: fixed !important;
+}
+
+#changePlotModal .select2-container {
+  z-index: 2080 !important;
+}
+
+#changePlotModal .select2-dropdown {
+  z-index: 2080 !important;
+  position: absolute !important;
+}
+
+/* Ensure Select2 dropdowns stay within viewport */
+.select2-dropdown {
+  max-height: 300px !important;
+  overflow-y: auto !important;
+}
+
+/* Fix Select2 search field positioning */
+.select2-search--dropdown {
+  padding: 4px !important;
+}
+
+.select2-search--dropdown .select2-search__field {
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Modal backdrop blur and darker tint */
+.modal-backdrop.show {
+  background-color: rgba(18, 24, 31, 0.55); /* slightly darker */
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+/* Enhanced modal styling */
+.modal-xl {
+  max-width: 95vw;
+}
+
+.modal-content {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* Header gradient */
+.bg-gradient-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Card enhancements */
+.card {
+  transition: all 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
+}
+
+/* Table styling */
+.table-hover tbody tr:hover {
+  background-color: rgba(0,123,255,0.05);
+}
+
+/* Print styles */
+@media print {
+  .no-print { display: none !important; }
+  .modal { position: static !important; }
+  .modal-dialog { margin: 0 !important; max-width: none !important; }
+  .modal-content { box-shadow: none !important; border: none !important; }
+  body { background: white !important; }
+  
+  /* Booking form print styles */
+  .print_area {
+    page-break-inside: avoid;
+    margin-bottom: 20px;
+  }
+  
+  .print_area:not(:last-child) {
+    page-break-after: always;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .modal-xl { max-width: 98vw; margin: 10px; }
+  .card-body { padding: 1rem; }
+  .table-responsive { font-size: 0.875rem; }
+}
+
+/* Loading states */
+.btn.loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.btn.loading::after {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 8px;
+  border: 2px solid transparent;
+  border-top: 2px solid currentColor;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Enhanced dropdown styling */
+.dropdown-menu {
+  border: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  border-radius: 8px;
+}
+
+.dropdown-item {
+  padding: 8px 16px;
+  transition: all 0.2s ease;
+}
+
+.dropdown-item:hover {
+  background-color: rgba(0,123,255,0.1);
+  transform: translateX(2px);
+}
+
+/* Status badge styling */
+.badge {
+  font-size: 0.75em;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+/* Avatar styling */
+.avatar {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+/* Form enhancements */
+.form-control:focus {
+  border-color: #667eea;
+  box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+
+/* Icon styling */
+ion-icon {
+  vertical-align: middle;
+}
+
+/* Utility classes */
+.text-gradient {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.shadow-soft {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
+}
+
+/* Animation classes */
+.fade-in {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+</style>
+
+<div class="modal fade full_screen always" id="viewClient-modal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content border-0 shadow-lg">
+
+      <!-- Header with modern styling -->
+      <div class="modal-header no-print bg-gradient-primary text-white border-0">
+        <div class="d-flex align-items-center gap-3">
+          <div class="avatar rounded-circle bg-white text-primary d-flex align-items-center justify-content-center" style="width:48px;height:48px;font-weight:700;font-size:18px;">
+            <?= strtoupper(substr($wo['client']['name'],0,1)) ?>
+          </div>
+          <div>
+            <h4 class="mb-0 text-white"><?= htmlspecialchars($wo['client']['name']) ?></h4>
+            <div class="text-white-50 small"><?= htmlspecialchars(strtolower($wo['client']['email']) ?? '') ?></div>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+          <button id="printButton" class="btn btn-outline-light btn-sm" title="Print booking form">
+            <i class="lni lni-printer me-1"></i> Print
+          </button>
+          <button type="button" class="btn btn-outline-light btn-sm" data-bs-dismiss="modal" aria-label="Close">
+            <i class="lni lni-close"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="view-container form-toggle">
+        <!-- Summary Cards with modern design -->
+        <section id="client_details" class="no-print mt-4 px-4">
+          <div class="row g-3 mb-4">
+            <?php foreach ([['Plots', number_format($total_purchase), 'cart', 'info'], ['Total', "৳".number_format($total_amount), 'bag-handle-sharp', 'primary'], ['Paid', "৳".number_format($total_paid), 'checkmark-circle', 'success'], ['Due', "৳".number_format($total_due), 'time', 'danger']] as [$title, $value, $icon, $variant]): ?>
+              <div class="col-6 col-md-4 col-lg">
+                <div class="card h-100 border-0 shadow-sm">
+                  <div class="card-body d-flex align-items-center p-3">
+                    <div class="flex-grow-1">
+                      <p class="text-muted mb-1 small fw-medium"><?= htmlspecialchars($title) ?></p>
+                      <h5 class="mb-0 fw-bold"><?= htmlspecialchars($value) ?></h5>
+                    </div>
+                    <div class="fs-2 text-<?= $variant ?>">
+                      <ion-icon name="<?= htmlspecialchars($icon) ?>"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            <?php endforeach; ?>
+          </div>
+
+          <!-- Purchase Table with modern styling -->
+          <div class="card border-0 shadow-sm">
+            <div class="card-header bg-light border-0 py-3">
+              <h6 class="mb-0 fw-semibold text-dark">Purchase Details</h6>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive" style="overflow: visible;">
+                <table class="table table-hover mb-0" id="purchaseTable">
+                  <thead class="table-light">
+                    <tr>
+                      <th class="fw-semibold">Project</th>
+                      <th class="fw-semibold">Block</th>
+                      <th class="fw-semibold">Katha</th>
+                      <th class="fw-semibold">Plot</th>
+                      <th class="fw-semibold">Road</th>
+                      <th class="fw-semibold">File</th>
+                      <th class="fw-semibold">Date</th>
+                      <th class="fw-semibold">Status</th>
+                      <th class="fw-semibold text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php
+                    // Ensure $wo['booking_helper'] exists and is iterable
+                    if (!empty($wo['booking_helper']) && is_array($wo['booking_helper'])):
+                        foreach ($wo['booking_helper'] as $index => $p):
+                            $client  = $p['client'] ?? [];
+                            $booking = $p['booking'] ?? [];
+                    
+                            // --- parse nominee_ids (supports JSON array, CSV, pipe, or bracketed lists) ---
+                            $nominee_ids = [];
+                            $raw_nom_ids = $p['nominee_ids'] ?? ($booking['nominee_ids'] ?? null);
+                            if (!empty($raw_nom_ids)) {
+                                // try JSON
+                                $decoded = json_decode($raw_nom_ids, true);
+                                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                                    $nominee_ids = array_map('intval', $decoded);
+                                } else {
+                                    // normalize string: trim brackets then split by comma or pipe
+                                    $s = trim((string)$raw_nom_ids);
+                                    $s = trim($s, "[] \t\n\r\0\x0B");
+                                    if ($s !== '') {
+                                        $sep = (strpos($s, '|') !== false) ? '|' : ',';
+                                        $parts = array_filter(array_map('trim', explode($sep, $s)), function($v){ return $v !== ''; });
+                                        $nominee_ids = array_map('intval', $parts);
+                                    }
+                                }
+                            }
+                    
+                            // --- fetch nominee rows (only if we have ids) ---
+                            $i_nominee = [];
+                            $ii_nominee = [];
+                            if (!empty($nominee_ids) && isset($db) && method_exists($db, 'where')) {
+                                $rows = $db->where('id', $nominee_ids, 'IN')->get('crm_nominees', null, 'id, name, address, birthday, share_parcent, relation, phone');
+                    
+                                // normalize rows to associative by id
+                                $rows_by_id = [];
+                                foreach ($rows as $r) {
+                                    $row = is_object($r) ? (array)$r : (array)$r;
+                                    $rows_by_id[(int)$row['id']] = $row;
+                                }
+                    
+                                // preserve order from $nominee_ids and take first two
+                                $count = 0;
+                                foreach ($nominee_ids as $nid) {
+                                    $nid = (int)$nid;
+                                    if (!isset($rows_by_id[$nid])) continue;
+                                    if ($count === 0) {
+                                        $i_nominee = $rows_by_id[$nid];
+                                    } elseif ($count === 1) {
+                                        $ii_nominee = $rows_by_id[$nid];
+                                        break; // we only need two
+                                    }
+                                    $count++;
+                                }
+                            }
+                            // ensure arrays
+                            if (!is_array($i_nominee)) $i_nominee = [];
+                            if (!is_array($ii_nominee)) $ii_nominee = [];
+                    
+                            // --- parse installments (supports JSON, serialize, array, CSV) ---
+                            $installments = [];
+                            $rawInst = $p['installment'] ?? ($p['installments'] ?? ($booking['installments'] ?? null));
+                            if (!empty($rawInst) || $rawInst === '0') {
+                                // try JSON
+                                $dec = json_decode($rawInst, true);
+                                if (json_last_error() === JSON_ERROR_NONE && (is_array($dec) || is_object($dec))) {
+                                    $installments = (array)$dec;
+                                } else {
+                                    // try unserialize (legacy)
+                                    $un = @unserialize($rawInst);
+                                    if ($un !== false && (is_array($un) || is_object($un))) {
+                                        $installments = (array)$un;
+                                    } elseif (is_array($rawInst)) {
+                                        $installments = $rawInst;
+                                    } else {
+                                        // fallback: CSV or pipe-separated simple list
+                                        $s = trim((string)$rawInst);
+                                        if ($s !== '') {
+                                            $sep = (strpos($s, '|') !== false) ? '|' : ',';
+                                            $parts = array_map('trim', explode($sep, $s));
+                                            $installments = array_filter($parts, function($v){ return $v !== ''; });
+                                            // re-index
+                                            $installments = array_values($installments);
+                                        }
+                                    }
+                                }
+                            }
+                    
+                            // --- project name / html as before ---
+                            $proj_raw = isset($booking['project']) ? $booking['project'] : '';
+                            $proj_raw = str_replace('-', ' ', $proj_raw);
+                            $proj_raw = ucwords($proj_raw);
+                            $proj_html = htmlspecialchars($proj_raw, ENT_QUOTES);
+                            if ($proj_html === '') $proj_html = '-';
+
+                            // --- pass everything into the template ---
+                            echo Wo_LoadManagePage('clients/booking_form_template', [
+                                'p' => $p,
+                                'index' => $index,
+                                'client' => $client,
+                                'booking' => $booking,
+                                'proj_html' => $proj_html,
+                                'i_nominee' => $i_nominee,
+                                'ii_nominee' => $ii_nominee,
+                                'installments' => $installments
+                            ]);
+                    ?>
+
+
+
+                    <!-- Purchase Row -->
+                    <tr id="purchaseRow_<?= (int)$p['id'] ?>">
+                      <td><?= $proj_html ?></td>
+                      <td><?= ($booking['project'] == 'hill-town') ? htmlspecialchars(ucwords($booking['block'])) : 'N/A' ?></td>
+                      <td><?= htmlspecialchars($booking['katha']) ?></td>
+                      <td><?= htmlspecialchars($booking['plot']) ?></td>
+                      <td><?= htmlspecialchars($booking['road']) ?></td>
+                      <td><?= htmlspecialchars($booking['file_num']) ?></td>
+                      <td><?= htmlspecialchars(date('d M Y', $p['time'])) ?></td>
+                      <td>
+                        <?php
+                          $sr = (string)($booking['status'] ?? '');
+                          if ($sr === '1') echo '<span class="badge bg-info"> Available </span>';
+                          elseif ($sr === '2') echo '<span class="badge bg-success"> Sold </span>';
+                          elseif ($sr === '3') echo '<span class="badge bg-success"> Complete </span>';
+                          elseif ($sr === '4') echo '<span class="badge bg-danger"> Canceled </span>';
+                          else echo '<span class="badge bg-info"> Available </span>';
+                        ?>
+                      </td>
+                      <td class="text-center">
+                        <!-- Enhanced Dropdown Actions -->
+                        <div class="dropdown">
+                          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" 
+                                  id="dropdownMenuButton<?= (int)$p['id'] ?>" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="lni lni-more-alt"></i> More
+                          </button>
+                          <ul class="dropdown-menu dropdown-menu-end shadow-sm" aria-labelledby="dropdownMenuButton<?= (int)$p['id'] ?>">
+                            <li>
+                              <a class="dropdown-item print-booking-form" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-printer me-2 text-primary"></i> Print Booking Form
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item print_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-calendar me-2 text-primary"></i> Print Schedule
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item update_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-calendar me-2 text-primary"></i> Manage Schedule
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item change_plot_btn" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-shuffle me-2 text-warning"></i> Change Plot
+                              </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                              <a class="dropdown-item cancel-purchase" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                                <i class="lni lni-close me-2 text-danger"></i> Cancel Purchase
+                              </a>
+                            </li>
+                          </ul>
+                        </div>
+                      </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php endif; ?>
+                  </tbody>
+                </table>
+              </div>
+
+              <?= Wo_LoadManagePage('clients/add_purchase_form', ['get_nominees' => $get_nominees]) ?>
+
+            </div>
+          </div>
+
+          <!-- Client Details Card -->
+          <div class="card mt-4 border-0 shadow-sm">
+            <div class="card-header bg-light border-0 py-3">
+              <h6 class="mb-0 fw-semibold text-dark">Client Information</h6>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex align-items-center mb-3">
+                    <ion-icon name="person-circle" class="text-primary fs-5 me-2"></ion-icon>
+                    <div>
+                      <small class="text-muted">Name</small>
+                      <div class="fw-medium"><?= htmlspecialchars($wo['client']['name']) ?></div>
+                    </div>
+                  </div>
+                  
+                  <div class="d-flex align-items-center mb-3">
+                    <ion-icon name="location" class="text-primary fs-5 me-2"></ion-icon>
+                    <div>
+                      <small class="text-muted">Address</small>
+                      <div class="fw-medium"><?= htmlspecialchars($wo['client']['address']) ?></div>
+                    </div>
+                  </div>
+                  
+                  <div class="d-flex align-items-center mb-3">
+                    <ion-icon name="call" class="text-primary fs-5 me-2"></ion-icon>
+                    <div>
+                      <small class="text-muted">Phone</small>
+                      <div class="fw-medium"><?= htmlspecialchars($wo['client']['phone']) ?></div>
+                    </div>
+                  </div>
+
+                  <?php if (!empty($wo['additional']['reference'])): ?>
+                    <div class="d-flex align-items-center mb-3">
+                      <ion-icon name="link" class="text-primary fs-5 me-2"></ion-icon>
+                      <div>
+                        <small class="text-muted">Reference</small>
+                        <div class="fw-medium"><?= htmlspecialchars(Wo_UserData($wo['additional']['reference'])['name']) ?></div>
+                      </div>
+                    </div>
+                  <?php endif; ?>
+                </div>
+
+                <div class="col-md-6">
+                  <?php if ($wo['additional']): ?>
+                    <h6 class="fw-semibold mb-3">Additional Details</h6>
+                    <div class="table-responsive">
+                      <table class="table table-sm table-borderless mb-0">
+                        <tbody>
+                          <?php foreach ([
+                            'spouse_name'=>'Spouse Name','fathers_name'=>'Father\'s Name','permanent_addr'=>'Permanent Address',
+                            'email'=>'Email','nationality'=>'Nationality','birthday'=>'Birthday','religion'=>'Religion',
+                            'nid'=>'National ID','passport'=>'Passport'
+                          ] as $key=>$label): if (!empty($wo['additional'][$key])):
+                            $val = htmlspecialchars($wo['additional'][$key]);
+                          ?>
+                            <tr>
+                              <td class="text-muted small" style="width:40%"><?= $label ?></td>
+                              <td class="fw-medium"><?= $val ?></td>
+                            </tr>
+                          <?php endif; endforeach; ?>
+                        </tbody>
+                      </table>
+                    </div>
+                  <?php endif; ?>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-3 border-top">
+                <button class="btn btn-outline-primary show-booking-form">
+                  <i class="lni lni-print me-1"></i> Print Booking Form
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      
+
+    </div>
+  </div>
+</div>
+      <!-- Load all modals -->
+      <?= Wo_LoadManagePage('clients/cancel_purchase_modal') ?>
+      <?= Wo_LoadManagePage('clients/change_plot_modal') ?>
+      <?= Wo_LoadManagePage('clients/update_installment_modal') ?>
+
+<!-- Core JavaScript for View Client -->
+<script>
+jQuery(function($){
+  'use strict';
+
+  /* ========== Preview XLSX (AJAX) ========== */
+  function previewXlsx(purchaseId){
+    if (!purchaseId){ alert('Purchase ID missing'); return; }
+    // Prepare payload and call save_schedule_xlsx with preview flag (server should support preview:1)
+    var $btn = $('#ui_preview_xlsx');
+    $btn.prop('disabled', true).html('<i class="spinner-border spinner-border-sm me-1"></i>Preparing...');
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=installment_excel_modal', { purchase_id: purchaseId })
+      .done(function(resp){
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          $('body').append(data.html);
+          $('#installmentExcelModal').modal('show');
+        } else alert('Failed to open modal');
+      })
+    .fail(function(){ alert('Server error while preparing preview'); })
+    .always(function(){ $btn.prop('disabled', false).html('<i class="lni lni-eye me-1"></i>Preview XLSX'); });
+  }
+  
+  // Core utilities
+  function moneyVal(v){
+    if (v === undefined || v === null) return 0;
+    var s = String(v).replace(/,/g,'').trim();
+    if (s === '') return 0;
+    var n = Number(s);
+    return isNaN(n) ? 0 : n;
+  }
+
+  function fmtMoney(v){
+    if (v === undefined || v === null) v = 0;
+    return Number(Math.round(v * 100) / 100).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2
+    });
+  }
+
+  // Initialize modal components when modal opens
+  $('#viewClient-modal').on('shown.bs.modal', function(){
+    // Initialize all components
+    if (typeof initViewClientComponents === 'function') {
+      initViewClientComponents();
+    }
+  });
+
+  // Cleanup when modal closes - self remove all bindings
+  $('#viewClient-modal').on('hidden.bs.modal', function(){
+    // Destroy all Select2 instances
+    $('#viewClient-modal').find('.select2-hidden-accessible').each(function(){
+      try {
+        $(this).select2('destroy');
+      } catch(e) {}
+    });
+    
+    // Remove all event handlers bound to window
+    $(window).off('.viewClient');
+    $(document).off('.viewClient');
+    
+    // Clear any intervals or timeouts
+    if (window.viewClientIntervals) {
+      window.viewClientIntervals.forEach(function(id) {
+        clearInterval(id);
+      });
+      window.viewClientIntervals = [];
+    }
+    
+    if (window.viewClientTimeouts) {
+      window.viewClientTimeouts.forEach(function(id) {
+        clearTimeout(id);
+      });
+      window.viewClientTimeouts = [];
+    }
+    
+    // Clean up global functions
+    delete window.transferPurchase;
+    delete window.generatePurchaseReport;
+    delete window.exportPurchaseData;
+    delete window.suspendPurchase;
+    delete window.initViewClientComponents;
+    delete window.openPaymentSchedule;
+    delete window.changePlot;
+    delete window.printPaymentSchedule;
+    delete window.togglePayment;
+    
+    //Clean up the code
+    $('.self_remove_on_close').remove();
+  });
+
+
+  // Wire #printButton to print ALL booking forms in this modal
+  $('#printButton').off('click').on('click', function(){
+    var ids = [];
+    $('#viewClient-modal .print_area').each(function(){
+      var id = $(this).attr('data-purchase-id');
+      if (id) ids.push(id);
+    });
+    if (!ids.length) {
+      alert('No booking forms available to print.');
+      return;
+    }
+    printBookingFormsByIds(ids);
+  });
+
+  // Wire #printButton to print ALL booking forms in this modal
+  $('.print_installment').off('click').on('click', function(){
+      var id = $(this).attr('data-id');
+        previewXlsx(id);
+  });
+
+  // Wire individual print button(s)
+  $(document).off('click', '.print-booking-form').on('click', '.print-booking-form', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    if (!id) { alert('Booking id missing'); return; }
+    printBookingFormsByIds([id]);
+  });
+
+  // Global functions for dropdown actions
+  window.generatePurchaseReport = function(purchaseId) {
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=generate_purchase_report', {
+      purchase_id: purchaseId
+    })
+    .done(function(response){
+      var data = typeof response === 'string' ? JSON.parse(response) : response;
+      if (data && data.status === 200 && data.download_url) {
+        window.open(data.download_url, '_blank');
+      } else {
+        alert(data.message || 'Failed to generate report');
+      }
+    })
+    .fail(function(){
+      alert('Server error while generating report');
+    });
+  };
+
+  window.exportPurchaseData = function(purchaseId) {
+    var format = prompt('Export format:\n1. Excel\n2. PDF\n3. CSV', '1');
+    if (!format) return;
+    
+    var formatMap = {'1': 'excel', '2': 'pdf', '3': 'csv'};
+    var exportFormat = formatMap[format] || 'excel';
+    
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=export_purchase_data', {
+      purchase_id: purchaseId,
+      export_type: exportFormat
+    })
+    .done(function(response){
+      var data = typeof response === 'string' ? JSON.parse(response) : response;
+      if (data && data.status === 200 && data.download_url) {
+        var link = document.createElement('a');
+        link.href = data.download_url;
+        link.download = data.filename || 'purchase_data.' + exportFormat;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        alert(data.message || 'Failed to export data');
+      }
+    })
+    .fail(function(){
+      alert('Server error while exporting data');
+    });
+  };
+
+});
+</script>
+
+</div>

@@ -1,0 +1,1176 @@
+<style>
+/* Enhanced modal and form styling */
+.bg-gradient-primary {
+  background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+}
+
+.bg-gradient-success {
+  background: linear-gradient(45deg, #11998e 0%, #38ef7d 100%);
+}
+
+.bg-gradient-warning {
+  background: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+}
+
+.bg-gradient-info {
+  background: linear-gradient(45deg, #00d4ff 0%, #090979 100%);
+}
+
+/* Modal positioning and z-index fixes */
+.modal {
+  z-index: 1050;
+}
+
+.modal-backdrop {
+  z-index: 1040;
+}
+
+/* Fix Select2 dropdown positioning in modals */
+.select2-container {
+  z-index: 2050 !important;
+}
+
+.select2-dropdown {
+  z-index: 2050 !important;
+}
+
+/* Specific fixes for nested modals */
+#viewClient-modal .select2-container {
+  z-index: 2060 !important;
+}
+
+#viewClient-modal .select2-dropdown {
+  z-index: 2060 !important;
+}
+
+#updateInstallmentModal .select2-container {
+  z-index: 2070 !important;
+}
+
+#updateInstallmentModal .select2-dropdown {
+  z-index: 2070 !important;
+}
+
+#changePlotModal .select2-container {
+  z-index: 2080 !important;
+}
+
+#changePlotModal .select2-dropdown {
+  z-index: 2080 !important;
+}
+
+/* Enhanced Select2 styling */
+.select2-container--bootstrap-5 .select2-selection {
+  min-height: 38px;
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+}
+
+.select2-container--bootstrap-5 .select2-selection--single {
+  height: 38px;
+}
+
+.select2-container--bootstrap-5 .select2-selection--single .select2-selection__rendered {
+  line-height: 36px;
+  padding-left: 12px;
+}
+
+.select2-container--bootstrap-5 .select2-selection--multiple {
+  min-height: 38px;
+}
+
+.select2-container--bootstrap-5 .select2-selection--multiple .select2-selection__rendered {
+  padding: 2px 5px;
+}
+
+.select2-dropdown {
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.select2-search--dropdown .select2-search__field {
+  border: 1px solid #ced4da;
+  border-radius: 0.25rem;
+  padding: 0.375rem 0.75rem;
+}
+
+.select2-results__option {
+  padding: 8px 12px;
+}
+
+.select2-results__option--highlighted {
+  background-color: #667eea !important;
+  color: white;
+}
+
+/* Enhanced card styling */
+.card {
+  transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.table-hover tbody tr:hover {
+  background-color: rgba(0,123,255,.05);
+}
+
+.btn-group .btn {
+  transition: all 0.2s ease-in-out;
+}
+
+.modal-content {
+  border-radius: 15px;
+}
+
+.modal-header {
+  border-radius: 15px 15px 0 0;
+}
+
+.card-header {
+  border-radius: 10px 10px 0 0;
+}
+
+.form-control, .form-select {
+  border: 1px solid #e0e6ed;
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.form-control:focus, .form-select:focus {
+  border-color: #667eea;
+  box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+
+.badge {
+  padding: 0.5em 0.75em;
+  font-size: 0.75em;
+}
+
+.btn-outline-primary:hover {
+  background-color: #667eea;
+  border-color: #667eea;
+}
+
+.text-gradient {
+  background: linear-gradient(45deg, #667eea, #764ba2);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+#ui_schedule_table .table-light th {
+  background-color: #f8f9fa !important;
+}
+
+.payment-status-paid {
+  background-color: rgba(40, 167, 69, 0.1);
+}
+
+.payment-status-unpaid {
+  background-color: rgba(255, 193, 7, 0.1);
+}
+
+/* Enhanced dropdown styling */
+.dropdown-menu {
+  border: none;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+  border-radius: 8px;
+  padding: 0;
+  min-width: 220px;
+  z-index: 1060;
+}
+
+.dropdown-header {
+  background: linear-gradient(45deg, #667eea, #764ba2);
+  color: white !important;
+  font-weight: 600;
+  padding: 10px 15px;
+  margin: 0;
+  border-radius: 8px 8px 0 0;
+}
+
+.dropdown-header:first-child {
+  border-radius: 8px 8px 0 0;
+}
+
+.dropdown-item {
+  padding: 8px 15px;
+  transition: all 0.2s ease-in-out;
+  font-size: 0.9rem;
+}
+
+.dropdown-item:hover {
+  background-color: rgba(102, 126, 234, 0.1);
+  transform: translateX(3px);
+}
+
+.dropdown-item i {
+  width: 18px;
+  display: inline-block;
+}
+
+.dropdown-divider {
+  margin: 5px 0;
+  border-top: 1px solid rgba(0,0,0,0.1);
+}
+
+/* Print styles */
+.print_area {
+  font-weight: 700;
+  width: 8.5in;
+  height: 11in;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.print_area .changable-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+}
+
+.print_area .changable-content span {
+  position: absolute;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .print_area, .print_area * { visibility: visible; }
+  .print_area {
+    display: block;
+    page-break-after: always;
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+  }
+  @page {
+    size: 8.5in 11in;
+    margin: 0;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* Schedule print template */
+.schedule-print-template {
+  background: white;
+  padding: 30px;
+  font-family: Arial, sans-serif;
+}
+
+.schedule-print-template .company-name {
+  color: #2c3e50;
+  font-weight: bold;
+}
+
+.schedule-print-template .document-title {
+  color: #34495e;
+  margin-bottom: 10px;
+}
+
+.schedule-print-template .card {
+  border: 1px solid #dee2e6;
+  margin-bottom: 5px;
+}
+
+.schedule-print-template .signature-area {
+  margin-top: 40px;
+}
+
+/* Enhanced loading states */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+}
+
+.loading-overlay .spinner-border {
+  width: 3rem;
+  height: 3rem;
+}
+
+/* Enhanced payment schedule table */
+#ui_schedule_table {
+  font-size: 0.9rem;
+}
+
+#ui_schedule_table th {
+  font-weight: 600;
+  background-color: #f8f9fa !important;
+  border-bottom: 2px solid #dee2e6;
+}
+
+#ui_schedule_table td {
+  vertical-align: middle;
+}
+
+#ui_schedule_table .payment-status-paid {
+background-color: rgb(0 255 78 / 17%);
+--bs-table-color: #014600;
+--bs-table-bg: rgba(40, 167, 69, 0.05);
+}
+
+#ui_schedule_table .payment-status-unpaid {
+background-color: rgba(255, 255, 255, 1);
+--bs-table-bg: rgba(255, 255, 255, 1);
+}
+
+#ui_schedule_table .adjustment-status-color {
+--bs-table-color: #460000;
+--bs-table-bg: #ffe9e0;
+}
+/* Enhanced modal sizing */
+.modal-xl {
+  max-width: 1200px;
+}
+
+/* Better responsive design */
+@media (max-width: 768px) {
+  .modal-dialog.modal-xl { 
+    max-width: 95vw; 
+    margin: 0.5rem; 
+  }
+  
+  .modal-content .modal-header { 
+    padding: 12px; 
+  }
+  
+  .view-container.form-toggle { 
+    padding: 10px; 
+  }
+  
+  .row.g-3 > .col-6 {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
+  
+  #ui_schedule_table {
+    font-size: 0.8rem;
+  }
+  
+  #ui_schedule_table th,
+  #ui_schedule_table td {
+    padding: 0.5rem 0.25rem;
+  }
+}
+
+/* Enhanced button styling */
+.btn-group .btn {
+  border-radius: 0.375rem;
+}
+
+.btn-group .btn:not(:last-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-right: -1px;
+}
+
+.btn-group .btn:not(:first-child) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* Enhanced form validation */
+.was-validated .form-control:invalid {
+  border-color: #dc3545;
+}
+
+.was-validated .form-control:valid {
+  border-color: #198754;
+}
+
+/* Enhanced accessibility */
+.modal .btn:focus,
+.modal .form-control:focus,
+.modal .form-select:focus {
+  outline: 3px solid rgba(59,130,246,0.15);
+  outline-offset: 2px;
+}
+
+/* Better spacing utilities */
+.gap-2 {
+  gap: 0.5rem !important;
+}
+
+.gap-3 {
+  gap: 1rem !important;
+}
+
+/* Enhanced shadow utilities */
+.shadow-sm {
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075) !important;
+}
+
+.shadow-lg {
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.175) !important;
+}
+
+/* Better transition utilities */
+.transition-all {
+  transition: all 0.15s ease-in-out !important;
+}
+
+/* Enhanced hover effects */
+.hover-shadow:hover {
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* Better focus ring */
+.focus-ring:focus {
+  outline: 0;
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Enhanced modal animations */
+.modal.fade .modal-dialog {
+  transition: transform 0.3s ease-out;
+  transform: translate(0, -50px);
+}
+
+.modal.show .modal-dialog {
+  transform: none;
+}
+
+/* Enhanced progress styling */
+.progress {
+  height: 1rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+  background-color: #e9ecef;
+  border-radius: 0.375rem;
+}
+
+.progress-bar {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  background-color: #0d6efd;
+  transition: width 0.6s ease;
+}
+
+/* Enhanced loading states */
+.btn.loading {
+  position: relative;
+  color: transparent;
+}
+
+.btn.loading::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  top: 50%;
+  left: 50%;
+  margin-left: -8px;
+  margin-top: -8px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Enhanced sticky elements */
+.sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+}
+
+/* Better spacing for modal content */
+.modal-body .row.g-2 > * {
+  padding-right: 0.5rem;
+  padding-left: 0.5rem;
+}
+
+.modal-body .row.g-3 > * {
+  padding-right: 0.75rem;
+  padding-left: 0.75rem;
+}
+
+/* Enhanced alert styling */
+.alert {
+  border: none;
+  border-radius: 0.5rem;
+}
+
+.alert-warning {
+  background-color: #fff3cd;
+  color: #664d03;
+}
+
+.alert-danger {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.alert-success {
+  background-color: #d1e7dd;
+  color: #0f5132;
+}
+
+.alert-info {
+  background-color: #d1ecf1;
+  color: #055160;
+}
+
+/* Enhanced scrollbar styling */
+.table-responsive::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.table-responsive::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.table-responsive::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+.table-responsive::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Enhanced input group styling */
+.input-group > .form-control,
+.input-group > .form-select {
+  position: relative;
+  flex: 1 1 auto;
+  width: 1%;
+  min-width: 0;
+}
+
+.input-group-text {
+  display: flex;
+  align-items: center;
+  padding: 0.375rem 0.75rem;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #212529;
+  text-align: center;
+  white-space: nowrap;
+  background-color: #e9ecef;
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+}
+
+/* Better tooltip styling */
+.tooltip {
+  position: absolute;
+  z-index: 1080;
+  display: block;
+  margin: 0;
+  font-family: var(--bs-font-sans-serif);
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  text-decoration: none;
+  text-shadow: none;
+  text-transform: none;
+  letter-spacing: normal;
+  word-break: normal;
+  word-spacing: normal;
+  white-space: normal;
+  line-break: auto;
+  font-size: 0.875rem;
+  word-wrap: break-word;
+  opacity: 0;
+}
+
+.tooltip.show {
+  opacity: 0.9;
+}
+
+/* Enhanced form labels */
+.form-label.fw-medium {
+  font-weight: 500;
+  color: #495057;
+  margin-bottom: 0.5rem;
+}
+
+/* Better border utilities */
+.border-0 {
+  border: 0 !important;
+}
+
+.border-top {
+  border-top: 1px solid #dee2e6 !important;
+}
+
+/* Enhanced color utilities */
+.text-primary {
+  color: #0d6efd !important;
+}
+
+.text-success {
+  color: #198754 !important;
+}
+
+.text-warning {
+  color: #ffc107 !important;
+}
+
+.text-danger {
+  color: #dc3545 !important;
+}
+
+.text-info {
+  color: #0dcaf0 !important;
+}
+
+/* Enhanced background utilities */
+.bg-light {
+  background-color: #f8f9fa !important;
+}
+
+.bg-white {
+  background-color: #fff !important;
+}
+
+/* Better positioning utilities */
+.position-relative {
+  position: relative !important;
+}
+
+.position-absolute {
+  position: absolute !important;
+}
+
+.position-fixed {
+  position: fixed !important;
+}
+
+/* Enhanced display utilities */
+.d-none {
+  display: none !important;
+}
+
+.d-block {
+  display: block !important;
+}
+
+.d-flex {
+  display: flex !important;
+}
+
+/* Enhanced flex utilities */
+.flex-grow-1 {
+  flex-grow: 1 !important;
+}
+
+.flex-shrink-0 {
+  flex-shrink: 0 !important;
+}
+
+.align-items-center {
+  align-items: center !important;
+}
+
+.justify-content-between {
+  justify-content: space-between !important;
+}
+
+.justify-content-center {
+  justify-content: center !important;
+}
+
+/* Better margin and padding utilities */
+.m-0 { margin: 0 !important; }
+.m-1 { margin: 0.25rem !important; }
+.m-2 { margin: 0.5rem !important; }
+.m-3 { margin: 1rem !important; }
+.m-4 { margin: 1.5rem !important; }
+
+.p-0 { padding: 0 !important; }
+.p-1 { padding: 0.25rem !important; }
+.p-2 { padding: 0.5rem !important; }
+.p-3 { padding: 1rem !important; }
+.p-4 { padding: 1.5rem !important; }
+
+.mb-0 { margin-bottom: 0 !important; }
+.mb-1 { margin-bottom: 0.25rem !important; }
+.mb-2 { margin-bottom: 0.5rem !important; }
+.mb-3 { margin-bottom: 1rem !important; }
+.mb-4 { margin-bottom: 1.5rem !important; }
+
+.mt-0 { margin-top: 0 !important; }
+.mt-1 { margin-top: 0.25rem !important; }
+.mt-2 { margin-top: 0.5rem !important; }
+.mt-3 { margin-top: 1rem !important; }
+.mt-4 { margin-top: 1.5rem !important; }
+
+.me-1 { margin-right: 0.25rem !important; }
+.me-2 { margin-right: 0.5rem !important; }
+.me-3 { margin-right: 1rem !important; }
+
+.ms-1 { margin-left: 0.25rem !important; }
+.ms-2 { margin-left: 0.5rem !important; }
+.ms-3 { margin-left: 1rem !important; }
+.ms-auto { margin-left: auto !important; }
+
+.py-3 { padding-top: 1rem !important; padding-bottom: 1rem !important; }
+.py-4 { padding-top: 1.5rem !important; padding-bottom: 1.5rem !important; }
+
+.px-3 { padding-left: 1rem !important; padding-right: 1rem !important; }
+.px-4 { padding-left: 1.5rem !important; padding-right: 1.5rem !important; }
+
+/* Enhanced width utilities */
+.w-100 { width: 100% !important; }
+.h-100 { height: 100% !important; }
+
+/* Better text alignment */
+.text-center { text-align: center !important; }
+.text-start { text-align: left !important; }
+.text-end { text-align: right !important; }
+
+/* Enhanced border radius */
+.rounded { border-radius: 0.375rem !important; }
+.rounded-circle { border-radius: 50% !important; }
+
+/* Better overflow handling */
+.overflow-hidden { overflow: hidden !important; }
+.overflow-auto { overflow: auto !important; }
+
+/* Enhanced z-index utilities */
+.z-index-1 { z-index: 1 !important; }
+.z-index-2 { z-index: 2 !important; }
+.z-index-3 { z-index: 3 !important; }
+
+/* Improved cursor utilities */
+.cursor-pointer { cursor: pointer !important; }
+
+/* Better user select utilities */
+.user-select-none { user-select: none !important; }
+
+/* Enhanced opacity utilities */
+.opacity-75 { opacity: 0.75 !important; }
+.opacity-50 { opacity: 0.5 !important; }
+
+/* Enhanced hover effects */
+.hover-shadow:hover {
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* Better focus ring */
+.focus-ring:focus {
+  outline: 0;
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Enhanced list styling */
+.list-unstyled {
+  padding-left: 0;
+  list-style: none;
+}
+
+/* Enhanced form styling */
+.form-floating > label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  padding: 1rem 0.75rem;
+  pointer-events: none;
+  border: 1px solid transparent;
+  transform-origin: 0 0;
+  transition: opacity 0.1s ease-in-out, transform 0.1s ease-in-out;
+}
+
+/* Enhanced button group styling */
+.btn-group > .btn:not(:last-child):not(.dropdown-toggle) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.btn-group > .btn:not(:first-child) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* Enhanced modal backdrop */
+.modal-backdrop.show {
+  opacity: 0.6;
+}
+
+/* Better button spacing */
+.btn-group .btn + .btn {
+  margin-left: 0;
+}
+
+/* Enhanced card shadows */
+.card.border-0.shadow-sm {
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075) !important;
+}
+
+.card.border-0.shadow-lg {
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.175) !important;
+}
+
+/* Enhanced form controls in modals */
+.modal .form-control-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+.modal .form-select-sm {
+  padding: 0.25rem 1.75rem 0.25rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+/* Better spacing for modal content */
+.modal-body .row.g-2 > * {
+  padding-right: 0.5rem;
+  padding-left: 0.5rem;
+}
+
+.modal-body .row.g-3 > * {
+  padding-right: 0.75rem;
+  padding-left: 0.75rem;
+}
+
+/* Fix for nested modal z-index issues */
+.modal.show ~ .modal {
+  z-index: 1060;
+}
+
+.modal.show ~ .modal .modal-backdrop {
+  z-index: 1055;
+}
+
+/* Ensure dropdowns in modals work properly */
+.modal .dropdown-menu {
+  z-index: 2100;
+}
+
+/* Fix for Select2 in nested modals */
+.select2-container--open {
+  z-index: 2100 !important;
+}
+
+.select2-dropdown {
+  z-index: 2100 !important;
+}
+
+/* Enhanced Select2 result styling for purchase forms */
+.select2-result-badge {
+    display: inline-flex;
+    height: 21px;
+    vertical-align: middle;
+    font-size: 0.6rem;
+    line-height: 1.2;
+    padding: 3px 6px;
+    margin-left: 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: none;
+    white-space: nowrap;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    align-items: center;
+}
+
+.select2-result-badge.available { 
+  background: #18bb6b; 
+  color: #fff; 
+  border-color: rgba(0,0,0,0.08); 
+}
+
+.select2-result-badge.sold { 
+  background: #dc3545; 
+  color: #fff; 
+  border-color: rgba(0,0,0,0.08); 
+}
+
+.select2-result-badge.cancelled { 
+  background: #6c757d; 
+  color: #fff; 
+  border-color: rgba(0,0,0,0.08); 
+}
+
+.select2-result-badge.completed { 
+  background: #0d6efd; 
+  color: #fff; 
+  border-color: rgba(0,0,0,0.08); 
+}
+
+.select2-result-badge.other {
+  background: #e2e3e5;
+  color: #6c757d;
+  border-color: rgba(0,0,0,0.08);
+}
+
+.select2-result--disabled .select2-result-badge {
+  opacity: 0.45;
+  filter: grayscale(10%);
+}
+
+.select2-result-item .select2-result-badge { 
+  margin-left: 10px; 
+}
+
+/* Fix Select2 arrow positioning */
+#viewClient-modal .select2-container .select2-selection__arrow { 
+  height: 36px !important; 
+  top: 0 !important; 
+}
+
+/* Ensure Select2 containers are properly sized */
+#viewClient-modal .select2-container .select2-selection--single,
+#viewClient-modal .select2-container--bootstrap-5 .select2-selection--single,
+#viewClient-modal .select2-container .select2-selection--multiple,
+#viewClient-modal .select2-container--bootstrap-5 .select2-selection--multiple {
+    height: 36px !important;
+    min-height: 36px !important;
+}
+
+#viewClient-modal .select2-container .select2-selection--single .select2-selection__rendered {
+  display: flex !important;
+  align-items: center !important;
+  line-height: 36px !important;
+  padding: 0 8px !important;
+}
+
+/* Special handling for nominee selects */
+#viewClient-modal .select2-container.select2-nominee-exclude .select2-selection__rendered,
+#viewClient-modal .select2-container.select2-nominee-exclude .select2-selection--multiple .select2-selection__rendered,
+#viewClient-modal .select2-container.select2-nominee-exclude .select2-selection--single .select2-selection__rendered {
+  align-items: normal !important;
+  line-height: 1.5 !important;
+  padding: 0 8px !important;
+}
+
+/* Ensure proper modal stacking */
+.modal {
+  --bs-modal-zindex: 1055;
+}
+
+.modal.show {
+  z-index: var(--bs-modal-zindex);
+}
+
+.modal-backdrop {
+  --bs-backdrop-zindex: 1050;
+  z-index: var(--bs-backdrop-zindex);
+}
+
+/* Fix for multiple modals */
+body.modal-open .modal:nth-of-type(even) {
+  z-index: 1060;
+}
+
+body.modal-open .modal:nth-of-type(even) + .modal-backdrop {
+  z-index: 1059;
+}
+
+/* Enhanced responsive modal sizing */
+@media (min-width: 576px) {
+  .modal-dialog {
+    max-width: 500px;
+    margin: 1.75rem auto;
+  }
+}
+
+@media (min-width: 992px) {
+  .modal-lg {
+    max-width: 800px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .modal-xl {
+    max-width: 1140px;
+  }
+}
+
+/* Fix for modal content overflow */
+.modal-body {
+  max-height: calc(100vh - 142px);
+  overflow-y: auto;
+}
+
+/* Enhanced button states */
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Better form control styling in modals */
+.modal .form-control,
+.modal .form-select {
+  font-size: 0.9rem;
+}
+
+/* Enhanced table responsiveness */
+@media (max-width: 768px) {
+  .table-responsive {
+    font-size: 0.8rem;
+  }
+  
+  .table th,
+  .table td {
+    padding: 0.5rem 0.25rem;
+  }
+}
+
+/* Fix for Select2 search field focus */
+.select2-search--dropdown .select2-search__field:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+
+/* Enhanced modal header styling */
+.modal-header.bg-gradient-primary,
+.modal-header.bg-gradient-success,
+.modal-header.bg-gradient-warning,
+.modal-header.bg-gradient-info {
+  border-bottom: none;
+}
+
+/* Better close button styling */
+.btn-close-white {
+  filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+/* Enhanced card body padding */
+.card-body.p-3 {
+  padding: 1rem !important;
+}
+
+.card-body.p-4 {
+  padding: 1.5rem !important;
+}
+
+/* Fix for table header stickiness */
+.table thead th.sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: inherit;
+}
+
+/* Enhanced input focus states */
+.form-control:focus,
+.form-select:focus {
+  border-color: #667eea;
+  box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+  outline: 0;
+}
+
+/* Better modal dialog centering */
+.modal-dialog-centered {
+  display: flex;
+  align-items: center;
+  min-height: calc(100% - 1rem);
+}
+
+@media (min-width: 576px) {
+  .modal-dialog-centered {
+    min-height: calc(100% - 3.5rem);
+  }
+}
+
+/* Enhanced alert dismissible styling */
+.alert-dismissible .btn-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  padding: 1.25rem 1rem;
+}
+
+/* Fix for nested modal backdrop issues */
+.modal-backdrop.fade {
+  opacity: 0;
+}
+
+.modal-backdrop.show {
+  opacity: 0.5;
+}
+
+/* Enhanced table striping */
+.table-striped > tbody > tr:nth-of-type(odd) > td,
+.table-striped > tbody > tr:nth-of-type(odd) > th {
+  background-color: rgba(0, 0, 0, 0.025);
+}
+
+/* Better form validation styling */
+.is-invalid {
+  border-color: #dc3545;
+  padding-right: calc(1.5em + 0.75rem);
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' width='12' height='12' fill='none' stroke='%23dc3545'%3e%3ccircle cx='6' cy='6' r='4.5'/%3e%3cpath d='M5.8 3.6h.4L6 6.5z'/%3e%3ccircle cx='6' cy='8.2' r='.6' fill='%23dc3545' stroke='none'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right calc(0.375em + 0.1875rem) center;
+  background-size: calc(0.75em + 0.375rem) calc(0.75em + 0.375rem);
+}
+
+.is-valid {
+  border-color: #198754;
+  padding-right: calc(1.5em + 0.75rem);
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3e%3cpath fill='%23198754' d='M2.3 6.73L.6 4.53c-.4-1.04.46-1.4 1.1-.8l1.1 1.4 3.4-3.8c.6-.63 1.6-.27 1.2.7l-4 4.6c-.43.5-.8.4-1.1.1z'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right calc(0.375em + 0.1875rem) center;
+  background-size: calc(0.75em + 0.375rem) calc(0.75em + 0.375rem);
+}
+
+/* Enhanced feedback styling */
+.invalid-feedback {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  font-size: 0.875em;
+  color: #dc3545;
+}
+
+.valid-feedback {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  font-size: 0.875em;
+  color: #198754;
+}
+
+/* Year item overused styling */
+.year_item.overused {
+  color: #dc3545;
+}
+
+.year_item.overused h4 {
+  color: #dc3545;
+}
+</style>

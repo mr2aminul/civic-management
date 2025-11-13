@@ -1,0 +1,749 @@
+<?php
+// (debug lines optional — remove for production)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// manage/pages/clients/installment_excel_modal.phtml
+$helper  = $wo['modal_purchase'] ?? null;
+$booking = $wo['modal_booking'] ?? null;
+$client  = $wo['modal_client'] ?? null;
+
+if (!$helper || !$booking) {
+    echo '<div class="alert alert-danger">No installment / booking data available.</div>';
+    return;
+}
+
+// ---------- Paths and URLs (filename consistent for path & URL) ----------
+$theme = $wo['config']['theme'] ?? 'default';
+$client_name_safe = isset($client['name']) ? preg_replace('/[^A-Za-z0-9_\-]/', '_', $client['name']) : 'client';
+$project_safe     = isset($booking->project) ? preg_replace('/[^A-Za-z0-9]/', '_', $booking->project) : 'project';
+$filename = "installment_{$client_name_safe}_" . intval($helper->id) . "_{$project_safe}.xlsx";
+$template_path = "./themes/{$theme}/file_template/installment_schedule_{$project_safe}.xlsx";
+$modified_file_path = "./themes/{$theme}/{$filename}";
+$theme_url = rtrim($wo['config']['theme_url'] ?? '', '/');
+$file_download_url = "{$theme_url}/{$filename}";
+
+// load PhpSpreadsheet
+require_once 'assets/libraries/phpSpreadsheet/vendor/autoload.php';
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\RichText\RichText;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
+
+// ---------- helpers ----------
+function safe_int($v, $default = 0) { return is_numeric($v) ? intval(round($v)) : $default; }
+function safe_float($v, $default = 0.0) { return is_numeric($v) ? floatval($v) : $default; }
+
+function formatBDT($num) {
+    $num = intval($num);
+    return '৳' . number_format($num, 0, '', ',');
+}
+
+function parseCoord($coord) {
+    if (!is_string($coord)) return null;
+    if (!preg_match('/^([A-Z]+)(\d+)$/i', $coord, $m)) return null;
+    $colLetter = strtoupper($m[1]);
+    $row = intval($m[2]);
+    $col = Coordinate::columnIndexFromString($colLetter);
+    return ['col'=>$col, 'row'=>$row, 'colLetter'=>$colLetter];
+}
+
+// case-insensitive search, normalize whitespace and tabs/newlines
+function findCellByValue($sheet, $needle) {
+    $needleNorm = mb_strtolower(trim((string)$needle));
+    $highestRow = (int)$sheet->getHighestRow();
+    $highestColIndex = Coordinate::columnIndexFromString($sheet->getHighestColumn());
+    for ($r = 1; $r <= $highestRow; $r++) {
+        for ($c = 1; $c <= $highestColIndex; $c++) {
+            $coord = Coordinate::stringFromColumnIndex($c) . $r;
+            $raw = $sheet->getCell($coord)->getValue();
+            if ($raw === null || $raw === '') continue;
+            $val = (string)$raw;
+            // normalize separators
+            $norm = str_replace(["\t","\r","\n"], ' ', $val);
+            if ($norm === '') continue;
+            if (mb_stripos($norm, $needle) !== false) return ['coord'=>$coord,'row'=>$r,'col'=>$c,'value'=>$val];
+            if (mb_stripos(mb_strtolower($norm), $needleNorm) !== false) return ['coord'=>$coord,'row'=>$r,'col'=>$c,'value'=>$val];
+        }
+    }
+    return null;
+}
+
+function findSampleRow($sheet, $headerRow) {
+    $marker = findCellByValue($sheet, '{{INSTALLMENT_ROW_SAMPLE}}');
+    if ($marker) {
+        $sampleRow = intval($marker['row']);
+        // clear marker cell to avoid it showing
+        try { $sheet->setCellValue($marker['coord'], ''); } catch (\Exception $e) {}
+        return $sampleRow;
+    }
+    return $headerRow + 1;
+}
+
+
+function setCellOrdinalRichText($sheet, $coord, $text) {
+    $t = trim((string)$text);
+    if ($t === '') {
+        $sheet->setCellValueExplicit($coord, '', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        return;
+    }
+
+    $fontSize = 14; // desired font size
+
+    if (preg_match('/^(\d+)(st|nd|rd|th)\b(.*)$/i', $t, $m)) {
+        $digits = $m[1]; 
+        $suffix = $m[2]; 
+        $rest = trim($m[3]);
+
+        $rich = new RichText();
+
+        $run1 = $rich->createTextRun($digits); 
+        $run1->getFont()->setBold(false)->setSize($fontSize);
+
+        $run2 = $rich->createTextRun($suffix); 
+        $run2->getFont()->setSuperscript(true)->setBold(false)->setSize($fontSize);
+
+        if ($rest !== '') {
+            $run3 = $rich->createTextRun(' ' . $rest); 
+            $run3->getFont()->setBold(false)->setSize($fontSize);
+        }
+
+        $sheet->setCellValue($coord, $rich);
+    } else {
+        $sheet->setCellValueExplicit($coord, $t, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        $sheet->getStyle($coord)->getFont()->setSize($fontSize);
+    }
+}
+
+
+function replicateMergedRangesForRow($sheet, $sourceRow, $destRow, $maxCols) {
+    $mergeCells = $sheet->getMergeCells();
+    foreach ($mergeCells as $range => $v) {
+        $parts = explode(':', $range); if (count($parts) !== 2) continue;
+        [$start, $end] = $parts;
+        $startCol = Coordinate::columnIndexFromString(preg_replace('/\d+/','',$start));
+        $startRow = (int)preg_replace('/\D+/','',$start);
+        $endCol = Coordinate::columnIndexFromString(preg_replace('/\d+/','',$end));
+        $endRow = (int)preg_replace('/\D+/','',$end);
+        if ($sourceRow >= $startRow && $sourceRow <= $endRow) {
+            $rowSpan = $endRow - $startRow;
+            $newStart = Coordinate::stringFromColumnIndex($startCol) . $destRow;
+            $newEndCol = min($endCol, $maxCols);
+            $newEnd = Coordinate::stringFromColumnIndex($newEndCol) . ($destRow + $rowSpan);
+            $newRange = $newStart . ':' . $newEnd;
+            $existing = $sheet->getMergeCells();
+            if (!isset($existing[$newRange])) {
+                try { $sheet->mergeCells($newRange); } catch (\Exception $e) {}
+            }
+        }
+    }
+}
+
+// helpers used for detecting/removing sample rows (global so callable inside generator)
+function isRowEmptyHelper($sheetInner, $row, $maxColCheck) {
+    for ($c = 1; $c <= $maxColCheck; $c++) {
+        $val = (string)$sheetInner->getCell(Coordinate::stringFromColumnIndex($c) . $row)->getValue();
+        if (trim($val) !== '') return false;
+    }
+    return true;
+}
+
+function isRowStyleSimilarHelper($sheetInner, $r1, $r2, $colsToCheck = 6) {
+    for ($c = 1; $c <= $colsToCheck; $c++) {
+        $coord1 = Coordinate::stringFromColumnIndex($c) . $r1;
+        $coord2 = Coordinate::stringFromColumnIndex($c) . $r2;
+        try {
+            $s1 = $sheetInner->getStyle($coord1);
+            $s2 = $sheetInner->getStyle($coord2);
+        } catch (\Exception $e) {
+            return false;
+        }
+        $f1 = $s1->getFont(); $f2 = $s2->getFont();
+        if ((string)$f1->getName() !== (string)$f2->getName()) return false;
+        if ((string)$f1->getSize() !== (string)$f2->getSize()) return false;
+        if ((bool)$f1->getBold() !== (bool)$f2->getBold()) return false;
+        $fill1 = $s1->getFill(); $fill2 = $s2->getFill();
+        $ft1 = (string)$fill1->getFillType(); $ft2 = (string)$fill2->getFillType();
+        if ($ft1 !== $ft2) return false;
+        $col1 = $fill1->getStartColor() ? (string)$fill1->getStartColor()->getARGB() : '';
+        $col2 = $fill2->getStartColor() ? (string)$fill2->getStartColor()->getARGB() : '';
+        if ($col1 !== $col2) return false;
+    }
+    return true;
+}
+
+// ------------------ Main generator ------------------
+function generate_modified_excel($template_path, $output_path, $helper, $booking, $client) {
+    if (!file_exists($template_path)) throw new Exception("Template missing: {$template_path}");
+    $spreadsheet = IOFactory::load($template_path);
+    $sheet = $spreadsheet->getActiveSheet();
+
+    // find print area markers
+    $bottomMarker = findCellByValue($sheet, '{{PRINT_AREA_BOTTOM_END}}');
+    $rightMarker  = findCellByValue($sheet, '{{PRINT_AREA_RIGHT_END}}');
+
+    // markers are exclusive (minus 1)
+    $maxRowFromMarkers = $bottomMarker ? (intval($bottomMarker['row']) - 1) : (int)$sheet->getHighestRow();
+    $maxColFromMarkers = $rightMarker  ? (parseCoord($rightMarker['coord'])['col'] - 1) : Coordinate::columnIndexFromString($sheet->getHighestColumn());
+
+    if ($maxRowFromMarkers < 1) $maxRowFromMarkers = 1;
+    if ($maxColFromMarkers < 1) $maxColFromMarkers = 1;
+
+    // clear markers so they don't appear in final file
+    if ($bottomMarker) $sheet->setCellValue($bottomMarker['coord'], '');
+    if ($rightMarker) $sheet->setCellValue($rightMarker['coord'], '');
+
+    // placeholders
+    $placeholders = [
+        '{{COMPANY_NAME}}'=> $helper->company_name ?? ($GLOBALS['wo']['config']['site_name'] ?? ''),
+        '{{CLIENT_NAME}}'=> is_array($client)?($client['name']??''):($client->name??''),
+        '{{CLIENT_ADDRESS}}'=> is_array($client)?($client['address']??''):($client->address??''),
+        '{{CLIENT_PHONE}}'=> is_array($client)?($client['phone']??''):($client->phone??''),
+        '{{PLOT}}'=>$booking->plot??'',
+        '{{FILE_NUMBER}}'=>$booking->file_num??'',
+        '{{TOTAL_PRICE}}'=>isset($helper->per_katha,$booking->katha)?(floatval($helper->per_katha)*floatval($booking->katha)):($helper->total_price??''),
+        '{{BOOKING_MONEY}}'=>$helper->booking_money??'',
+        '{{DOWN_PAYMENT}}'=>$helper->down_payment??'',
+        '{{REMAINING}}'=>(isset($helper->per_katha,$booking->katha)?(floatval($helper->per_katha)*floatval($booking->katha)):0)-((float)($helper->booking_money??0)+(float)($helper->down_payment??0)),
+        '{{START_DATE}}'=>$helper->start_date??($helper->default_start_date??''),
+        '{{INSTALLMENTS}}'=>$helper->installments??($helper->default_installments??''),
+        '{{YEARLY_ADJUSTMENT}}'=>$helper->yearly_adjustment??'',
+        '{{MONTHLY_AMOUNT}}'=>$helper->monthly_amount??''
+    ];
+
+    // Replace placeholders only inside print area (we DO NOT touch outside area)
+    for ($r = 1; $r <= $maxRowFromMarkers; $r++) {
+        for ($c = 1; $c <= $maxColFromMarkers; $c++) {
+            $coord = Coordinate::stringFromColumnIndex($c) . $r;
+            $raw = $sheet->getCell($coord)->getValue();
+            if ($raw === null || $raw === '') continue;
+            $val = (string)$raw;
+            foreach ($placeholders as $ph => $rep) {
+                if (mb_stripos($val, $ph) !== false) $val = str_ireplace($ph, (string)$rep, $val);
+            }
+            $sheet->setCellValue($coord, $val);
+        }
+    }
+
+    // Header locate — case-insensitive and tolerant for headers placed in single cell separated by tabs/newlines
+
+    // record original values
+    $headerFound = findCellByValue($sheet, 'Particular');
+    $headerRow = $headerFound ? intval($headerFound['row']) : 20;
+    $headerColCount = $headerFound ? max(9, intval($headerFound['col'])) : max(9, $maxColFromMarkers);
+    if ($headerColCount > $maxColFromMarkers) $headerColCount = $maxColFromMarkers;
+
+    $sampleRow = findSampleRow($sheet, $headerRow);
+    if ($sampleRow > $maxRowFromMarkers) $sampleRow = $headerRow + 1;
+
+    // load schedule
+    $schedule = [];
+    if (!empty($helper->installment)) {
+        $decoded = @json_decode($helper->installment, true);
+        if (is_array($decoded)) $schedule = $decoded;
+    }
+
+    $insertAtInitial = $headerRow + 1;
+    $insertAt = $insertAtInitial;
+    $insertedCount = 0;
+
+    // Ensure print area can grow to accommodate the schedule (override marker if needed)
+    $neededLastRow = $headerRow + max( (count($schedule) ?: 1), 1 ) + 1; // small buffer
+    if ($neededLastRow > $maxRowFromMarkers) {
+        $maxRowFromMarkers = $neededLastRow;
+    }
+
+    // For each schedule item, insert a new row and copy styles + row-dimension
+    foreach ($schedule as $item) {
+        // we no longer forcibly stop at original marker; we allow expansion up to PHPSpreadsheet's sheet limits
+        // Insert one row before insertAt
+        try {
+            $sheet->insertNewRowBefore($insertAt, 1);
+        } catch (\Exception $e) {
+            // if insert fails, stop to avoid infinite loop
+            break;
+        }
+
+        // copy row-dimension (height, visibility, outline) from sampleRow to the new row
+        try {
+            $sampleDim = $sheet->getRowDimension($sampleRow + $insertedCount); // note: sampleRow will shift down as we insert, so compute shifted index
+        } catch (\Exception $e) {
+            // fallback: try unshifted sampleRow
+            $sampleDim = $sheet->getRowDimension($sampleRow);
+        }
+        // $newDim = $sheet->getRowDimension($insertAt);
+        // // copy height if set
+        // $sh = $sampleDim->getRowHeight();
+        // if ($sh !== null && $sh !== -1) {
+        //     $newDim->setRowHeight($sh);
+        // } else {
+        //     // if sample is autosize or not set, remove explicit height so default/autosize can apply
+        //     $newDim->setRowHeight(-1);
+        // }
+        // // copy visibility and outline level
+        // if (method_exists($sampleDim, 'getVisible') && !$sampleDim->getVisible()) $newDim->setVisible(false);
+        // if (method_exists($sampleDim, 'getOutlineLevel')) $newDim->setOutlineLevel($sampleDim->getOutlineLevel());
+
+        // duplicate style per cell (as before)
+        $srcRow = $sampleRow + $insertedCount;
+        
+        // duplicate style per cell from the shifted sample row (so we always copy the true template style)
+        for ($col = 1; $col <= $headerColCount; $col++) {
+            $dst = Coordinate::stringFromColumnIndex($col) . $insertAt;
+            $src = Coordinate::stringFromColumnIndex($col) . $srcRow;
+            try {
+                $sheet->duplicateStyle($sheet->getStyle($src), $dst);
+            } catch (\Exception $e) {
+                // ignore — continue filling values even if style copy fails for some cells
+            }
+        }
+
+        // populate columns (exactly your original switch block)
+        for ($col = 1; $col <= $headerColCount; $col++) {
+            $coord = Coordinate::stringFromColumnIndex($col) . $insertAt;
+            switch ($col) {
+                case 1:
+                    $value = $item['particular'] ?? '';
+                    if (is_string($value) && preg_match('/^\d+(st|nd|rd|th)\b/i', trim($value))) {
+                        setCellOrdinalRichText($sheet, $coord, trim($value));
+                    } else {
+                        $sheet->setCellValueExplicit($coord, (string)$value, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    }
+                    break;
+                case 2:
+                    $sheet->setCellValueExplicit($coord, (string)($item['date'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    break;
+                case 3:
+                    $sheet->setCellValueExplicit($coord, (string)($item['payment_date'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    break;
+                case 4:
+                    $sheet->setCellValueExplicit($coord, (string)($item['payment_method'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    break;
+                case 5:
+                    $amt = safe_int(str_replace(',', '', (string)($item['paid_amount'] ?? 0)), 0);
+                    $sheet->setCellValue($coord, $amt);
+                    $sheet->getStyle($coord)->getNumberFormat()->setFormatCode('"৳"#,##0');
+                    $sheet->getStyle($coord)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+                    break;
+                case 6:
+                    $amt = safe_int(str_replace(',', '', (string)($item['installment_amount'] ?? ($item['amount'] ?? 0))), 0);
+                    $sheet->setCellValue($coord, $amt);
+                    $sheet->getStyle($coord)->getNumberFormat()->setFormatCode('"৳"#,##0');
+                    $sheet->getStyle($coord)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+                    break;
+                case 7:
+                    $sheet->setCellValueExplicit($coord, (string)($item['money_receipt_no'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    break;
+                case 8:
+                    $td = $item['total_dues'] ?? '';
+                    if ($td === '' || !is_numeric(str_replace(',', '', (string)$td))) {
+                        $sheet->setCellValueExplicit($coord, (string)$td, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    } else {
+                        $tdnum = safe_int(str_replace(',', '', (string)$td), 0);
+                        $sheet->setCellValue($coord, $tdnum);
+                        $sheet->getStyle($coord)->getNumberFormat()->setFormatCode('"৳"#,##0');
+                        $sheet->getStyle($coord)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+                    }
+                    break;
+                case 9:
+                    $sheet->setCellValueExplicit($coord, (string)($item['remarks'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    break;
+                case 10:
+                    $sheet->setCellValueExplicit($coord, !empty($item['paid']) ? 'Paid' : 'Unpaid', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    break;
+                default:
+                    $sheet->setCellValueExplicit($coord, (string)($item['extra_' . $col] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    break;
+            }
+        }
+
+        // replicate merges for this row
+        replicateMergedRangesForRow($sheet, $srcRow, $insertAt, $headerColCount);
+
+        $insertAt++;
+        $insertedCount++;
+    }
+
+    // ----- Remove contiguous sample/template rows (both before/after) -----
+
+    $origSampleRow = isset($sampleRow) ? intval($sampleRow) : null;
+    $sampleRowShifted = $origSampleRow !== null ? ($origSampleRow + intval($insertedCount)) : null;
+
+    if ($sampleRowShifted && $sampleRowShifted <= (int)$sheet->getHighestRow()) {
+        // scan for a cluster of similarly-styled, empty template rows around the shifted sample
+        $maxScan = 6; // how many rows up/down to consider (tune if your template uses more)
+        $lastColIndexForCheck = max(1, $headerColCount);
+        $startRow = $sampleRowShifted;
+        $countRows = 1;
+
+        // expand upward
+        for ($r = $sampleRowShifted - 1, $steps = 0; $r >= 1 && $steps < $maxScan; $r--, $steps++) {
+            if (isRowEmptyHelper($sheet, $r, $lastColIndexForCheck) && isRowStyleSimilarHelper($sheet, $origSampleRow, $r, min(6, $lastColIndexForCheck))) {
+                $startRow = $r;
+                $countRows++;
+                continue;
+            }
+            break;
+        }
+        // expand downward
+        for ($r = $sampleRowShifted + 1, $steps = 0; $r <= (int)$sheet->getHighestRow() && $steps < $maxScan; $r++, $steps++) {
+            if (isRowEmptyHelper($sheet, $r, $lastColIndexForCheck) && isRowStyleSimilarHelper($sheet, $origSampleRow, $r, min(6, $lastColIndexForCheck))) {
+                $countRows++;
+                continue;
+            }
+            break;
+        }
+
+        if ($countRows > 0) {
+            try {
+                // try a single removeRow for the whole block (fast and clean)
+                $sheet->removeRow($startRow, $countRows);
+            } catch (\Exception $e) {
+                // fallback: clear each cell & unmerge ranges touching those rows
+                $lastCol = Coordinate::columnIndexFromString($sheet->getHighestColumn());
+                for ($rr = $startRow; $rr < $startRow + $countRows; $rr++) {
+                    for ($cc = 1; $cc <= $lastCol; $cc++) {
+                        $coord = Coordinate::stringFromColumnIndex($cc) . $rr;
+                        try { $sheet->setCellValue($coord, ''); $sheet->getStyle($coord)->applyFromArray([]); } catch (\Exception $ee) {}
+                    }
+                    try { $sheet->getRowDimension($rr)->setRowHeight(-1); } catch (\Exception $ee) {}
+                }
+                // remove merges touching those rows
+                $merges = $sheet->getMergeCells();
+                foreach ($merges as $range => $_) {
+                    $parts = explode(':', $range);
+                    if (count($parts) !== 2) continue;
+                    [$s,$e] = $parts;
+                    $sRow = (int)preg_replace('/\D+/', '', $s);
+                    $eRow = (int)preg_replace('/\D+/', '', $e);
+                    // if any overlap with our removed block -> unmerge
+                    if (!($eRow < $startRow || $sRow > ($startRow + $countRows - 1))) {
+                        try { $sheet->unmergeCells($range); } catch (\Exception $ee) {}
+                    }
+                }
+            }
+        }
+    }
+
+    // Extra safety: if marker text still exists anywhere, remove those rows too
+    try {
+        while ($markerCell = findCellByValue($sheet, '{{INSTALLMENT_ROW_SAMPLE}}')) {
+            $r = intval($markerCell['row']);
+            try {
+                $sheet->removeRow($r, 1);
+            } catch (\Exception $e) {
+                $lastCol = Coordinate::columnIndexFromString($sheet->getHighestColumn());
+                for ($c = 1; $c <= $lastCol; $c++) {
+                    $coord = Coordinate::stringFromColumnIndex($c) . $r;
+                    try { $sheet->setCellValue($coord, ''); $sheet->getStyle($coord)->applyFromArray([]); } catch (\Exception $ee) {}
+                }
+                try { $sheet->getRowDimension($r)->setRowHeight(-1); } catch (\Exception $ee) {}
+            }
+            // loop — findCellByValue will find next if any remain
+        }
+    } catch (\Exception $e) {
+        // non-fatal
+    }
+
+    // Make sure our print-area bounds include the actual rows now
+    $maxRowFromMarkers = max($maxRowFromMarkers, (int)$sheet->getHighestRow());
+
+    // We DO NOT remove or compress rows inside the print area anymore.
+    // Only clear content outside of print area (right/bottom) to keep generated file clean.
+
+    // Clear cells to the right of print area, for rows inside print area
+    $sheetHighestColIndex = Coordinate::columnIndexFromString($sheet->getHighestColumn());
+    if ($sheetHighestColIndex > $maxColFromMarkers) {
+        for ($r = 1; $r <= $maxRowFromMarkers; $r++) {
+            for ($c = $maxColFromMarkers + 1; $c <= $sheetHighestColIndex; $c++) {
+                $coord = Coordinate::stringFromColumnIndex($c) . $r;
+                try {
+                    $sheet->setCellValue($coord, '');
+                    $sheet->getStyle($coord)->applyFromArray([]); // attempt to clear style
+                } catch (\Exception $e) {}
+            }
+        }
+    }
+
+    // Remove rows strictly beyond print area bottom (but if removal risks removing anchored drawings/charts, we prefer to clear instead)
+    $sheetHighestRow = (int)$sheet->getHighestRow();
+    if ($sheetHighestRow > $maxRowFromMarkers) {
+        $toRemoveStart = $maxRowFromMarkers + 1;
+        // try to safely remove rows beyond print area
+        try {
+            $sheet->removeRow($toRemoveStart, $sheetHighestRow - $maxRowFromMarkers);
+        } catch (\Exception $e) {
+            // fallback: clear content/styles on those rows
+            for ($r = $toRemoveStart; $r <= $sheetHighestRow; $r++) {
+                for ($c = 1; $c <= Coordinate::columnIndexFromString($sheet->getHighestColumn()); $c++) {
+                    $coord = Coordinate::stringFromColumnIndex($c) . $r;
+                    try { $sheet->setCellValue($coord, ''); $sheet->getStyle($coord)->applyFromArray([]); } catch (\Exception $ee) {}
+                }
+            }
+        }
+    }
+
+    // Final print area bounds
+    $finalLastRow = max(1, $maxRowFromMarkers);
+    $finalLastCol = max(1, $maxColFromMarkers);
+
+    // Preserve template page setup if present, otherwise set defaults
+    $existingPaper = $sheet->getPageSetup()->getPaperSize();
+    if (!$existingPaper) $sheet->getPageSetup()->setPaperSize(PageSetup::PAPERSIZE_A4);
+    $existingOrientation = $sheet->getPageSetup()->getOrientation();
+    if (!$existingOrientation) $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE);
+
+    $sheet->getPageSetup()->setPrintArea('A1:' . Coordinate::stringFromColumnIndex($finalLastCol) . $finalLastRow);
+
+    // Save file
+    $writer = new Xlsx($spreadsheet);
+    $dir = dirname($output_path);
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    $writer->save($output_path);
+
+    return $spreadsheet;
+}
+
+// ---------- Run generation ----------
+try {
+    // remove old file to ensure fresh generated file
+    if (file_exists($modified_file_path)) @unlink($modified_file_path);
+    $spreadsheet = generate_modified_excel($template_path, $modified_file_path, $helper, $booking, $client);
+} catch (Exception $e) {
+    echo '<div class="alert alert-danger">Failed to prepare Excel preview: ' . htmlspecialchars($e->getMessage()) . '</div>';
+    return;
+}
+
+// ---------- Build HTML preview (print area only) ----------
+function argb_to_hex($argb) {
+    if (!$argb) return '';
+    $argb = preg_replace('/^0x/i', '', $argb);
+    if (strlen($argb) === 8) $argb = substr($argb, 2);
+    if (strlen($argb) !== 6) return '';
+    return '#' . strtolower($argb);
+}
+function mapBorderStyleToCss($style) {
+    $s = strtolower((string)$style);
+    if ($s === '' || $s === 'none' || $style === Border::BORDER_NONE) return null;
+    switch ($s) {
+        case strtolower((string)Border::BORDER_THIN):   return ['style' => 'solid', 'width' => '1px'];
+        case strtolower((string)Border::BORDER_MEDIUM): return ['style' => 'solid', 'width' => '2px'];
+        case strtolower((string)Border::BORDER_THICK):  return ['style' => 'solid', 'width' => '3px'];
+        case strtolower((string)Border::BORDER_DASHED): return ['style' => 'dashed', 'width' => '1px'];
+        case strtolower((string)Border::BORDER_DOTTED): return ['style' => 'dotted', 'width' => '1px'];
+        case strtolower((string)Border::BORDER_DOUBLE): return ['style' => 'double', 'width' => '3px'];
+        default: return null;
+    }
+}
+function renderCellRichTextHtml($cell) {
+    $val = $cell->getValue();
+    if ($val instanceof RichText) {
+        $out = '';
+        foreach ($val->getRichTextElements() as $run) {
+            $txt = htmlspecialchars($run->getText(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            if (method_exists($run, 'getFont') && $run->getFont()) {
+                $f = $run->getFont();
+                $out .= $f->getSuperscript() ? '<sup>' . $txt . '</sup>' : $txt;
+            } else {
+                $out .= $txt;
+            }
+        }
+        return $out;
+    }
+    return htmlspecialchars((string)$val, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
+// read print area from set print area (we set it above during generation)
+$sheet = $spreadsheet->getActiveSheet();
+$printArea = $sheet->getPageSetup()->getPrintArea();
+if ($printArea) {
+    if (strpos($printArea, '!') !== false) $printArea = substr($printArea, strpos($printArea, '!') + 1);
+    $parts = explode(':', $printArea);
+    $topLeft = parseCoord($parts[0]);
+    $bottomRight = isset($parts[1]) ? parseCoord($parts[1]) : $topLeft;
+    $maxRow = $bottomRight['row'];
+    $maxCol = $bottomRight['col'];
+} else {
+    $maxRow = (int)$sheet->getHighestRow();
+    $maxCol = Coordinate::columnIndexFromString($sheet->getHighestColumn());
+}
+
+// merged map
+$mergedMap = [];
+foreach ($sheet->getMergeCells() as $range => $v) {
+    $parts = explode(':', $range);
+    if (count($parts) !== 2) continue;
+    [$start,$end] = $parts;
+    $startCol = Coordinate::columnIndexFromString(preg_replace('/\d+/', '', $start));
+    $startRow = (int)preg_replace('/\D+/', '', $start);
+    $endCol = Coordinate::columnIndexFromString(preg_replace('/\d+/', '', $end));
+    $endRow = (int)preg_replace('/\D+/', '', $end);
+    for ($r = $startRow; $r <= $endRow; $r++) {
+        for ($c = $startCol; $c <= $endCol; $c++) {
+            $mergedMap[Coordinate::stringFromColumnIndex($c) . $r] = [
+                'range' => $range,
+                'start' => ['row' => $startRow,'col'=>$startCol],
+                'end'   => ['row' => $endRow,'col'=>$endCol]
+            ];
+        }
+    }
+}
+
+$tableHtml = '<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%;">' . PHP_EOL;
+
+for ($r = 1; $r <= $maxRow; $r++) {
+    $cells = [];
+    for ($c = 1; $c <= $maxCol; $c++) {
+        $coord = Coordinate::stringFromColumnIndex($c) . $r;
+
+        // merged cells
+        if (isset($mergedMap[$coord])) {
+            $m = $mergedMap[$coord];
+            if (!($m['start']['row'] == $r && $m['start']['col'] == $c)) continue;
+            $rowspan = $m['end']['row'] - $m['start']['row'] + 1;
+            $colspan = $m['end']['col'] - $m['start']['col'] + 1;
+        } else {
+            $rowspan = 1; $colspan = 1;
+        }
+
+        $cell = $sheet->getCell($coord);
+        $style = $sheet->getStyle($coord);
+        $cellValue = $cell->getValue();
+        $numberFormat = $style->getNumberFormat()->getFormatCode();
+
+        // format BDT if numeric and has ৳ format
+        if (is_numeric($cellValue) && strpos($numberFormat, '৳') !== false) {
+            $cellHtml = formatBDT($cellValue);
+        } else {
+            $cellHtml = renderCellRichTextHtml($cell);
+        }
+
+        // borders
+        $b = $style->getBorders();
+        $borderCssParts = [];
+        foreach (['left','right','top','bottom'] as $side) {
+            $borderObj = $b->{'get' . ucfirst($side)}();
+            $bStyle = $borderObj->getBorderStyle();
+            $mapped = mapBorderStyleToCss($bStyle);
+            if ($mapped !== null) {
+                $color = $borderObj->getColor() ? argb_to_hex($borderObj->getColor()->getARGB()) : '#000';
+                $borderCssParts[] = "border-{$side}: {$mapped['width']} {$mapped['style']} {$color}";
+            }
+        }
+        $borderCss = implode('; ', $borderCssParts);
+
+        // font / fill / alignment
+        $font = $style->getFont();
+        $fontName = $font->getName();
+        $fontSize = $font->getSize();
+        $fontBold = $font->getBold();
+        $fontItalic = $font->getItalic();
+        $fontColor = ($font->getColor()) ? argb_to_hex($font->getColor()->getARGB()) : '';
+        $fill = $style->getFill();
+        $bgColor = '';
+        if ($fill->getFillType() && $fill->getFillType() !== Fill::FILL_NONE) {
+            $bgColor = $fill->getStartColor() ? argb_to_hex($fill->getStartColor()->getARGB()) : '';
+        }
+        $align = $style->getAlignment();
+        $hAlign = strtolower((string)$align->getHorizontal());
+        if ($hAlign === 'general' || $hAlign === '') $hAlign = 'left';
+        $vAlign = strtolower((string)$align->getVertical());
+        if ($vAlign === '') $vAlign = 'middle';
+
+        $cellCss = [];
+        if ($fontName) $cellCss[] = "font-family:{$fontName}";
+        if ($fontSize) $cellCss[] = "font-size:{$fontSize}pt";
+        if ($fontBold) $cellCss[] = "font-weight:bold";
+        if ($fontItalic) $cellCss[] = "font-style:italic";
+        if ($fontColor) $cellCss[] = "color:{$fontColor}";
+        if ($bgColor) $cellCss[] = "background-color:{$bgColor}";
+        if ($hAlign) $cellCss[] = "text-align:{$hAlign}";
+        if ($vAlign) $cellCss[] = "vertical-align:{$vAlign}";
+        if ($borderCss) $cellCss[] = $borderCss;
+        $cellCss[] = "padding:4px 6px";
+        $cellCss[] = "white-space:nowrap";
+
+        $attrColspan = $colspan > 1 ? ' colspan="'.intval($colspan).'"' : '';
+        $attrRowspan = $rowspan > 1 ? ' rowspan="'.intval($rowspan).'"' : '';
+
+        $display = ($cellHtml === '') ? '&nbsp;' : $cellHtml;
+
+        $cells[] = '<td'.$attrColspan.$attrRowspan.' style="'.htmlspecialchars(implode('; ', $cellCss), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'">'.$display.'</td>';
+    }
+    $tableHtml .= '<tr>' . implode('', $cells) . '</tr>' . PHP_EOL;
+}
+
+$tableHtml .= '</table>';
+
+// ---------- Output Modal ----------
+?>
+
+<!-- Bootstrap Modal -->
+<div class="modal fade" id="installmentExcelModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Installment Schedule — Preview (Purchase #<?php echo intval($helper->id); ?>)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3 d-flex gap-2 align-items-center">
+          <?php $download_version = (file_exists($modified_file_path)) ? filemtime($modified_file_path) : time(); ?>
+          <a class="btn btn-success btn-sm" id="downloadExcel" href="<?php echo htmlspecialchars($file_download_url) . '?v=' . $download_version; ?>">Download Excel</a>
+          <button class="btn btn-primary btn-sm" id="printSchedule">Print Preview</button>
+          <button class="btn btn-warning btn-sm" id="regenerateExcel" data-purchase-id="<?php echo intval($helper->id); ?>">Regenerate</button>
+          <div class="ms-auto small text-muted">
+            <strong>Client:</strong> <?php echo htmlspecialchars(is_array($client)?($client['name']??''):($client->name??'')); ?> &nbsp;•&nbsp;
+            <strong>Plot:</strong> <?php echo htmlspecialchars($booking->plot??''); ?>
+          </div>
+        </div>
+        <div id="excelPreviewContainer" class="table-responsive" style="overflow:auto; background:#fff;">
+          <?php echo $tableHtml; ?>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <small class="text-muted">Preview shows the printable area. The generated Excel file keeps shapes/charts/drawings as present in the template. HTML preview preserves rows/columns and borders only where template has them.</small>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const modalEl = document.getElementById('installmentExcelModal');
+  document.getElementById('printSchedule').addEventListener('click', function(){
+    const htmlContent = document.getElementById('excelPreviewContainer').innerHTML;
+    const w = window.open('', '_blank');
+    if(!w){ alert('Please allow popups.'); return; }
+    let head='';
+    head+='<meta charset="utf-8"><title>Print Schedule</title>';
+    head+='<link href="<?php echo Wo_LoadManageLink('assets/css/bootstrap.min.css') . '?version=' . $wo['config']['version']; ?>" rel="stylesheet">';
+    head+='<link href="<?php echo Wo_LoadManageLink('assets/css/bootstrap-extended.css') . '?version=' . $wo['config']['version']; ?>" rel="stylesheet">';
+    head+='<style>@page{size:A4 landscape; margin:12mm;} body{margin:12px;background:#fff;color:#000;} table{border-collapse:collapse;font-family:inherit;} @media print{.no-print{display:none;}}</style>';
+    w.document.open(); w.document.write('<!doctype html><html><head>'+head+'</head><body>'+htmlContent+'</body></html>'); w.document.close();
+    w.onload=function(){try{w.focus(); w.print();}catch(e){console.warn(e); alert('Print error:'+e.message);}};
+  });
+
+  document.getElementById('regenerateExcel').addEventListener('click', function(){
+    const btn=this, pid=btn.getAttribute('data-purchase-id');
+    if(!pid){ alert('Missing purchase id'); return; }
+    const orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Regenerating...';
+    $.post(Wo_Ajax_Requests_File()+'?f=manage_inventory&s=installment_excel_modal',{purchase_id:pid,regenerate:1})
+      .done(function(resp){ let data; try{data=(typeof resp==='string')?JSON.parse(resp):resp;}catch(e){data=resp;}
+      if(data && data.status===200) location.reload(); else if(data && data.html) document.querySelector('#installmentExcelModal .modal-content').innerHTML=data.html; else location.reload();})
+      .fail(function(){alert('Server error while regenerating Excel');})
+      .always(function(){btn.disabled=false; btn.innerHTML=orig;});
+  });
+
+  modalEl.addEventListener('keydown', function(e){
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='p'){e.preventDefault();document.getElementById('printSchedule').click();}
+    if(e.key==='Escape'){bootstrap.Modal.getInstance(modalEl).hide();}
+  });
+})();
+</script>

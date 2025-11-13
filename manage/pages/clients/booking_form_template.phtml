@@ -1,0 +1,987 @@
+<?php
+$bg_url = '';
+$page_class = '';
+
+$booking = $booking ?? ($p['booking'] ?? []);
+$client  = $client  ?? ($p['client'] ?? []);
+// nominees/installments may be injected by the loader loop
+$i_nominee = isset($i_nominee) ? (array)$i_nominee : [];
+$ii_nominee = isset($ii_nominee) ? (array)$ii_nominee : [];
+$installments = isset($installments) ? (array)$installments : ([]);
+
+// choose background / page class
+if (($booking['project'] ?? '') === 'moon-hill') {
+    $bg_url = "/manage/pages/clients/moon-hill.jpg?version=4.4.51";
+    $page_class = 'size-moon-hill';
+} elseif (($booking['project'] ?? '') === 'hill-town') {
+    $bg_url = "/manage/pages/clients/hill-town.jpg?version=4.4.51";
+    $page_class = 'size-hill-town';
+}
+
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+/**
+ * Normalize phone to local format:
+ * - remove non-digit chars
+ * - remove leading country code 88 (or +88)
+ * - ensure leading 0 if reasonable (if remaining length == 10 and doesn't start with 0)
+ */
+if (!function_exists('booking_normalize_phone')) {
+    function booking_normalize_phone($raw) {
+        if ($raw === null || $raw === '') return '';
+        // keep digits only
+        $digits = preg_replace('/\D+/', '', (string)$raw);
+        if ($digits === '') return '';
+
+        // remove leading country code 88 if present
+        if (strpos($digits, '88') === 0) {
+            $digits = substr($digits, 2);
+        }
+
+        // if it now has 10 digits and doesn't start with 0, prefix with '0'
+        if (strlen($digits) === 10 && $digits[0] !== '0') {
+            $digits = '0' . $digits;
+        }
+
+        return $digits;
+    }
+}
+
+/**
+ * Format a date (timestamp or date-string) into HTML with span separators
+ * e.g. 25<span style="width:4px"></span>09<span style="width:4px"></span>2025
+ */
+if (!function_exists('format_date_with_spans')) {
+    function format_date_with_spans($date_input) {
+        if (empty($date_input)) return '';
+        if (is_numeric($date_input)) {
+            $ts = (int)$date_input;
+        } else {
+            $ts = strtotime($date_input);
+        }
+        if ($ts === false || $ts <= 0) return '';
+
+        $d = date('d', $ts);
+        $m = date('m', $ts);
+        $y = date('Y', $ts);
+
+        return $d . '<span style="width:4px;display:inline-block;"></span>' . $m . '<span style="width:4px;display:inline-block;"></span>' . $y;
+    }
+}
+
+/**
+ * Count installments robustly (injected array, json, serialized, csv/list)
+ */
+if (!function_exists('get_installments_count')) {
+    function get_installments_count($installments_injected = null, $booking = [], $wo_additional = []) {
+        if (!empty($installments_injected) && is_array($installments_injected)) {
+            return count($installments_injected);
+        }
+
+        $raw = $booking['installments'] ?? ($booking['installment'] ?? null);
+        if (empty($raw) && !empty($wo_additional['installments'])) {
+            $raw = $wo_additional['installments'];
+        }
+        if (empty($raw)) return 0;
+
+        if (is_array($raw)) return count($raw);
+
+        $dec = json_decode($raw, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($dec)) return count($dec);
+
+        $un = @unserialize($raw);
+        if ($un !== false && is_array($un)) return count($un);
+
+        $s = trim((string)$raw);
+        if ($s === '') return 0;
+        $sep = (strpos($s, '|') !== false) ? '|' : ',';
+        $parts = array_filter(array_map('trim', explode($sep, $s)), function($v){ return $v !== ''; });
+        return count($parts);
+    }
+}
+
+/**
+ * Convert number to short words using Indian numbering (supports hundred, thousand, lakh, crore).
+ * Outputs short, lower-case phrase + " taka", e.g. "one lakh fifty thousand taka"
+ * Works for integers; decimals are rounded to nearest integer.
+ */
+if (!function_exists('number_to_short_words')) {
+    function number_to_short_words($n) {
+        if (!is_numeric($n)) return '';
+        $n = (float)$n;
+        // round to nearest integer for words
+        $num = (int) round($n);
+
+        if ($num === 0) return 'zero taka';
+
+        $words_1_to_19 = [
+            '', 'one','two','three','four','five','six','seven','eight','nine',
+            'ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'
+        ];
+        $tens_words = [
+            0 => '', 2 => 'twenty', 3 => 'thirty', 4 => 'forty', 5 => 'fifty',
+            6 => 'sixty', 7 => 'seventy', 8 => 'eighty', 9 => 'ninety'
+        ];
+
+        $parts = [];
+
+        // helper for <1000
+        $underThousand = function($v) use (&$words_1_to_19, &$tens_words) {
+            $v = (int)$v;
+            $out = '';
+            if ($v >= 100) {
+                $h = intdiv($v, 100);
+                $out .= $words_1_to_19[$h] . ' hundred';
+                $rem = $v % 100;
+                if ($rem > 0) {
+                    $out .= ' ' . numToWordsUnder100($rem(), $words_1_to_19 ?? null, $tens_words ?? null); // placeholder, we'll not use this path
+                }
+                return $out;
+            }
+            // else < 100
+            if ($v < 20) return $words_1_to_19[$v];
+            $t = intdiv($v, 10);
+            $u = $v % 10;
+            $out = ($tens_words[$t] ?? '') . ($u ? ' ' . $words_1_to_19[$u] : '');
+            return $out;
+        };
+
+        // We'll write direct small helper instead (above closure had complexity)
+        $numToWordsUnder1000 = function($v) use ($words_1_to_19, $tens_words) {
+            $v = (int)$v;
+            $s = '';
+            if ($v >= 100) {
+                $h = intdiv($v, 100);
+                $s .= $words_1_to_19[$h] . ' hundred';
+                $rem = $v % 100;
+                if ($rem > 0) {
+                    // under 100
+                    if ($rem < 20) {
+                        $s .= ' ' . $words_1_to_19[$rem];
+                    } else {
+                        $t = intdiv($rem, 10);
+                        $u = $rem % 10;
+                        $s .= ' ' . ($tens_words[$t] ?? '') . ($u ? ' ' . $words_1_to_19[$u] : '');
+                    }
+                }
+                return $s;
+            } else {
+                if ($v < 20) return $words_1_to_19[$v];
+                $t = intdiv($v, 10);
+                $u = $v % 10;
+                return ($tens_words[$t] ?? '') . ($u ? ' ' . $words_1_to_19[$u] : '');
+            }
+        };
+
+        // extract crores, lakhs, thousands, hundreds, remainder
+        $crore = intdiv($num, 10000000);
+        if ($crore > 0) {
+            $parts[] = $numToWordsUnder1000($crore) . ' crore';
+            $num -= $crore * 10000000;
+        }
+
+        $lakh = intdiv($num, 100000);
+        if ($lakh > 0) {
+            $parts[] = $numToWordsUnder1000($lakh) . ' lakh';
+            $num -= $lakh * 100000;
+        }
+
+        $thousand = intdiv($num, 1000);
+        if ($thousand > 0) {
+            $parts[] = $numToWordsUnder1000($thousand) . ' thousand';
+            $num -= $thousand * 1000;
+        }
+
+        $hundred = intdiv($num, 100);
+        if ($hundred > 0) {
+            // We will let numToWordsUnder1000 handle hundreds + remainder under100
+            $parts[] = $numToWordsUnder1000($hundred * 100);
+            $num -= $hundred * 100;
+        }
+
+        // remaining < 100
+        if ($num > 0) {
+            $parts[] = $numToWordsUnder1000($num);
+        }
+
+        // join and lowercase, remove extra spaces
+        $out = trim(preg_replace('/\s+/', ' ', implode(' ', $parts)));
+        $out = strtolower($out);
+        $out .= ' taka';
+        return $out;
+    }
+}
+
+/**
+ * Project mapping guard and load positions
+ */
+global $project_mapping, $db, $wo;
+$project_id = null;
+if (!empty($project_mapping) && !empty($booking['project']) && isset($project_mapping[$booking['project']])) {
+    $project_id = $project_mapping[$booking['project']];
+}
+
+if ($project_id === null) {
+    $field_positions = [];
+} else {
+    $field_positions = $db->where('project_id', $project_id)->get('field_positions') ?: [];
+}
+
+// fields that will contain raw HTML when rendered (we'll print them without htmlspecialchars)
+$raw_html_fields = ['booking_date', 'date_of_birth', 'bm_payment_date', 'down_payment_date', 'date', 'installment_date_from'];
+
+// determine installment mode once
+$ins_count = get_installments_count($installments ?? null, $booking ?? [], $wo['additional'] ?? []);
+$is_installment_mode = ($ins_count >= 3);
+$is_full_payment_mode = ($ins_count > 0 && $ins_count < 3);
+
+?>
+
+<section class="print_area d-none <?= htmlspecialchars($page_class, ENT_QUOTES) ?>"
+         id="print_area_<?= (int)($p['id'] ?? 0) ?>"
+         data-purchase-id="<?= (int)($p['id'] ?? 0) ?>"
+         data-bg-url="<?= htmlspecialchars($bg_url, ENT_QUOTES) ?>">
+  <div class="invoice-layout">
+    <img class="print-bg" alt="background" src="" loading="lazy" style="display:none;" />
+
+    <div class="changable-content" id="changable_modal_content_<?= htmlspecialchars($index ?? 0, ENT_QUOTES) ?>">
+      <?php
+        foreach ($field_positions as $fp):
+            $style = json_decode($fp->style_json, true) ?: [];
+            $name = $fp->field_name ?? '';
+            $top = $style['top'] ?? '0px';
+            $left = $style['left'] ?? '0px';
+            $width = $style['width'] ?? 'auto';
+            $fontSize = $style['fontSize'] ?? '15px';
+            $letterSpacing = $style['letterSpacing'] ?? '0px';
+            $textAlign = $style['textAlign'] ?? 'left';
+            $value = '';
+
+            // Try helper first (user provided getFieldDisplayValue)
+            if (function_exists('getFieldDisplayValue')) {
+                $helperValue = getFieldDisplayValue($name, $proj_html ?? ($booking['project'] ?? ''));
+                if (!empty($helperValue) && $helperValue !== $name) {
+                    $value = $helperValue;
+                }
+            }
+
+            if ($value === '') {
+                switch ($name) {
+
+                    // General / client / booking
+                    case 'client_id':
+                        $value = $client['id'] ?? ($wo['additional']['client_id'] ?? '');
+                        break;
+                    case 'project_name':
+                        $value = $proj_html ?? ($booking['project'] ?? '');
+                        break;
+                    case 'project_location':
+                        $value = $booking['project_location'] ?? ($wo['additional']['project_location'] ?? 'Purbachal');
+                        break;
+
+                    // Date fields
+                    case 'booking_date':
+                    case 'date':
+                        if (!empty($booking['booking_date'])) {
+                            $value = format_date_with_spans($booking['booking_date']);
+                        } elseif (!empty($p['time'])) {
+                            $value = format_date_with_spans($p['time']);
+                        } elseif (!empty($wo['additional']['booking_date'])) {
+                            $value = format_date_with_spans($wo['additional']['booking_date']);
+                        } else {
+                            $value = '';
+                        }
+                        break;
+
+                    case 'applicant_name':
+                        $value = $client['name'] ?? ($wo['additional']['applicant_name'] ?? '');
+                        break;
+                    case 'fathers_name':
+                        $value = $client['father_name'] ?? ($wo['additional']['fathers_name'] ?? '');
+                        break;
+                    case 'mothers_name':
+                        $value = $client['mother_name'] ?? ($wo['additional']['mothers_name'] ?? '');
+                        break;
+                    case 'spouse_name':
+                        $value = $client['spouse_name'] ?? ($wo['additional']['spouse_name'] ?? '');
+                        break;
+                    case 'profession':
+                        $value = $client['profession'] ?? ($wo['additional']['profession'] ?? '');
+                        break;
+                    case 'nationality':
+                        $value = $client['nationality'] ?? ($wo['additional']['nationality'] ?? '');
+                        break;
+
+                    // date of birth with spans
+                    case 'date_of_birth':
+                        if (!empty($client['dob'])) {
+                            $value = format_date_with_spans($client['dob']);
+                        } elseif (!empty($wo['additional']['date_of_birth'])) {
+                            $value = format_date_with_spans($wo['additional']['date_of_birth']);
+                        } elseif (!empty($wo['additional']['birthday'])) {
+                            $value = format_date_with_spans($wo['additional']['birthday']);
+                        } else {
+                            $value = '';
+                        }
+                        break;
+
+                    case 'nid':
+                        $value = $client['nid'] ?? ($wo['additional']['nid'] ?? '');
+                        break;
+                    case 'email':
+                        $value = 'safdasdfasf';
+                        break;
+                    case 'tin_no':
+                        $value = $client['tin'] ?? ($wo['additional']['tin'] ?? '');
+                        break;
+                    case 'passport':
+                        $value = $client['passport'] ?? ($wo['additional']['passport'] ?? '');
+                        break;
+
+                    // Phone numbers - normalize to local (remove +88)
+                    case 'mobile_i':
+                        $rawPhone = $client['phone'] ?? ($wo['additional']['mobile_i'] ?? '');
+                        $value = booking_normalize_phone($rawPhone);
+                        break;
+                    case 'mobile_ii':
+                        $rawPhone = $client['mobile_2'] ?? ($wo['additional']['mobile_ii'] ?? '');
+                        $value = booking_normalize_phone($rawPhone);
+                        break;
+
+                    case 'present_addr':
+                        $value = $client['address'] ?? ($wo['additional']['present_addr'] ?? '');
+                        break;
+                    case 'permanent_addr':
+                        $value = $client['permanent_address'] ?? ($wo['additional']['permanent_addr'] ?? '');
+                        break;
+
+                    // Co-applicant checkboxes
+                    case 'co_app_check_yes':
+                    case 'co_app_check_no':
+                        $value = $wo['additional'][$name] ?? '';
+                        break;
+
+                    // Nominee Information (prefer injected nominees, fallback to wo['additional'])
+                    case 'i_nominee_name':
+                        $value = $i_nominee['name'] ?? ($wo['additional']['i_nominee_name'] ?? '');
+                        break;
+                    case 'i_nominee_relation':
+                        $value = $i_nominee['relation'] ?? ($wo['additional']['i_nominee_relation'] ?? '');
+                        break;
+                    case 'i_nominee_share':
+                        // show percentage only if present and numeric
+                        if (isset($i_nominee['share_parcent']) && $i_nominee['share_parcent'] !== '') {
+                            $value = rtrim((string)$i_nominee['share_parcent']) . '%';
+                        } elseif (!empty($wo['additional']['i_nominee_share'])) {
+                            $value = rtrim((string)$wo['additional']['i_nominee_share']) . '%';
+                        } else {
+                            $value = '';
+                        }
+                        break;
+                    case 'i_nominee_phone':
+                        $value = booking_normalize_phone($i_nominee['phone'] ?? ($wo['additional']['i_nominee_phone'] ?? ''));
+                        break;
+
+                    case 'ii_nominee_name':
+                        $value = $ii_nominee['name'] ?? ($wo['additional']['ii_nominee_name'] ?? '');
+                        break;
+                    case 'ii_nominee_relation':
+                        $value = $ii_nominee['relation'] ?? ($wo['additional']['ii_nominee_relation'] ?? '');
+                        break;
+                    case 'ii_nominee_share':
+                        if (isset($ii_nominee['share_parcent']) && $ii_nominee['share_parcent'] !== '') {
+                            $value = rtrim((string)$ii_nominee['share_parcent']) . '%';
+                        } elseif (!empty($wo['additional']['ii_nominee_share'])) {
+                            $value = rtrim((string)$wo['additional']['ii_nominee_share']) . '%';
+                        } else {
+                            $value = '';
+                        }
+                        break;
+                    case 'ii_nominee_phone':
+                        $value = booking_normalize_phone($ii_nominee['phone'] ?? ($wo['additional']['ii_nominee_phone'] ?? ''));
+                        break;
+                    // Plot / selection
+                    case 'plot':
+                        if (isset($booking[$name]) && $booking[$name] !== '') {
+                            $value = $booking[$name];
+                        } elseif (!empty($wo['additional'][$name])) {
+                            $value = $wo['additional'][$name];
+                        } else {
+                            $value = '';
+                        }
+                        break;
+                    
+                    case 'block':
+                        // prefer booking value then wo.additional
+                        $rawBlock = $booking['block'] ?? ($wo['additional']['block'] ?? '');
+                        $rawBlock = trim((string)$rawBlock);
+                    
+                        if ($rawBlock === '') {
+                            $value = '';
+                        } else {
+                            // If it already looks like "Block-..." or contains the word "block", don't modify
+                            if (preg_match('/\bblock\b/i', $rawBlock) || preg_match('/^block-/i', $rawBlock)) {
+                                $value = $rawBlock;
+                            } else {
+                                // Normalize single-letter/word to uppercase and prefix "Block-"
+                                // If it's like "a" => "Block-A", "A" => "Block-A", "01" => "Block-01"
+                                $clean = strtoupper($rawBlock);
+                                $value = 'Block-' . $clean;
+                            }
+                        }
+                        break;
+                    case 'rate':
+                        if (isset($p['per_katha']) && $p['per_katha'] !== '') {
+                            $value = $p['per_katha'];
+                        } elseif (!empty($wo['additional']['per_katha'])) {
+                            $value = $wo['additional']['per_katha'];
+                        } else {
+                            $value = '';
+                        }
+                        break;
+                    
+                    case 'rate_in_words':
+                        $per_katha = isset($p['per_katha']) ? $p['per_katha'] : (!empty($wo['additional']['per_katha']) ? $wo['additional']['per_katha'] : 0);
+                        $value = $per_katha ? number_to_short_words($per_katha) : '';
+                        break;
+                    
+                    case 'total_value':
+                        $per_katha = isset($p['per_katha']) ? $p['per_katha'] : (!empty($wo['additional']['per_katha']) ? $wo['additional']['per_katha'] : 0);
+                        $katha = isset($booking['plot']) ? $booking['plot'] : 0;
+                        $total = $per_katha * $katha;
+                        $value = $total ? $total : '';
+                        break;
+                    
+                    case 'total_value_in_words':
+                        $per_katha = isset($p['per_katha']) ? $p['per_katha'] : (!empty($wo['additional']['per_katha']) ? $wo['additional']['per_katha'] : 0);
+                        $katha = isset($booking['plot']) ? $booking['plot'] : 0;
+                        $total = $per_katha * $katha;
+                        $value = $total ? number_to_short_words($total) : '';
+                        break;
+                    
+                    case 'road':
+                    case 'facing':
+                    case 'katha':
+                        if (isset($booking[$name]) && $booking[$name] !== '') {
+                            $value = $booking[$name];
+                        } elseif (!empty($wo['additional'][$name])) {
+                            $value = $wo['additional'][$name];
+                        } else {
+                            $value = '';
+                        }
+                        break;
+
+
+                    // Mode of Payment - determine from installment rows
+                    case 'is_full_payment':
+                        // full payment when install rows exist but less than 3 OR when there are 0 installments but down_payment equals total_value
+                        if ($is_full_payment_mode) {
+                            $value = '✓';
+                        } else {
+                            // fallback to flags
+                            if (isset($booking[$name]) && $booking[$name]) $value = '✓';
+                            elseif (!empty($wo['additional'][$name])) $value = $wo['additional'][$name];
+                            else $value = '';
+                        }
+                        break;
+
+                    case 'is_installment_payment':
+                        if ($is_installment_mode) {
+                            $value = '✓';
+                        } else {
+                            if (isset($booking[$name]) && $booking[$name]) $value = '✓';
+                            elseif (!empty($wo['additional'][$name])) $value = $wo['additional'][$name];
+                            else $value = '';
+                        }
+                        break;
+
+                    // these date fields should be formatted with spans too
+                    case 'bm_payment_date':
+                        if (!empty($booking['bm_payment_date'])) {
+                            $value = format_date_with_spans($booking['bm_payment_date']);
+                        } elseif (!empty($wo['additional']['bm_payment_date'])) {
+                            $value = format_date_with_spans($wo['additional']['bm_payment_date']);
+                        } else {
+                            $value = '';
+                        }
+                        break;
+                    case 'down_payment_date':
+                        if (!empty($booking['down_payment_date'])) {
+                            $value = format_date_with_spans($booking['down_payment_date']);
+                        } elseif (!empty($wo['additional']['down_payment_date'])) {
+                            $value = format_date_with_spans($wo['additional']['down_payment_date']);
+                        } else {
+                            $value = '';
+                        }
+                        break;
+
+                    // installments-related fields (derive from injected $installments if booking doesn't have)
+                    case 'number_of_installments':
+                        // according to requirement: if full payment mode, numbers-of-installments will be empty
+                        if ($is_full_payment_mode) {
+                            $value = '';
+                        } elseif (!empty($installments) && is_array($installments)) {
+                            $value = count($installments);
+                        } elseif (!empty($booking['number_of_installments'])) {
+                            $value = $booking['number_of_installments'];
+                        } elseif (!empty($wo['additional']['number_of_installments'])) {
+                            $value = $wo['additional']['number_of_installments'];
+                        } else {
+                            $value = '';
+                        }
+                        break;
+
+                    case 'per_installments_tk':
+                        if (isset($booking['per_installments_tk']) && $booking['per_installments_tk'] !== '') {
+                            $value = $booking['per_installments_tk'];
+                        } elseif (!empty($installments) && is_array($installments)) {
+                            // compute average amount (sum / count) if possible (only for display)
+                            $sum = 0.0;
+                            $cnt = 0;
+                            foreach ($installments as $ins) {
+                                $amt = null;
+                                if (is_array($ins)) $amt = $ins['amount'] ?? null;
+                                elseif (is_object($ins)) $amt = $ins->amount ?? null;
+                                if ($amt !== null && is_numeric($amt)) {
+                                    $sum += (float)$amt;
+                                    $cnt++;
+                                }
+                            }
+                            if ($cnt > 0) {
+                                $avg = round($sum / $cnt, 2);
+                                $value = number_format($avg, 2);
+                            } else {
+                                $value = '';
+                            }
+                        } elseif (!empty($wo['additional']['per_installments_tk'])) {
+                            $value = $wo['additional']['per_installments_tk'];
+                        } else {
+                            $value = '';
+                        }
+                        break;
+
+                    case 'installment_date_from':
+                        // prefer explicit booking value, else first installment date (injected)
+                        if (!empty($p['installment_date_from'])) {
+                            $value = $p['installment_date_from'];
+                        } elseif (!empty($installments) && is_array($installments)) {
+                            $firstDate = null;
+                            foreach ($installments as $ins) {
+                                $d = is_array($ins) ? ($ins['date'] ?? null) : ($ins->date ?? null);
+                                if (!empty($d)) { $firstDate = $d; break; }
+                            }
+                            $value = $firstDate ?? '';
+                        } elseif (!empty($wo['additional']['installment_date_from'])) {
+                            $value = $wo['additional']['installment_date_from'];
+                        } else {
+                            $value = '';
+                        }
+                        break;
+
+                    // money-in-words: short form using number_to_short_words
+                    case 'booking_money':
+                        $value = $p['booking_money'] ?? ($wo['additional']['booking_money'] ?? 0);
+                        break;
+                    // money-in-words: short form using number_to_short_words
+                    case 'booking_money_in_words':
+                        $bm = $p['booking_money'] ?? ($wo['additional']['booking_money'] ?? 0);
+                        $value = $bm !== '' ? number_to_short_words($bm) : '';
+                        break;
+                    case 'down_payment_in_words':
+                        $dp = $booking['down_payment'] ?? ($wo['additional']['down_payment'] ?? 0);
+                        $value = $dp !== '' ? number_to_short_words($dp) : '';
+                        break;
+                    case 'total_value_in_words':
+                        $tv = $p['total_value'] ?? ($wo['additional']['total_value'] ?? 0);
+                        $value = $tv !== '' ? number_to_short_words($tv) : '';
+                        break;
+                    case 'per_installments_tk_in_words':
+                        // Optional custom field: convert per_installments_tk to words
+                        $per = $p['per_installments_tk'] ?? null;
+                        if ($per === null && !empty($installments) && is_array($installments)) {
+                            // take first installment amount as representative
+                            $firstAmt = null;
+                            foreach ($installments as $ins) {
+                                $firstAmt = is_array($ins) ? ($ins['amount'] ?? null) : ($ins->amount ?? null);
+                                if ($firstAmt !== null) break;
+                            }
+                            $per = $firstAmt;
+                        }
+                        $value = ($per !== null && $per !== '') ? number_to_short_words($per) : '';
+                        break;
+
+                    // common fallbacks
+                    case 'booking_money':
+                    case 'booking_money_in_words':
+                    case 'bm_payment_method':
+                    case 'down_payment':
+                    case 'down_payment_in_words':
+                    case 'instruction':
+                        if (isset($booking[$name]) && $booking[$name] !== '') {
+                            $value = $booking[$name];
+                        } elseif (!empty($wo['additional'][$name])) {
+                            $value = $wo['additional'][$name];
+                        } else {
+                            $value = '';
+                        }
+                        break;
+
+                    default:
+                        if (!empty($wo['additional'][$name])) {
+                            $value = $wo['additional'][$name];
+                        } else {
+                            $value = $booking[$name] ?? '';
+                        }
+                        break;
+                } // end switch
+            } // end if $value empty
+
+            // determine whether this field's output contains raw HTML (dates) or should be escaped
+            $is_raw = in_array($name, $raw_html_fields, true);
+      ?>
+        <span class="<?= htmlspecialchars($name, ENT_QUOTES) ?>"
+              style="position:absolute;top:<?= htmlspecialchars($top, ENT_QUOTES) ?>;left:<?= htmlspecialchars($left, ENT_QUOTES) ?>;width:<?= htmlspecialchars($width, ENT_QUOTES) ?>;font-size:<?= htmlspecialchars($fontSize, ENT_QUOTES) ?>;text-align:<?= htmlspecialchars($textAlign, ENT_QUOTES) ?>;letter-spacing:<?= htmlspecialchars($letterSpacing, ENT_QUOTES) ?>;white-space:normal;line-height:1.4;z-index:2;">
+          <?php if ($is_raw): ?>
+            <?= strtoupper($value) // raw HTML for formatted dates ?>
+          <?php else: ?>
+            <?= htmlspecialchars((string)strtoupper($value), ENT_QUOTES) ?>
+          <?php endif; ?>
+        </span>
+      <?php endforeach; ?>
+    </div>
+  </div>
+</section>
+
+
+
+<style>
+/* PAGE SIZES */
+@page { margin: 0; size: Legal portrait; }
+
+/* moon-hill: Legal (user requested) */
+@page size-moon-hill { size: Legal portrait; margin: 0; }
+/* hill-town: slightly larger than Legal (user requested) */
+@page size-hill-town { size: Legal portrait; margin: 0; }
+
+/* assign named pages to elements */
+.print_area.size-moon-hill { page: size-moon-hill; }
+.print_area.size-hill-town { page: size-hill-town; }
+
+/* physical dimensions for on-screen preview & layout */
+.print_area.size-moon-hill {
+  width: 215.9mm;   /* Legal width (8.5 in) */
+  height: 355.6mm;  /* Legal height (14 in) */
+}
+.print_area.size-hill-town {
+  width: 215.9mm;   /* Legal width (8.5 in) */
+  height: 355.6mm;  /* Legal height (14 in) */
+}
+
+/* fallback/default */
+.print_area {
+  box-sizing: border-box;
+  overflow: hidden;
+  position: relative;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: top center;
+  background-size: cover;
+}
+
+/* The fallback inline image — hidden on screen; used in inline mode */
+.print-bg {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  z-index: 0; display: none;
+}
+
+/* ensure content sits above the background */
+.changable-content { position: relative; z-index: 2; }
+
+/* text styles */
+.changable-content span {
+  font-family: Arial, sans-serif;
+  color: #000;
+  font-weight: 600;
+  text-shadow: 0 0 2px rgba(255,255,255,0.8);
+}
+
+.print_area .changable-content .email {
+    text-transform: lowercase;
+}
+/* print styles */
+/* NOTE: we DO NOT force print-color-adjust globally anymore.
+   Only inline-mode clones will receive .force-print-colors which forces backgrounds to print. */
+@media print {
+  .print_area {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+    background-position: top center !important;
+    background-size: cover !important;
+  }
+  .invoice-layout { height: 100vh !important; }
+
+  /* inline-mode force class — apply color-adjust here only to clones that need it */
+  .force-print-colors {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  .print_area * { visibility: visible !important; }
+  .print_area.loading::before { display: none !important; }
+}
+</style>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  /* Apply background handling mode to all .print_area elements.
+     mode = 'css' => set background-image CSS (browser's Background Graphics controls it)
+     mode = 'inline' => remove CSS background and use <img class="print-bg"> as fallback (forces print)
+     Default: 'css' so the print dialog checkbox will hide/show the background. */
+  function applyBgModeToAreas(mode) {
+    $('.print_area[data-bg-url]').each(function(){
+      var $area = $(this);
+      var bgUrl = $area.attr('data-bg-url') || '';
+
+      if (mode === 'css') {
+        // Remove inline fallback visibility on screen; keep src for quicker switching later
+        $area.find('.print-bg').css('display','none');
+        // Apply as a CSS background so the browser print "Background graphics" checkbox affects it
+        $area.css({
+          'background-image': bgUrl ? 'url("' + bgUrl + '")' : 'none',
+          'background-position': 'top center',
+          'background-size': 'cover',
+          'background-repeat': 'no-repeat'
+        });
+      } else { // inline mode
+        // Remove CSS background so the checkbox won't affect it; use inline <img> instead
+        $area.css('background-image','none');
+        var $img = $area.find('.print-bg');
+        if ($img.length && $img.attr('src') !== bgUrl) $img.attr('src', bgUrl);
+        // Keep it hidden on screen — it will be shown in the print wrapper when needed
+        $img.css('display','none');
+      }
+    });
+  }
+
+  // initial apply (default CSS mode)
+  applyBgModeToAreas('css');
+
+  // handle UI radio button changes
+  $('input[name="bgMode"]').on('change', function(){
+    var mode = $(this).val();
+    applyBgModeToAreas(mode);
+  });
+
+  // preload background images (for preview/print speed)
+  function preloadPrintAreaBackgrounds() {
+    $('.print_area[data-bg-url]').each(function(){
+      var $area = $(this);
+      var bgUrl = $area.attr('data-bg-url') || '';
+      if (!bgUrl) return;
+
+      // Set inline image src to speed up switching to inline mode later
+      var $img = $area.find('.print-bg');
+      if ($img.length && !$img.attr('src')) $img.attr('src', bgUrl);
+
+      if (!$area.hasClass('bg-loaded')) {
+        $area.addClass('loading');
+        var img = new Image();
+        img.onload = function() {
+          $area.removeClass('loading').addClass('bg-loaded ready');
+        };
+        img.onerror = function() {
+          $area.removeClass('loading').addClass('bg-error');
+          console.warn('Failed to load background image:', bgUrl);
+        };
+        img.src = bgUrl;
+      }
+    });
+  }
+
+  // Preload with progress
+  function preloadBackgroundImagesWithProgress(nodes, progressCallback, completeCallback) {
+    var imageUrls = [];
+    var loadedCount = 0;
+
+    nodes.forEach(function(node){
+      var $node = $(node);
+      var dataBgUrl = $node.attr('data-bg-url');
+      if (dataBgUrl) imageUrls.push(dataBgUrl);
+
+      var bgImage = $node.css('background-image');
+      if (bgImage && bgImage !== 'none') {
+        var match = bgImage.match(/url\(['"]?(.*?)['"]?\)/);
+        if (match && match[1]) imageUrls.push(match[1]);
+      }
+
+      var $img = $node.find('.print-bg')[0];
+      if ($img && $img.getAttribute) {
+        var s = $img.getAttribute('src');
+        if (s) imageUrls.push(s);
+      }
+    });
+
+    imageUrls = [...new Set(imageUrls)];
+    if (imageUrls.length === 0) { progressCallback(100); completeCallback(); return; }
+
+    imageUrls.forEach(function(url) {
+      var img = new Image();
+      img.onload = img.onerror = function() {
+        loadedCount++;
+        progressCallback((loadedCount / imageUrls.length) * 100);
+        if (loadedCount >= imageUrls.length) completeCallback();
+      };
+      img.src = url;
+    });
+
+    // fallback timeout
+    setTimeout(function() {
+      if (loadedCount < imageUrls.length) {
+        console.warn('Some background images did not load in time, proceeding anyway');
+        completeCallback();
+      }
+    }, 5000);
+  }
+
+  // Build a print wrapper that respects the current mode (css vs inline).
+  // This function now also injects a temporary print-only CSS rule that hides everything
+  // except #print-wrapper-temp while printing. That prevents stray content (or UI) from
+  // generating a blank page before the print wrapper pages.
+  function _createPrintWrapperForNodes(nodes) {
+    var mode = $('input[name="bgMode"]:checked').val() || 'css';
+    var $wrap = $('<div id="print-wrapper-temp"></div>');
+    $wrap.css({ position: 'relative', zIndex: 99999 });
+
+    nodes.forEach(function(node){
+      var $clone = $(node).clone(true, true);
+      $clone.removeClass('d-none');
+      $clone.css({ display: 'block', visibility: 'visible', position: 'relative' });
+      $clone.css('background-position', 'top center');
+
+      if (mode === 'css') {
+        // copy CSS background (so print dialog controls it)
+        var src = $(node).attr('data-bg-url') || '';
+        if (src) $clone.css('background-image', 'url("' + src + '")');
+        // remove fallback <img> so it won't force print
+        $clone.find('.print-bg').remove();
+      } else {
+        // inline mode: remove css background and show fallback <img>
+        $clone.css('background-image','none');
+        $clone.find('.print-bg').css({ display: 'block' }).addClass('print_bg_inline_force force-print-colors');
+      }
+
+      // ensure each clone prints on its own page (no leading blank page)
+      $clone.css({ 'page-break-after': 'always' });
+
+      $wrap.append($clone);
+    });
+
+    // The wrapper will be the only visible thing in print. Append it to body.
+    $('body').append($wrap);
+
+    // create temporary print-only stylesheet that hides everything except #print-wrapper-temp during printing
+    var printOnlyCss = '@media print {' +
+        'html,body { height: auto !important; } ' +
+        'body > *:not(#print-wrapper-temp) { display: none !important; } ' +
+        '#print-wrapper-temp { display: block !important; position: initial !important; } ' +
+      '}';
+    var $tempStyle = $('<style id="print-only-style"></style>').text(printOnlyCss);
+    $('head').append($tempStyle);
+
+    return $wrap;
+  }
+
+  function _cleanupPrintWrapper($wrap) {
+    if (!$wrap || !$wrap.length) return;
+    try { $wrap.remove(); } catch(e) {}
+    $('#print-only-style').remove();
+  }
+
+  // Main print function (public)
+  window.printBookingFormsByIds = function(ids) {
+    if (!ids) return;
+    ids = Array.isArray(ids) ? ids : [ids];
+
+    var nodes = [];
+    ids.forEach(function(id){
+      var selector = '.print_area[data-purchase-id="' + id + '"]';
+      var el = $(selector)[0];
+      if (el) nodes.push(el);
+    });
+
+    if (!nodes.length) {
+      alert('No booking form found for printing.');
+      return;
+    }
+
+    // Show loading indicator
+    var $loadingIndicator = $(` 
+      <div id="print-loading" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:130000;background:white;padding:20px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+        <div class="text-center">
+          <div class="spinner-border text-primary mb-3" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+          <p class="mb-0">Preparing booking forms for printing...</p>
+          <small class="text-muted">Please wait while background images load</small>
+        </div>
+      </div>
+    `);
+    $('body').append($loadingIndicator);
+
+    var $wrap = _createPrintWrapperForNodes(nodes);
+
+    preloadBackgroundImagesWithProgress(nodes, function(progress) {
+      if (progress < 100) {
+        $loadingIndicator.find('p').text(`Loading images... ${Math.round(progress)}%`);
+      }
+    }, function() {
+      // All images loaded (or timed out), proceed with print
+      $loadingIndicator.remove();
+
+      var afterPrintHandler = function(){
+        try { _cleanupPrintWrapper($wrap); } catch(e) {}
+        try { window.removeEventListener('afterprint', afterPrintHandler); } catch(e) {}
+      };
+
+      window.addEventListener('afterprint', afterPrintHandler);
+
+      // small delay to allow rendering, then call print
+      setTimeout(function(){
+        try { 
+            // if (confirm('For accurate printing select: Paper size = Legal, Margins = None, Scale = 100% or Default. Click OK to open print dialog.')) {
+              window.print();
+            // }
+        } catch(e){ console.error('Print error', e); }
+        // cleanup soon after to remove wrapper in browsers that don't fire afterprint properly
+        setTimeout(function(){ 
+          _cleanupPrintWrapper($wrap); 
+          try { window.removeEventListener('afterprint', afterPrintHandler); } catch(e){}
+        }, 800);
+      }, 150);
+    });
+  };
+
+  // initialize preloading for on-screen preview
+  $(document).ready(function(){
+    preloadPrintAreaBackgrounds();
+  });
+
+  // also preload when modal is shown (if using a modal)
+  $('#viewClient-modal').on('shown.bs.modal', function(){
+    setTimeout(preloadPrintAreaBackgrounds, 50);
+  });
+
+});
+</script>
