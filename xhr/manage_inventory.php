@@ -257,7 +257,7 @@ if ($f == 'manage_inventory') {
             exit;
         }
     
-        // Get client (function exists in your project)
+        // Get client
         $client = function_exists('GetCustomerById') ? GetCustomerById($helper->client_id) : null;
         if (!$client) {
             echo json_encode(['status' => 404, 'message' => 'Client not found']);
@@ -272,50 +272,48 @@ if ($f == 'manage_inventory') {
         $total_price   = $per_katha * $katha;
         $remaining_after_advance = $total_price - ($down_payment + $booking_money);
     
-        // detect existing schedule JSON (if any)
+        // read from crm_payment_schedule only (exclude archived status=99)
         $existing_schedule = [];
-        if (!empty($helper->installment)) {
-            $parsed = json_decode($helper->installment, true);
-            if (is_array($parsed)) {
-                // ensure each row has expected keys to avoid client-side errors
-                foreach ($parsed as $row) {
-                    if (!is_array($row)) continue;
-                    $existing_schedule[] = [
-                        'particular'                 => isset($row['particular']) ? $row['particular'] : (isset($row['part']) ? $row['part'] : ''),
-                        'type'                       => isset($row['type']) ? $row['type'] : '',
-                        'date'                       => isset($row['date']) ? $row['date'] : '',
-                        'payment_date'               => isset($row['payment_date']) ? $row['payment_date'] : '',
-                        'payment_method'             => isset($row['payment_method']) ? $row['payment_method'] : '',
-                        'installment_amount'         => isset($row['installment_amount']) ? (int)$row['installment_amount'] : (isset($row['amount']) ? (int)$row['amount'] : 0),
-                        'paid_amount'                => isset($row['paid_amount']) ? (int)$row['paid_amount'] : (isset($row['amount_paid']) ? (int)$row['amount_paid'] : 0),
-                        'installment'                => isset($row['installment']) ? $row['installment'] : '',
-                        'money_receipt_no'           => isset($row['money_receipt_no']) ? $row['money_receipt_no'] : '',
-                        'total_dues'                 => isset($row['total_dues']) ? $row['total_dues'] : '',
-                        'remarks'                    => isset($row['remarks']) ? $row['remarks'] : (isset($row['remark']) ? $row['remark'] : ''),
-                        'adjustment'                 => !!(isset($row['adjustment']) ? $row['adjustment'] : false),
-                        'manual_adjustment'          => !!(isset($row['manual_adjustment']) ? $row['manual_adjustment'] : false),
-                        'manual_installment_edit'    => !!(isset($row['manual_installment_edit']) ? $row['manual_installment_edit'] : false),
-                        'original_installment_amount'=> isset($row['original_installment_amount']) ? (int)$row['original_installment_amount'] : (isset($row['original_amount']) ? (int)$row['original_amount'] : (isset($row['installment_amount']) ? (int)$row['installment_amount'] : 0)),
-                        'till_due'                   => isset($row['till_due']) ? $row['till_due'] : '',
-                        'over_due'                   => isset($row['over_due']) ? (int)$row['over_due'] : 0,
-                        'due_now'                    => isset($row['due_now']) ? (int)$row['due_now'] : 0,
-                        'history'                    => isset($row['history']) && is_array($row['history']) ? $row['history'] : [],
-                        'paid'                       => (isset($row['paid']) ? !!$row['paid'] : (isset($row['paid_amount']) && (int)$row['paid_amount'] >= (int)$row['installment_amount']))
-                    ];
-                }
+        $rows = $db->where('purchase_id', $purchase_id)->where('status', 99, '!=')->orderBy('due_date', 'ASC')->get('crm_payment_schedule');
+    
+        if ($rows && is_array($rows) && count($rows) > 0) {
+            foreach ($rows as $r) {
+                $existing_schedule[] = [
+                    'particular'                 => $r->particular ?? '',
+                    'type'                       => $r->type ?? '',
+                    'date'                       => ($r->due_date && $r->due_date !== '0000-00-00') ? date('Y-m-d', strtotime($r->due_date)) : '',
+                    'payment_date'               => ($r->payment_date && $r->payment_date !== '0000-00-00') ? date('Y-m-d', strtotime($r->payment_date)) : '',
+                    'payment_method'             => $r->payment_method ?? '',
+                    'installment_amount'         => (float) $r->installment_amount,
+                    'paid_amount'                => (float) $r->paid_amount,
+                    'installment'                => (int) ($r->installment_number ?? 0),
+                    'money_receipt_no'           => $r->money_receipt_no ?? '',
+                    'total_dues'                 => '', // legacy UI field (not stored)
+                    'remarks'                    => $r->remarks ?? '',
+                    'adjustment'                 => !!$r->is_adjustment,
+                    'manual_adjustment'          => !!($r->manual_adjustment ?? false),
+                    'manual_installment_edit'    => !!($r->manual_edit ?? false),
+                    'original_installment_amount'=> (float) ($r->previous_amount ?? $r->installment_amount),
+                    'till_due'                   => '',
+                    'over_due'                   => 0,
+                    'due_now'                    => 0,
+                    'history'                    => [],
+                    'paid'                       => ((float)$r->paid_amount >= (float)$r->installment_amount),
+                    'status'                     => isset($r->status) ? (int)$r->status : 0
+                ];
             }
         }
     
-        // Payment configuration fields read directly from helper columns (fallback names)
+        // Payment configuration fields read directly from helper columns
         $payment_mode = $helper->payment_mode ?? ($helper->mode_of_payment ?? ($helper->mode ?? '2'));
         $installments = intval($helper->installments ?? $helper->installment_count ?? $helper->default_installments ?? 60);
         $adjustment_type = $helper->adjustment_type ?? ($helper->yearly_adjustment_type ?? 'year_end');
-        $monthly_amount = is_numeric($helper->monthly_amount ?? null) ? (int)round($helper->monthly_amount) : null;
-        $yearly_adjustment = is_numeric($helper->yearly_adjustment ?? null) ? (int)round($helper->yearly_adjustment) : (is_numeric($helper->yearly ?? null) ? (int)round($helper->yearly) : 0);
+        $monthly_amount = is_numeric($helper->monthly_amount ?? null) ? (float)round($helper->monthly_amount, 2) : null;
+        $yearly_adjustment = is_numeric($helper->yearly_adjustment ?? null) ? (float)round($helper->yearly_adjustment, 2) : (is_numeric($helper->yearly ?? null) ? (float)round($helper->yearly, 2) : 0.00);
         $installment_start_date = $helper->installment_start_date ?? ($helper->start_date ?? date('Y-m-d'));
         $start_option = $helper->start_option ?? ($helper->installment_start_option ?? 'exact');
     
-        // include booking/down specific dates stored on helper
+        // booking/down dates (legacy columns kept for UI compatibility)
         $booking_due_date = $helper->booking_due_date ?? '';
         $booking_payment_date = $helper->booking_payment_date ?? '';
         $down_due_date = $helper->down_due_date ?? '';
@@ -342,17 +340,15 @@ if ($f == 'manage_inventory') {
             'default_start_date' => date('Y-m-d'),
             'default_installments' => $installments,
             'schedule' => $existing_schedule,
-            // booking/down dates
             'booking_due_date' => $booking_due_date,
             'booking_payment_date' => $booking_payment_date,
             'down_due_date' => $down_due_date,
             'down_payment_date' => $down_payment_date,
-            // payment configuration
             'payment_mode' => (string)$payment_mode,
             'installments' => (int)$installments,
             'adjustment_type' => (string)$adjustment_type,
             'monthly_amount' => $monthly_amount,
-            'yearly_adjustment' => (int)$yearly_adjustment,
+            'yearly_adjustment' => (float)$yearly_adjustment,
             'installment_start_date' => $installment_start_date,
             'start_option' => (string)$start_option
         ];
@@ -395,11 +391,10 @@ if ($f == 'manage_inventory') {
         $total_price   = $per_katha * $katha;
     
         // expected remaining to be covered by installment rows (exclude booking & down)
-        $expected_remaining = (int) round($total_price - ($down_payment + $booking_money), 0);
+        $expected_remaining = (float) round($total_price - ($down_payment + $booking_money), 2);
     
-        // sanitize incoming items, capture booking/down detection, separate installment rows
+        // sanitize incoming items
         $sanitized = [];
-        $installment_indexes = [];
         $booking_amount_found = null;
         $down_amount_found = null;
         $booking_due_date = '';
@@ -410,70 +405,32 @@ if ($f == 'manage_inventory') {
         foreach ($schedule as $i => $item) {
             if (!is_array($item)) $item = [];
     
-            // Determine installment amount (preferred key: installment_amount, then amount, then payment_amount)
-            $amount_raw = 0;
-            if (isset($item['installment_amount'])) {
-                $amount_raw = $item['installment_amount'];
-            } elseif (isset($item['amount'])) {
-                $amount_raw = $item['amount'];
-            } elseif (isset($item['payment_amount'])) {
-                $amount_raw = $item['payment_amount'];
-            }
+            $amount_raw = $item['installment_amount'] ?? ($item['amount'] ?? ($item['payment_amount'] ?? 0));
+            $paid_raw   = $item['paid_amount'] ?? ($item['amount_paid'] ?? (isset($item['paid']) && $item['paid'] ? $amount_raw : 0));
     
-            // Determine paid_amount (preferred key: paid_amount, then amount_paid, then boolean paid -> assume full)
-            $paid_raw = 0;
-            if (isset($item['paid_amount'])) {
-                $paid_raw = $item['paid_amount'];
-            } elseif (isset($item['amount_paid'])) {
-                $paid_raw = $item['amount_paid'];
-            } elseif (isset($item['paid'])) {
-                // if paid provided as boolean true, assume full payment of installment amount (if present)
-                $paid_raw = ($item['paid'] && ($amount_raw !== '' && $amount_raw !== null)) ? $amount_raw : 0;
-            }
+            $installment_amount = round((float) str_replace(',', '', (string)$amount_raw), 2);
+            $paid_amount = round((float) str_replace(',', '', (string)$paid_raw), 2);
     
-            // remove commas and cast to int
-            $installment_amount = (int) round( (float) str_replace(',', '', (string)$amount_raw), 0 );
-            $paid_amount = (int) round( (float) str_replace(',', '', (string)$paid_raw), 0 );
+            $particular       = trim((string)($item['particular'] ?? ''));
+            $due_date         = trim((string)($item['date'] ?? ''));
+            $payment_date     = trim((string)($item['payment_date'] ?? ''));
+            $payment_method   = trim((string)($item['payment_method'] ?? ''));
+            $installment_lbl  = isset($item['installment']) ? intval($item['installment']) : ($i + 1);
+            $money_receipt_no = trim((string)($item['money_receipt_no'] ?? ''));
+            $remarks          = trim((string)($item['remarks'] ?? ''));
+            $adjustment       = !empty($item['adjustment']);
+            $type             = strtolower(trim((string)($item['type'] ?? 'installment')));
     
-            $particular       = isset($item['particular']) ? trim((string)$item['particular']) : '';
-            $due_date         = isset($item['date']) ? trim((string)$item['date']) : '';
-            $payment_date     = isset($item['payment_date']) ? trim((string)$item['payment_date']) : '';
-            $payment_method   = isset($item['payment_method']) ? trim((string)$item['payment_method']) : '';
-            $installment_lbl  = isset($item['installment']) ? $item['installment'] : ($i + 1);
-            $money_receipt_no = isset($item['money_receipt_no']) ? trim((string)$item['money_receipt_no']) : '';
-            $total_dues       = isset($item['total_dues']) ? trim((string)$item['total_dues']) : '';
-            $remarks          = isset($item['remarks']) ? trim((string)$item['remarks']) : '';
-            $adjustment       = !empty($item['adjustment']) ? true : false;
-            $type             = isset($item['type']) ? strtolower(trim((string)$item['type'])) : '';
-    
-            // new metadata (optional)
-            $till_due = isset($item['till_due']) ? (is_numeric($item['till_due']) ? (int)$item['till_due'] : '') : '';
-            $over_due = isset($item['over_due']) ? (int)$item['over_due'] : 0;
-            $due_now  = isset($item['due_now']) ? (int)$item['due_now'] : 0;
-            $original_installment = isset($item['original_installment_amount']) ? (int)$item['original_installment_amount'] : (isset($item['original_amount']) ? (int)$item['original_amount'] : $installment_amount);
-            $manual_adjustment = !empty($item['manual_adjustment']) ? true : false;
-            $manual_installment_edit = !empty($item['manual_installment_edit']) ? true : false;
-            $history = [];
-            if (isset($item['history']) && is_array($item['history'])) {
-                $history = $item['history'];
-            } elseif (isset($item['history']) && is_string($item['history'])) {
-                $decodedHist = json_decode($item['history'], true);
-                if (is_array($decodedHist)) $history = $decodedHist;
-            }
-    
-            // normalize date to Y-m-d if possible
-            $norm_due_date = $due_date;
-            if (!empty($due_date)) {
-                try { $dt = new DateTime($due_date); $norm_due_date = $dt->format('Y-m-d'); }
-                catch (Exception $e) { /* leave as-is */ }
-            }
-            $norm_payment_date = $payment_date;
+            // normalize dates to Y-m-d. If due_date is empty, fall back to helper start date (or today) because DB due_date may be NOT NULL
+            $installment_start_date = $helper->installment_start_date ?? ($helper->start_date ?? date('Y-m-d'));
+            $norm_due_date = $due_date ?: $installment_start_date;
+            try { $nd = new DateTime($norm_due_date); $norm_due_date = $nd->format('Y-m-d'); } catch (Exception $e) { $norm_due_date = $installment_start_date; }
+            $norm_payment_date = null;
             if (!empty($payment_date)) {
-                try { $dt2 = new DateTime($payment_date); $norm_payment_date = $dt2->format('Y-m-d'); }
-                catch (Exception $e) { /* leave as-is */ }
+                try { $pd = new DateTime($payment_date); $norm_payment_date = $pd->format('Y-m-d'); } catch (Exception $e) { $norm_payment_date = null; }
             }
     
-            // detect type by explicit type or by text
+            // detect booking/down
             $lower_part = strtolower($particular);
             $is_booking = ($type === 'booking') || (strpos($lower_part, 'booking') !== false && strpos($lower_part, 'down') === false);
             $is_down = ($type === 'down') || (strpos($lower_part, 'down') !== false);
@@ -486,16 +443,13 @@ if ($f == 'manage_inventory') {
                 if ($down_amount_found === null && $installment_amount > 0) $down_amount_found = $installment_amount;
                 if ($down_due_date === '' && $norm_due_date) $down_due_date = $norm_due_date;
                 if ($down_payment_date === '' && $norm_payment_date) $down_payment_date = $norm_payment_date;
-            } else {
-                // installment row index capture
-                $installment_indexes[] = count($sanitized); // index in sanitized array once appended
             }
     
-            // strict paid flag: fully paid only when paid_amount >= installment_amount and installment_amount > 0
-            $is_paid_flag = false;
-            if ($installment_amount > 0 && $paid_amount >= $installment_amount) $is_paid_flag = true;
+            // status: 1 paid, 2 partial, 0 pending
+            $row_status = 0;
+            if ($installment_amount > 0 && $paid_amount >= $installment_amount) $row_status = 1;
+            elseif ($paid_amount > 0 && $paid_amount < $installment_amount) $row_status = 2;
     
-            // keep keys consistent; include new metadata as provided
             $sanitized[] = [
                 'particular'                 => $particular,
                 'type'                       => $type,
@@ -506,48 +460,35 @@ if ($f == 'manage_inventory') {
                 'paid_amount'                => $paid_amount,
                 'installment'                => $installment_lbl,
                 'money_receipt_no'           => $money_receipt_no,
-                'total_dues'                 => $total_dues,
                 'remarks'                    => $remarks,
                 'adjustment'                 => $adjustment ? true : false,
-                'manual_adjustment'          => $manual_adjustment ? true : false,
-                'manual_installment_edit'    => $manual_installment_edit ? true : false,
-                'original_installment_amount'=> $original_installment,
-                'till_due'                   => $till_due,
-                'over_due'                   => $over_due,
-                'due_now'                    => $due_now,
-                'history'                    => $history,
-                'paid'                       => $is_paid_flag ? true : false
+                'original_installment_amount'=> $installment_amount,
+                'history'                    => (isset($item['history']) && is_array($item['history'])) ? $item['history'] : [],
+                'paid'                       => ($row_status === 1),
+                'status'                     => $row_status
             ];
         }
     
-        // compute sum for installment rows (exclude booking/down which we detected) — use installment_amount
-        $sum_installments = 0;
+        // sum installments excluding booking/down rows
+        $sum_installments = 0.0;
         foreach ($sanitized as $si) {
             $p = strtolower(trim((string)$si['particular']));
             $is_booking_row = (strpos($p, 'booking') !== false && strpos($p, 'down') === false) || ($si['type'] === 'booking');
             $is_down_row = (strpos($p, 'down') !== false) || ($si['type'] === 'down');
-            if ($is_booking_row || $is_down_row) {
-                continue; // skip from installment sum
-            }
-            $sum_installments += (int)$si['installment_amount'];
+            if ($is_booking_row || $is_down_row) continue;
+            $sum_installments += (float)$si['installment_amount'];
         }
     
-        // Now ensure installments sum EXACTLY matches expected_remaining by adjusting the last installment row
-        $diff = (int)$expected_remaining - (int)$sum_installments;
-    
-        if ($diff !== 0) {
-            // Prefer last installment row that is NOT manual_installment_edit for auto-adjust
+        // adjust last installment to match expected_remaining (rounded to 2 decimals)
+        $diff = round($expected_remaining - $sum_installments, 2);
+        if (abs($diff) >= 0.01) {
             $lastInstallIdx = null;
             for ($i = count($sanitized) - 1; $i >= 0; $i--) {
                 $p = strtolower(trim((string)$sanitized[$i]['particular']));
                 $is_booking_row = (strpos($p, 'booking') !== false && strpos($p, 'down') === false) || ($sanitized[$i]['type'] === 'booking');
                 $is_down_row = (strpos($p, 'down') !== false) || ($sanitized[$i]['type'] === 'down');
-                if (!$is_booking_row && !$is_down_row && empty($sanitized[$i]['manual_installment_edit'])) {
-                    $lastInstallIdx = $i;
-                    break;
-                }
+                if (!$is_booking_row && !$is_down_row && empty($sanitized[$i]['manual_installment_edit'] ?? false)) { $lastInstallIdx = $i; break; }
             }
-            // fallback: if none non-manual found, use last installment row regardless
             if ($lastInstallIdx === null) {
                 for ($i = count($sanitized) - 1; $i >= 0; $i--) {
                     $p = strtolower(trim((string)$sanitized[$i]['particular']));
@@ -556,245 +497,122 @@ if ($f == 'manage_inventory') {
                     if (!$is_booking_row && !$is_down_row) { $lastInstallIdx = $i; break; }
                 }
             }
-    
-            if ($lastInstallIdx !== null) {
-                // apply diff to chosen row and keep legacy 'amount' in sync
-                $sanitized[$lastInstallIdx]['installment_amount'] = (int)$sanitized[$lastInstallIdx]['installment_amount'] + $diff;
-                $sanitized[$lastInstallIdx]['amount'] = $sanitized[$lastInstallIdx]['installment_amount'];
-                // if the chosen row had no original_installment_amount set, set it now
-                if (empty($sanitized[$lastInstallIdx]['original_installment_amount'])) {
-                    $sanitized[$lastInstallIdx]['original_installment_amount'] = $sanitized[$lastInstallIdx]['installment_amount'];
-                }
-                // mark that server made an auto adjustment only if the row wasn't manually edited
-                if (empty($sanitized[$lastInstallIdx]['manual_installment_edit'])) {
-                    // do not flip manual_adjustment — leave as-is; but record in history
-                    if (!isset($sanitized[$lastInstallIdx]['history']) || !is_array($sanitized[$lastInstallIdx]['history'])) $sanitized[$lastInstallIdx]['history'] = [];
-                    $sanitized[$lastInstallIdx]['history'][] = [
-                        'ts' => date('c'),
-                        'field' => 'installment_amount',
-                        'from' => $sanitized[$lastInstallIdx]['installment_amount'] - $diff,
-                        'to' => $sanitized[$lastInstallIdx]['installment_amount'],
-                        'reason' => 'Server auto-adjust to match expected remaining'
-                    ];
-                } else {
-                    // If manual_installment_edit exists and we still had to adjust, still adjust (last resort)
-                    if (!isset($sanitized[$lastInstallIdx]['history']) || !is_array($sanitized[$lastInstallIdx]['history'])) $sanitized[$lastInstallIdx]['history'] = [];
-                    $sanitized[$lastInstallIdx]['history'][] = [
-                        'ts' => date('c'),
-                        'field' => 'installment_amount',
-                        'from' => $sanitized[$lastInstallIdx]['installment_amount'] - $diff,
-                        'to' => $sanitized[$lastInstallIdx]['installment_amount'],
-                        'reason' => 'Server forced adjust (no non-manual rows)'
-                    ];
-                }
-                // recalc sum_installments (for response)
-                $sum_installments += $diff;
-            } else {
-                // no installment rows found — return error
-                echo json_encode([
-                    'status' => 400,
-                    'message' => 'No installment rows found to adjust. Expected remaining: ৳' . number_format($expected_remaining, 0) .
-                                 ', Installments sum: ৳' . number_format($sum_installments, 0) .
-                                 '. Please include installment rows in schedule.'
-                ]);
+            if ($lastInstallIdx === null) {
+                echo json_encode(['status' => 400, 'message' => 'No installment rows found to adjust. Expected remaining: ৳' . number_format($expected_remaining, 2) . ', Installments sum: ৳' . number_format($sum_installments, 2)]);
                 exit;
             }
+            $prev = $sanitized[$lastInstallIdx]['installment_amount'];
+            $sanitized[$lastInstallIdx]['installment_amount'] = round($prev + $diff, 2);
+            $sanitized[$lastInstallIdx]['original_installment_amount'] = $sanitized[$lastInstallIdx]['original_installment_amount'] ?? $prev;
+            $sanitized[$lastInstallIdx]['history'][] = [
+                'ts' => date('c'),
+                'field' => 'installment_amount',
+                'from' => $prev,
+                'to' => $sanitized[$lastInstallIdx]['installment_amount'],
+                'reason' => 'Server auto-adjust to match expected remaining'
+            ];
+            // update sum
+            $sum_installments = round($sum_installments + $diff, 2);
         }
     
-        // After adjustment recalc totals for final check
-        $final_installment_sum = 0;
-        $final_total_sum = 0;
+        // final validation
+        $final_installment_sum = 0.0;
         foreach ($sanitized as $si) {
             $p = strtolower(trim((string)$si['particular']));
             $is_booking_row = (strpos($p, 'booking') !== false && strpos($p, 'down') === false) || ($si['type'] === 'booking');
             $is_down_row = (strpos($p, 'down') !== false) || ($si['type'] === 'down');
-            if (!$is_booking_row && !$is_down_row) $final_installment_sum += (int)$si['installment_amount'];
-            $final_total_sum += (int)$si['installment_amount'];
+            if (!$is_booking_row && !$is_down_row) $final_installment_sum += (float)$si['installment_amount'];
         }
     
-        // final validation: installments must equal expected_remaining (int)
-        if ((int)$final_installment_sum !== (int)$expected_remaining) {
-            // If still mismatch, return an error
-            echo json_encode([
-                'status' => 400,
-                'message' => 'Installments total mismatch after auto-adjustment. Expected installments total: ৳' . number_format($expected_remaining, 0) .
-                             ', Got: ৳' . number_format($final_installment_sum, 0) .
-                             '. Please review schedule.'
-            ]);
+        if (round($final_installment_sum, 2) !== round($expected_remaining, 2)) {
+            echo json_encode(['status' => 400, 'message' => 'Installments total mismatch after auto-adjustment. Expected: ' . number_format($expected_remaining,2) . ', Got: ' . number_format($final_installment_sum,2)]);
             exit;
         }
     
-        // sort sanitized by date (empty dates at end)
-        usort($sanitized, function($a, $b) {
-            $ad = $a['date']; $bd = $b['date'];
-            if (empty($ad) && empty($bd)) return 0;
-            if (empty($ad)) return 1;
-            if (empty($bd)) return -1;
-            return strcmp($ad, $bd);
-        });
-    
-        // Prepare database update array (initialize first)
+        // persist: update helper (no legacy installment JSON changes) and write rows to crm_payment_schedule
         $update_data = ['updated_at' => time()];
-    
-        // Map detected booking/down dates to update columns (only if found)
-        if (!empty($booking_due_date)) $update_data['booking_due_date'] = $booking_due_date;
-        if (!empty($booking_payment_date)) $update_data['booking_payment_date'] = $booking_payment_date;
-        if (!empty($down_due_date)) $update_data['down_due_date'] = $down_due_date;
-        if (!empty($down_payment_date)) $update_data['down_payment_date'] = $down_payment_date;
-    
-        // Prepare database update array
-        // store sanitized schedule JSON with new metadata included
-        $update_data['installment'] = json_encode($sanitized, JSON_UNESCAPED_UNICODE);
-    
-        // only update booking/down amounts if they were explicitly found and differ
         if (is_numeric($booking_amount_found) && $booking_amount_found > 0) {
-            $booking_amount_found = round((float)$booking_amount_found, 0);
+            $booking_amount_found = round((float)$booking_amount_found, 2);
             if (abs($booking_money - $booking_amount_found) > 0) $update_data['booking_money'] = $booking_amount_found;
         }
         if (is_numeric($down_amount_found) && $down_amount_found > 0) {
-            $down_amount_found = round((float)$down_amount_found, 0);
+            $down_amount_found = round((float)$down_amount_found, 2);
             if (abs($down_payment - $down_amount_found) > 0) $update_data['down_payment'] = $down_amount_found;
         }
     
-        // Actually update DB
-        $update_result = $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, $update_data);
+        if (method_exists($db, 'startTransaction')) $db->startTransaction();
     
-        if ($update_result !== false) {
-            $theme = $wo['config']['theme'] ?? 'default';
-            $modified_file_path = "./themes/{$theme}/modified_installment_" . intval($purchase_id) . ".xlsx";
-            // Remove existing file to ensure fresh write (optional)
-            if (file_exists($modified_file_path)) {
-                @unlink($modified_file_path);
+        try {
+            // update helper with any booking/down amount changes and timestamp (do NOT write installment JSON)
+            $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, $update_data);
+    
+            $userId = isset($wo['user']['id']) ? (int)$wo['user']['id'] : null;
+    
+            // archive existing schedule rows by setting status = 99
+            $db->where('purchase_id', $purchase_id)->update('crm_payment_schedule', [
+                'status' => 99,
+                'updated_at' => date('Y-m-d H:i:s'),
+                'updated_by' => $userId
+            ]);
+    
+            // insert new rows (map sanitized -> table columns)
+            $inserted = 0;
+            foreach ($sanitized as $si) {
+                // compute status if not supplied
+                $status = isset($si['status']) ? (int)$si['status'] : 0;
+                if (!isset($si['status'])) {
+                    $paid = (float)($si['paid_amount'] ?? $si['paid'] ?? 0);
+                    $amt  = (float)($si['installment_amount'] ?? 0);
+                    if ($amt > 0 && $paid >= $amt) $status = 1;
+                    elseif ($paid > 0 && $paid < $amt) $status = 2;
+                    else $status = 0;
+                }
+    
+                $rowData = [
+                    'purchase_id'        => $purchase_id,
+                    'client_id'          => $helper->client_id ?? null,
+                    'installment_number' => intval($si['installment'] ?? 0),
+                    'particular'         => $si['particular'] ?? '',
+                    'type'               => $si['type'] ?? 'installment',
+                    'due_date'           => !empty($si['date']) ? $si['date'] : ($helper->installment_start_date ?? date('Y-m-d')),
+                    'installment_amount' => number_format((float)$si['installment_amount'], 2, '.', ''),
+                    'paid_amount'        => number_format((float)$si['paid_amount'], 2, '.', ''),
+                    'payment_date'       => !empty($si['payment_date']) ? $si['payment_date'] : null,
+                    'payment_method'     => $si['payment_method'] ?? null,
+                    'money_receipt_no'   => $si['money_receipt_no'] ?? null,
+                    'remarks'            => $si['remarks'] ?? null,
+                    'status'             => $status,
+                    'is_adjustment'      => !empty($si['adjustment']) ? 1 : 0,
+                    'previous_amount'    => isset($si['original_installment_amount']) ? number_format((float)$si['original_installment_amount'], 2, '.', '') : null,
+                    'change_reason'      => null,
+                    'created_by'         => $userId,
+                    'updated_by'         => $userId,
+                    'created_at'         => date('Y-m-d H:i:s'),
+                    'updated_at'         => date('Y-m-d H:i:s')
+                ];
+    
+                // insert row (ensure only real columns are present in rowData)
+                $ins = $db->insert('crm_payment_schedule', $rowData);
+                if ($ins) $inserted++;
             }
+    
+            if (method_exists($db, 'commit')) $db->commit();
     
             if (function_exists('logActivity')) logActivity('clients', 'update', "Updated payment schedule for purchase ID: {$purchase_id}");
     
             echo json_encode([
                 'status' => 200,
                 'message' => 'Payment schedule saved successfully',
-                'installments_total' => (int)$final_installment_sum,
-                'schedule_total' => (int)$final_total_sum,
-                'saved_schedule' => $sanitized
+                'installments_total' => (float)$final_installment_sum,
+                'schedule_total' => (float)$final_total_sum,
+                'saved_schedule' => $sanitized,
+                'inserted_rows' => $inserted
             ]);
-        } else {
-            echo json_encode(['status' => 500, 'message' => 'Failed to save schedule']);
-        }
-        exit;
-    }
-
-
-    
-    // ------------------------------
-    // DYNAMIC INSTALLMENT EXCEL MODAL
-    // Returns modal HTML using Wo_LoadManagePage('clients/installment_excel_modal')
-    // ------------------------------
-    if ($s == 'installment_excel_modal') {
-        global $db, $wo;
-    
-        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
-    
-        // Optionally load purchase data into $wo for the modal (if your modal expects it)
-        if ($purchase_id) {
-            $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
-            $booking = $helper ? $db->where('id', $helper->booking_id)->getOne(T_BOOKING) : null;
-            $client = ($helper && function_exists('GetCustomerById')) ? GetCustomerById($helper->client_id) : null;
-    
-            // make these available to the modal template via $wo (optional, adjust keys as your template expects)
-            $wo['modal_purchase'] = $helper;
-            $wo['modal_booking'] = $booking;
-            $wo['modal_client'] = $client;
-        }
-        
-        // Load the modal HTML using your manage page loader
-        $html = Wo_LoadManagePage('clients/installment_excel_modal');
-    
-        if (empty($html)) {
-            echo json_encode(['status' => 500, 'message' => 'Modal template not found or failed to render.']);
-            exit;
-        }
-    
-        echo json_encode(['status' => 200, 'html' => $html]);
-        exit;
-    }
-
-
-    // ===============================
-    //  🔄 CHANGE PLOT
-    // ===============================
-    if ($s == 'change_plot') {
-        $purchaseId = $_POST['purchase_id'] ?? '';
-        $newPlotId = $_POST['new_plot_id'] ?? '';
-
-        if (!$purchaseId || !$newPlotId) {
-            echo json_encode(['status' => 400, 'message' => 'Missing required fields']);
-            exit;
-        }
-        
-        try {
-            $db->startTransaction();
-            
-            // Get current purchase details
-            $currentPurchase = $db->where('id', $purchaseId)->getOne(T_BOOKING_HELPER);
-            if (!$currentPurchase) {
-                $db->rollback();
-                echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
-                exit;
-            }
-            
-            // Get new plot details
-            $newPlot = $db->where('id', $newPlotId)->getOne(T_BOOKING);
-            if (!$newPlot) {
-                $db->rollback();
-                echo json_encode(['status' => 404, 'message' => 'New plot not found']);
-                exit;
-            }
-            
-            // Check if new plot is available
-            if ($newPlot->status != '0' && $newPlot->status != '1') {
-                $db->rollback();
-                echo json_encode(['status' => 400, 'message' => 'Selected plot is not available']);
-                exit;
-            }
-            
-            // Update booking_helper to point to new booking
-            $db->where('id', $purchaseId)->update(T_BOOKING_HELPER, [
-                'booking_id' => $newPlotId,
-                'installment' => '[]',
-                'time' => time()
-            ]);
-            
-            // Update old plot status to available
-            if ($currentPurchase->booking_id) {
-                $db->where('id', $currentPurchase->booking_id)->update(T_BOOKING, [
-                    'status' => '1',
-                    'file_num' => null
-                ]);
-            }
-            
-            // Update new plot status to sold
-            $db->where('id', $newPlotId)->update(T_BOOKING, [
-                'status' => '2',
-                'file_num' => $currentPurchase->file_num
-            ]);
-            
-            // Log the change
-            $clientData = GetCustomerById($currentPurchase->client_id);
-            $clientName = $clientData['name'] ?? 'Unknown';
-            
-            logActivity('inventory', 'change_plot', 
-                "Plot changed for {$clientName}: from booking_id {$currentPurchase->booking_id} to {$newPlotId}.");
-            
-            $db->commit();
-            
-            echo json_encode([
-                'status' => 200,
-                'message' => 'Plot changed successfully'
-            ]);
-            
         } catch (Exception $e) {
-            $db->rollback();
-            echo json_encode(['status' => 500, 'message' => 'Error changing plot: ' . $e->getMessage()]);
+            if (method_exists($db, 'rollback')) $db->rollback();
+            echo json_encode(['status' => 500, 'message' => 'Failed to save schedule', 'error' => $e->getMessage()]);
         }
+    
         exit;
     }
 
@@ -963,17 +781,17 @@ if ($f == 'manage_inventory') {
     if ($s === 'cancel_purchase') {
     
         // accept via POST or GET
-        $booking_helper_id = isset($_POST['booking_helper_id']) ? (int) $_POST['booking_helper_id'] : (isset($_GET['booking_helper_id']) ? (int) $_GET['booking_helper_id'] : 0);
+        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
         $cancel_date_raw = isset($_POST['cancel_date']) ? $_POST['cancel_date'] : (isset($_GET['cancel_date']) ? $_GET['cancel_date'] : '');
     
-        if ($booking_helper_id <= 0) {
+        if ($purchase_id <= 0) {
             http_response_code(400);
-            echo json_encode(['status' => 400, 'message' => 'Missing or invalid booking_helper_id.']);
+            echo json_encode(['status' => 400, 'message' => 'Missing or invalid purchase_id.']);
             exit;
         }
     
         // find helper
-        $helper = $db->where('id', $booking_helper_id)->getOne(T_BOOKING_HELPER);
+        $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
         if (!$helper) {
             http_response_code(404);
             echo json_encode(['status' => 404, 'message' => 'Booking helper not found.']);
@@ -1004,7 +822,7 @@ if ($f == 'manage_inventory') {
     
         // update helper -> set status = 4 (cancelled) and update time
         $updateData = ['status' => 4, 'cancel_date' => $cancel_date_ts];
-        $ok = $db->where('id', $booking_helper_id)->update(T_BOOKING_HELPER, $updateData);
+        $ok = $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, $updateData);
 
         if (!$ok) {
             $db->rollback();
@@ -1015,7 +833,7 @@ if ($f == 'manage_inventory') {
     
         // Fetch other helpers for same booking (excluding the cancelled one)
         $otherHelpers = $db->where('booking_id', $booking_id)
-                           ->where('id', $booking_helper_id, '!=')
+                           ->where('id', $purchase_id, '!=')
                            ->get(T_BOOKING_HELPER);
     
         // Normalize "free" statuses (strings/numbers). Adjust list if your app uses different status values.
@@ -1098,12 +916,12 @@ if ($f == 'manage_inventory') {
     
         // optional: log
         $logUser = 'User #' . ($wo['user']['id'] ?? 'unknown');
-        logActivity('booking', 'cancel', "{$logUser} cancelled booking helper #{$booking_helper_id} for booking #{$booking_id}");
+        logActivity('booking', 'cancel', "{$logUser} cancelled booking helper #{$purchase_id} for booking #{$booking_id}");
     
         echo json_encode([
             'status' => 200,
             'message' => 'Purchase cancelled successfully.',
-            'booking_helper_id' => $booking_helper_id,
+            'purchase_id' => $purchase_id,
             'booking_id' => $booking_id
         ]);
         exit;

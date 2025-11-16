@@ -179,6 +179,41 @@ function get_payment_schedule_summary($purchase_id) {
     ];
 }
 
+/**
+ * New helper function to get payment schedule rows as array
+ * Get payment schedule entries as array of formatted data
+ */
+function get_payment_schedule_rows($purchase_id, $filters = []) {
+    global $db;
+
+    if (empty($purchase_id)) {
+        return [];
+    }
+
+    $schedule = get_payment_schedule($purchase_id, $filters);
+    
+    if (empty($schedule)) {
+        return [];
+    }
+
+    $rows = [];
+    foreach ($schedule as $entry) {
+        $rows[] = [
+            'id' => $entry->id,
+            'installment_number' => $entry->installment_number,
+            'particular' => $entry->particular,
+            'due_date' => $entry->due_date,
+            'amount' => (float)$entry->amount,
+            'paid_amount' => (float)$entry->paid_amount,
+            'status' => $entry->status,
+            'payment_date' => $entry->payment_date,
+            'payment_method' => $entry->payment_method
+        ];
+    }
+
+    return $rows;
+}
+
 // ===============================
 //  UPDATE PAYMENT SCHEDULE
 // ===============================
