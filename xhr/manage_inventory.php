@@ -173,6 +173,481 @@ if ($f == 'manage_inventory') {
         exit;
     }
 
+    // Get transfer data for modal population
+    if ($s === 'get_transfer_data') {
+        header('Content-Type: application/json; charset=utf-8');
+        
+        $purchase_id = isset($_POST['purchase_id']) ? (int)$_POST['purchase_id'] : 0;
+        
+        if ($purchase_id <= 0) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid purchase ID']);
+            exit;
+        }
+        
+        try {
+            $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
+            if (!$helper) {
+                echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+                exit;
+            }
+            
+            $client = GetCustomerById($helper->client_id);
+            $booking = $db->where('id', $helper->booking_id)->getOne(T_BOOKING);
+            
+            // Get all available clients
+            $clients = $db->orderBy('name', 'ASC')->get(T_CUSTOMERS, null, ['id', 'name', 'phone']);
+            $available_clients = [];
+            if (!empty($clients)) {
+                foreach ($clients as $c) {
+                    $available_clients[] = [
+                        'id' => $c->id,
+                        'name' => $c->name,
+                        'phone' => $c->phone ?? ''
+                    ];
+                }
+            }
+            
+            // Get all available plots
+            $available_plots = $db->where('status', '0')->orWhere('status', '1')->get(T_BOOKING);
+            $plots = [];
+            if (!empty($available_plots)) {
+                foreach ($available_plots as $p) {
+                    $plots[] = [
+                        'id' => $p->id,
+                        'plot' => $p->plot,
+                        'block' => $p->block,
+                        'katha' => $p->katha,
+                        'road' => $p->road,
+                        'per_katha' => $helper->per_katha ?? 0
+                    ];
+                }
+            }
+            
+            // Get total paid from payment schedule
+            $paid_schedule = $db->where('purchase_id', $purchase_id)->where('status', 1)->get('crm_payment_schedule');
+            $total_paid = 0;
+            if (!empty($paid_schedule)) {
+                foreach ($paid_schedule as $ps) {
+                    $total_paid += floatval($ps->paid_amount ?? 0);
+                }
+            }
+            
+            $project_id = null;
+            if (!empty($project_mapping) && !empty($booking->project) && isset($project_mapping[$booking->project])) {
+                $project_id = $project_mapping[$booking->project];
+            }
+            echo json_encode([
+                'status' => 200,
+                'client_id' => $client['id'] ?? '0',
+                'current_name' => $client['name'] ?? 'Unknown',
+                'current_block' => $booking->block ? ucwords($booking->block) : '',
+                'current_plot' => $booking->plot ?? '',
+                'current_katha' => $booking->katha ?? '',
+                'current_per_katha' => $helper->per_katha ?? 0,
+                'total_paid' => $total_paid,
+                'available_clients' => $available_clients,
+                'available_plots' => $plots,
+                'project_id' => $project_id,
+                'project_slug' => $booking->project,
+                'project_name' => ucwords(str_replace("-" , " ", $booking->project))
+            ]);
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Server error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+    
+    // Process name transfer
+    if ($s === 'process_name_transfer') {
+        header('Content-Type: application/json; charset=utf-8');
+        
+        $purchase_id = isset($_POST['purchase_id']) ? (int)$_POST['purchase_id'] : 0;
+        $client_id = isset($_POST['client_id']) ? (int)$_POST['client_id'] : 0;
+        $reason = isset($_POST['reason']) ? trim($_POST['reason']) : '';
+        $fee_mode = isset($_POST['fee_mode']) ? trim($_POST['fee_mode']) : 'none';
+        $fee_value = isset($_POST['fee_value']) ? floatval($_POST['fee_value']) : 0;
+        
+        if ($purchase_id <= 0 || !$client_id) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid parameters']);
+            exit;
+        }
+        
+        try {
+            $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
+            if (!$helper) {
+                echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+                exit;
+            }
+            
+            $db->startTransaction();
+            
+            // Get total paid from payment schedule
+            $paid_schedule = $db->where('purchase_id', $purchase_id)->where('status', 1)->get('crm_payment_schedule');
+            $total_paid = 0;
+            if (!empty($paid_schedule)) {
+                foreach ($paid_schedule as $ps) {
+                    $total_paid += floatval($ps->paid_amount ?? 0);
+                }
+            }
+            
+            $transfer_fee = 0;
+            if ($fee_mode === 'fixed') {
+                $transfer_fee = $fee_value;
+            } elseif ($fee_mode === 'percent') {
+                // Use total paid amount as base for percentage calculation
+                $transfer_fee = ($total_paid * $fee_value) / 100;
+            }
+            
+            $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, [
+                'client_id' => (string)$target_client_id,
+                'time' => time(),
+                'updated_at' => time()
+            ]);
+            
+            $db->where('purchase_id', $purchase_id)->update('crm_payment_schedule', [
+                'remarks' => 'Name transferred to client ID: ' . $target_client_id . ' | ' . $reason,
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+            
+            // Log the transfer with fee info
+            $logMsg = "Purchase #{$purchase_id} name transferred to client {$target_client_id}. Reason: {$reason}";
+            if ($transfer_fee > 0) {
+                $logMsg .= " Fee: {$fee_mode} ({$fee_value}) = ৳" . number_format($transfer_fee, 2);
+            }
+            logActivity('purchase', 'name_transfer', $logMsg);
+            
+            $db->commit();
+            
+            echo json_encode([
+                'status' => 200,
+                'message' => 'Name transfer processed successfully',
+                'transfer_fee' => round($transfer_fee, 2),
+                'new_client_id' => $target_client_id
+            ]);
+        } catch (Exception $e) {
+            $db->rollback();
+            echo json_encode(['status' => 500, 'message' => 'Server error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+    
+    if ($s === 'process_plot_transfer') {
+        header('Content-Type: application/json; charset=utf-8');
+        
+        $purchase_id = isset($_POST['purchase_id']) ? (int)$_POST['purchase_id'] : 0;
+        $new_plot_id = isset($_POST['new_plot_id']) ? (int)$_POST['new_plot_id'] : 0;
+        $new_per_katha = isset($_POST['new_per_katha']) ? floatval($_POST['new_per_katha']) : 0;
+        $reason = isset($_POST['reason']) ? trim($_POST['reason']) : '';
+        $fee_mode = isset($_POST['fee_mode']) ? trim($_POST['fee_mode']) : 'none';
+        $fee_value = isset($_POST['fee_value']) ? floatval($_POST['fee_value']) : 0;
+        
+        if ($purchase_id <= 0 || $new_plot_id <= 0 || $new_per_katha <= 0) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid parameters']);
+            exit;
+        }
+        
+        try {
+            $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
+            if (!$helper) {
+                echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+                exit;
+            }
+            
+            $new_booking = $db->where('id', $new_plot_id)->getOne(T_BOOKING);
+            if (!$new_booking) {
+                echo json_encode(['status' => 404, 'message' => 'New plot not found']);
+                exit;
+            }
+            
+            $db->startTransaction();
+            
+            // Get total paid
+            $paid_schedule = $db->where('purchase_id', $purchase_id)->where('status', 1)->get('crm_payment_schedule');
+            $total_paid = 0;
+            if (!empty($paid_schedule)) {
+                foreach ($paid_schedule as $ps) {
+                    $total_paid += floatval($ps->paid_amount ?? 0);
+                }
+            }
+            
+            // Calculate old and new totals
+            $old_booking = $db->where('id', $helper->booking_id)->getOne(T_BOOKING);
+            $old_katha = floatval($old_booking->katha ?? 0);
+            $old_per_katha = floatval($helper->per_katha ?? 0);
+            $old_total = $old_katha * $old_per_katha;
+            
+            $new_katha = floatval($new_booking->katha ?? 0);
+            $new_total = $new_katha * $new_per_katha;
+            
+            $transfer_fee = 0;
+            if ($fee_mode === 'fixed') {
+                $transfer_fee = $fee_value;
+            } elseif ($fee_mode === 'percent') {
+                // Use new plot total as base for percentage calculation
+                $transfer_fee = ($new_total * $fee_value) / 100;
+            }
+            
+            $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, [
+                'booking_id' => $new_plot_id,
+                'per_katha' => $new_per_katha,
+                'time' => time(),
+                'updated_at' => time()
+            ]);
+            
+            $db->where('purchase_id', $purchase_id)->update('crm_payment_schedule', [
+                'remarks' => 'Plot transferred from plot ID: ' . $helper->booking_id . ' to plot ID: ' . $new_plot_id . ' | Old rate: ' . $old_per_katha . ' | New rate: ' . $new_per_katha . ' | ' . $reason,
+                'status' => 99, // archived/transferred status
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+            
+            // Log the plot transfer
+            $logMsg = "Purchase #{$purchase_id} plot transferred from booking {$helper->booking_id} to {$new_plot_id}. Old price: ৳" . number_format($old_total, 2) . ", New price: ৳" . number_format($new_total, 2) . ". Reason: {$reason}";
+            if ($transfer_fee > 0) {
+                $logMsg .= " Fee: {$fee_mode} ({$fee_value}) = ৳" . number_format($transfer_fee, 2);
+            }
+            logActivity('purchase', 'plot_transfer', $logMsg);
+            
+            $db->commit();
+            
+            echo json_encode([
+                'status' => 200,
+                'message' => 'Plot transfer processed successfully. Schedule will be recalculated.',
+                'old_total' => round($old_total, 2),
+                'new_total' => round($new_total, 2),
+                'transfer_fee' => round($transfer_fee, 2)
+            ]);
+        } catch (Exception $e) {
+            $db->rollback();
+            echo json_encode(['status' => 500, 'message' => 'Server error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+    
+    if ($s === 'process_cancel_plot') {
+        header('Content-Type: application/json; charset=utf-8');
+        global $db, $wo;
+    
+        // Accept POST
+        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : 0;
+        $reason = isset($_POST['reason']) ? trim((string) $_POST['reason']) : '';
+        $fee_mode = isset($_POST['fee_mode']) ? trim((string) $_POST['fee_mode']) : 'none';
+        $fee_value = isset($_POST['fee_value']) ? floatval($_POST['fee_value']) : 0.0;
+        $initiate_refund = isset($_POST['initiate_refund']) ? (int) $_POST['initiate_refund'] : 0;
+    
+        // Basic validation
+        if ($purchase_id <= 0) {
+            http_response_code(400);
+            echo json_encode(['status' => 400, 'message' => 'Invalid purchase_id']);
+            exit();
+        }
+        if ($reason === '' || mb_strlen($reason) < 3) {
+            http_response_code(400);
+            echo json_encode(['status' => 400, 'message' => 'Cancellation reason required (min 3 chars)']);
+            exit();
+        }
+    
+        // whitelist fee modes
+        $allowed_fee_modes = ['none', 'fixed', 'percent'];
+        if (!in_array($fee_mode, $allowed_fee_modes, true)) $fee_mode = 'none';
+    
+        try {
+            // Fetch helper/purchase
+            $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
+            if (!$helper) {
+                http_response_code(404);
+                echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+                exit();
+            }
+    
+            // booking id sanity
+            $booking_id = isset($helper->booking_id) ? intval($helper->booking_id) : 0;
+            if ($booking_id <= 0) {
+                http_response_code(400);
+                echo json_encode(['status' => 400, 'message' => 'Related booking id missing']);
+                exit();
+            }
+    
+            // compute total paid (sum in SQL is more robust)
+            $total_paid = 0.0;
+            try {
+                $row = $db->rawQueryOne("SELECT COALESCE(SUM(paid_amount),0) AS s FROM `crm_payment_schedule` WHERE purchase_id = ? AND status = 1", [$purchase_id]);
+                if ($row && isset($row->s)) $total_paid = floatval($row->s);
+            } catch (Exception $e) {
+                // fallback: compute by iterating if rawQueryOne fails
+                $paid_schedule = $db->where('purchase_id', $purchase_id)->where('status', 1)->get('crm_payment_schedule');
+                foreach ($paid_schedule as $ps) {
+                    $total_paid += floatval($ps->paid_amount ?? 0);
+                }
+            }
+    
+            // compute cancellation fee
+            $cancellation_fee = 0.0;
+            if ($fee_mode === 'fixed') {
+                $cancellation_fee = max(0.0, floatval($fee_value));
+            } elseif ($fee_mode === 'percent') {
+                $pct = floatval($fee_value);
+                $cancellation_fee = ($total_paid * $pct) / 100.0;
+            }
+            // clamp
+            if ($cancellation_fee < 0) $cancellation_fee = 0.0;
+            // refundable amount cannot be negative
+            $refundable_amount = max(0.0, $total_paid - $cancellation_fee);
+    
+            // Begin transaction
+            $db->startTransaction();
+    
+            // 1) mark helper as cancelled
+            $helper_update = [
+                'status' => 4, // numeric status for cancelled
+                'cancel_date' => time(),
+                'updated_at' => date('Y-m-d H:i:s')
+            ];
+            $ok = $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, $helper_update);
+            if ($ok === false) {
+                $db->rollback();
+                http_response_code(500);
+                echo json_encode(['status' => 500, 'message' => 'Failed to update booking helper status']);
+                exit();
+            }
+    
+            // 2) update payment schedule rows for this purchase (mark cancelled/archived)
+            $ps_update = [
+                'remarks' => 'Plot cancelled. Reason: ' . mb_substr($reason, 0, 1000),
+                'status' => 4, // cancelled/archived
+                'updated_at' => date('Y-m-d H:i:s')
+            ];
+            $ok2 = $db->where('purchase_id', $purchase_id)->update('crm_payment_schedule', $ps_update);
+            if ($ok2 === false) {
+                $db->rollback();
+                http_response_code(500);
+                echo json_encode(['status' => 500, 'message' => 'Failed to update payment schedule']);
+                exit();
+            }
+    
+            // 3) Booking-level logic: mirror old cancel_purchase behavior:
+            // - find other helpers for the same booking (excluding this one)
+            // - if no other non-free helpers => cancel booking and clear file_num
+            // - if other helpers exist & booking.file_num equals cancelled helper's file_num => replace or clear
+            $otherHelpers = $db->where('booking_id', $booking_id)->where('id', $purchase_id, '!=')->get(T_BOOKING_HELPER);
+            $free_statuses = ['0','1','4','available','cancelled','canceled']; // treat these as free/non-owning
+            $hasNonFree = false;
+            $otherFileNumCandidate = null;
+            if (!empty($otherHelpers)) {
+                foreach ($otherHelpers as $oh) {
+                    $hstatus_raw = (isset($oh->status) ? (string)$oh->status : '');
+                    $hstatus = strtolower(trim($hstatus_raw));
+                    if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
+                        $hasNonFree = true;
+                    }
+                    $oh_fn = isset($oh->file_num) ? trim((string)$oh->file_num) : '';
+                    if ($oh_fn !== '') {
+                        $otherFileNumCandidate = $oh_fn;
+                        // don't break, still want to detect hasNonFree; but if both found we can stop
+                        if ($hasNonFree) break;
+                    }
+                }
+            }
+    
+            // fetch booking row
+            $booking = $db->where('id', $booking_id)->getOne(T_BOOKING);
+            if (!$booking) {
+                $db->rollback();
+                http_response_code(500);
+                echo json_encode(['status' => 500, 'message' => 'Booking row not found']);
+                exit();
+            }
+            $booking_file_num = isset($booking->file_num) ? trim((string)$booking->file_num) : '';
+    
+            if (!$hasNonFree) {
+                // no non-free helper -> cancel booking and clear file_num
+                $bkUpdate = ['status' => 4, 'file_num' => null];
+                $ok3 = $db->where('id', $booking_id)->update(T_BOOKING, $bkUpdate);
+                if ($ok3 === false) {
+                    $db->rollback();
+                    http_response_code(500);
+                    echo json_encode(['status' => 500, 'message' => 'Failed to update booking status']);
+                    exit();
+                }
+            } else {
+                // there are active helper(s)
+                $cancelled_file_num = isset($helper->file_num) ? trim((string)$helper->file_num) : '';
+                if ($cancelled_file_num !== '' && $booking_file_num !== '' && $booking_file_num === $cancelled_file_num) {
+                    // replace booking.file_num with other candidate (if available) or clear it
+                    $newFileNum = ($otherFileNumCandidate !== null) ? $otherFileNumCandidate : null;
+                    $bkUpd = ['file_num' => $newFileNum, 'updated_at' => date('Y-m-d H:i:s')];
+                    $ok4 = $db->where('id', $booking_id)->update(T_BOOKING, $bkUpd);
+                    if ($ok4 === false) {
+                        $db->rollback();
+                        http_response_code(500);
+                        echo json_encode(['status' => 500, 'message' => 'Failed to update booking file number']);
+                        exit();
+                    }
+                }
+                // else booking.file_num belongs to some other helper -> leave as-is
+            }
+    
+            // 4) optionally create refund schedule
+            $refund_id = null;
+            if ($initiate_refund === 1 && $refundable_amount > 0) {
+                $refund_data = [
+                    'purchase_id' => $purchase_id,
+                    'client_id' => isset($helper->client_id) ? intval($helper->client_id) : null,
+                    'refund_initiation_date' => date('Y-m-d'),
+                    'total_paid_amount' => round($total_paid, 2),
+                    'deduction_percentage' => ($fee_mode === 'percent') ? floatval($fee_value) : 0,
+                    'deduction_amount' => round($cancellation_fee, 2),
+                    'refundable_amount' => round($refundable_amount, 2),
+                    'installment_number' => 1,
+                    'installment_amount' => round($refundable_amount, 2),
+                    'due_date' => date('Y-m-d', strtotime('+30 days')),
+                    'status' => 0,
+                    'created_by' => isset($wo['user']['id']) ? intval($wo['user']['id']) : null,
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
+    
+                $ins = $db->insert('crm_refund_schedule', $refund_data);
+                if ($ins === false) {
+                    // rollback because the refund creation failed (you can change behaviour: continue without refund if you prefer)
+                    $db->rollback();
+                    http_response_code(500);
+                    echo json_encode(['status' => 500, 'message' => 'Failed to create refund schedule']);
+                    exit();
+                }
+                $refund_id = $ins;
+            }
+    
+            // All good -> commit
+            $db->commit();
+    
+            // Logging
+            $logMsg = "Purchase #{$purchase_id} cancelled. Reason: " . mb_substr($reason, 0, 500);
+            if ($cancellation_fee > 0) $logMsg .= " Fee ({$fee_mode}): " . number_format($cancellation_fee, 2);
+            if ($initiate_refund === 1) $logMsg .= " Refund initiated: " . number_format($refundable_amount, 2) . " (refund_id: " . ($refund_id ?: 'n/a') . ")";
+            logActivity('purchase', 'cancel_plot', $logMsg);
+    
+            // Response
+            http_response_code(200);
+            echo json_encode([
+                'status' => 200,
+                'message' => 'Plot cancellation processed successfully',
+                'purchase_id' => $purchase_id,
+                'booking_id' => $booking_id,
+                'cancellation_fee' => round($cancellation_fee, 2),
+                'total_paid' => round($total_paid, 2),
+                'refundable_amount' => round($refundable_amount, 2),
+                'refund_id' => $refund_id
+            ]);
+            exit();
+        } catch (Exception $e) {
+            // safe rollback
+            try { $db->rollback(); } catch (Exception $_) {}
+            http_response_code(500);
+            echo json_encode(['status' => 500, 'message' => 'Server error: ' . $e->getMessage()]);
+            exit();
+        }
+    }
+
+
     // Export payment schedule
     if ($s === 'export_payment_schedule') {
         header('Content-Type: application/json; charset=utf-8');
@@ -616,7 +1091,6 @@ if ($f == 'manage_inventory') {
         exit;
     }
 
-
     // Get available plots for change plot modal
     if ($s === 'get_available_plots') {
         $project_slug = isset($_GET['project_slug']) ? trim($_GET['project_slug']) : '';
@@ -777,156 +1251,6 @@ if ($f == 'manage_inventory') {
         exit;
     }
 
-    // ------------------ CANCEL PURCHASE (set helper status = 4 = Cancelled) ------------------
-    if ($s === 'cancel_purchase') {
-    
-        // accept via POST or GET
-        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
-        $cancel_date_raw = isset($_POST['cancel_date']) ? $_POST['cancel_date'] : (isset($_GET['cancel_date']) ? $_GET['cancel_date'] : '');
-    
-        if ($purchase_id <= 0) {
-            http_response_code(400);
-            echo json_encode(['status' => 400, 'message' => 'Missing or invalid purchase_id.']);
-            exit;
-        }
-    
-        // find helper
-        $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
-        if (!$helper) {
-            http_response_code(404);
-            echo json_encode(['status' => 404, 'message' => 'Booking helper not found.']);
-            exit;
-        }
-        
-        // Convert date to timestamp
-        $cancel_date_ts = null;
-        if (!empty($cancel_date_raw)) {
-            $cancel_date_ts = strtotime($cancel_date_raw);
-            if ($cancel_date_ts === false) {
-                $cancel_date_ts = time(); // fallback to current time
-            }
-        } else {
-            $cancel_date_ts = time();
-        }
-        
-        // booking id exists?
-        $booking_id = isset($helper->booking_id) ? (int)$helper->booking_id : 0;
-        if ($booking_id <= 0) {
-            http_response_code(400);
-            echo json_encode(['status' => 400, 'message' => 'Booking id not found for this helper.']);
-            exit;
-        }
-    
-        // start transaction
-        $db->startTransaction();
-    
-        // update helper -> set status = 4 (cancelled) and update time
-        $updateData = ['status' => 4, 'cancel_date' => $cancel_date_ts];
-        $ok = $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, $updateData);
-
-        if (!$ok) {
-            $db->rollback();
-            http_response_code(500);
-            echo json_encode(['status' => 500, 'message' => 'Failed to cancel purchase (helper update).']);
-            exit;
-        }
-    
-        // Fetch other helpers for same booking (excluding the cancelled one)
-        $otherHelpers = $db->where('booking_id', $booking_id)
-                           ->where('id', $purchase_id, '!=')
-                           ->get(T_BOOKING_HELPER);
-    
-        // Normalize "free" statuses (strings/numbers). Adjust list if your app uses different status values.
-        $free_statuses = ['0','1','4','available','cancelled','canceled'];
-    
-        $hasNonFree = false;
-        $otherWithFileNum = false;
-        $otherFileNumCandidate = null;
-    
-        if (!empty($otherHelpers)) {
-            foreach ($otherHelpers as $oh) {
-                $hstatus_raw = isset($oh->status) ? (string)$oh->status : '';
-                $hstatus = strtolower(trim($hstatus_raw));
-                // treat empty as free as well
-                if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
-                    $hasNonFree = true;
-                }
-                // candidate file_num from other helpers (prefer non-empty)
-                $oh_fn = isset($oh->file_num) ? trim((string)$oh->file_num) : '';
-                if ($oh_fn !== '') {
-                    $otherWithFileNum = true;
-                    if ($otherFileNumCandidate === null) $otherFileNumCandidate = $oh_fn;
-                }
-                // if we already found a non-free and a file_num candidate, we can stop early
-                if ($hasNonFree && $otherFileNumCandidate !== null) break;
-            }
-        }
-    
-        // fetch current booking row (we'll need to compare file_num and update)
-        $booking = $db->where('id', $booking_id)->getOne(T_BOOKING);
-        if (!$booking) {
-            // weird: helper had booking_id but booking row missing. Rollback and error.
-            $db->rollback();
-            http_response_code(500);
-            echo json_encode(['status' => 500, 'message' => 'Booking record not found for this helper.']);
-            exit;
-        }
-    
-        $booking_file_num = isset($booking->file_num) ? trim((string)$booking->file_num) : '';
-    
-        // If no other non-free helper exists => cancel booking and clear file_num
-        if (!$hasNonFree) {
-            $bkUpdate = ['status' => 4, 'file_num' => '']; // set file_num to NULL (no owner)
-            $ok2 = $db->where('id', $booking_id)->update(T_BOOKING, $bkUpdate);
-            if ($ok2 === false) {
-                $db->rollback();
-                http_response_code(500);
-                echo json_encode(['status' => 500, 'message' => 'Helper cancelled but failed to update booking status.']);
-                exit;
-            }
-        } else {
-            // There are other non-free helpers -> booking remains active.
-            // But if booking.file_num equals the file_num of the cancelled helper, we should replace it with another helper's file_num (if available), or clear it.
-            $cancelled_file_num = isset($helper->file_num) ? trim((string)$helper->file_num) : '';
-    
-            if ($cancelled_file_num !== '' && $booking_file_num === $cancelled_file_num) {
-                // prefer a non-empty file_num from other helpers
-                $newFileNum = null;
-                if ($otherFileNumCandidate !== null) {
-                    $newFileNum = $otherFileNumCandidate;
-                } else {
-                    // no candidate, clear booking file_num
-                    $newFileNum = null;
-                }
-    
-                $bkUpd = ['file_num' => $newFileNum];
-                $ok3 = $db->where('id', $booking_id)->update(T_BOOKING, $bkUpd);
-                if ($ok3 === false) {
-                    $db->rollback();
-                    http_response_code(500);
-                    echo json_encode(['status' => 500, 'message' => 'Helper cancelled but failed to update booking file number.']);
-                    exit;
-                }
-            }
-            // else: booking.file_num is not owned by this helper -> leave as-is
-        }
-    
-        // commit transaction
-        $db->commit();
-    
-        // optional: log
-        $logUser = 'User #' . ($wo['user']['id'] ?? 'unknown');
-        logActivity('booking', 'cancel', "{$logUser} cancelled booking helper #{$purchase_id} for booking #{$booking_id}");
-    
-        echo json_encode([
-            'status' => 200,
-            'message' => 'Purchase cancelled successfully.',
-            'purchase_id' => $purchase_id,
-            'booking_id' => $booking_id
-        ]);
-        exit;
-    }
-
     // ------------------ NEW: Get available purchases (for Select2) ------------------
     if ($s === 'get_available_purchases') {
         header('Content-Type: application/json; charset=utf-8');
@@ -1044,7 +1368,6 @@ if ($f == 'manage_inventory') {
                 'plot'          => $b->plot,
                 'block'         => $b->block,
                 'road'          => $b->road,
-                'facing'        => $b->facing,
                 'status'        => $combinedStatus,      // raw/computed status (may be '0', 'sold', 'booked', etc.)
                 'status_label'  => $status_label,        // human readable label (string; "0" will become "Available")
                 'available'     => $available ? 1 : 0,   // helpful for client-side quick checks
@@ -1557,6 +1880,4668 @@ if ($f == 'manage_inventory') {
             'filename' => $filename,
             'message' => 'Schedule exported successfully'
         ]);
+        exit;
+    }
+
+    // ===============================
+    //  🔍 GET AVAILABLE PLOTS
+    // ===============================
+    if ($s == 'get_available_plots') {
+        $project_slug = isset($_GET['project_slug']) ? trim($_GET['project_slug']) : '';
+        
+        if (!$project_slug) {
+            echo json_encode([]);
+            exit;
+        }
+
+        // Get available plots for the project
+        $plots = $db->where('project', $project_slug)
+                   ->where('status', '1')
+                   ->orderBy('block', 'ASC')
+                   ->orderBy('plot', 'ASC')
+                   ->get(T_BOOKING);
+
+        $results = [];
+        foreach ($plots as $plot) {
+            $results[] = [
+                'id' => $plot->id,
+                'block' => $plot->block ?? '',
+                'plot' => $plot->plot ?? '',
+                'katha' => $plot->katha ?? '',
+                'road' => $plot->road ?? '',
+                'facing' => $plot->facing ?? ''
+            ];
+        }
+
+        echo json_encode($results);
+        exit;
+    }
+    // ------------------ NEW: Check plot/booking conflicts ------------------
+    if ($s === 'check_plot_booking') {
+        header('Content-Type: application/json; charset=utf-8');
+    
+        // Accept either POST or GET. Project can be numeric id or slug (string)
+        $project_raw = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+
+        // Basic validation
+        if ($project_raw === '' || $purchase_id <= 0) {
+            http_response_code(400);
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Missing or invalid parameters.',
+                'project' => $project_raw,
+                'purchase_id' => $purchase_id
+            ]);
+            exit;
+        }
+    
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+    
+        // Query booking
+        $bookings = $db->where('id', $purchase_id)->where('project', $project_raw)->get(T_BOOKING);
+    
+        if (empty($bookings)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'No booking found (treat as available).']);
+            exit;
+        }
+    
+        foreach ($bookings as $bk) {
+            $bstatus = isset($bk->status) ? strtolower(trim((string)$bk->status)) : '';
+    
+            // fetch helpers for this booking;
+            $helpers = $db->where('booking_id', $bk->id)->groupBy('client_id')->get(T_BOOKING_HELPER);
+    
+            if (!empty($helpers)) {
+                foreach ($helpers as $h) {
+                    $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : ($bstatus ?: '');
+                    if ($hstatus === '') $hstatus = 'unknown';
+    
+                    if (!in_array($hstatus, $free_statuses, true)) {
+                        $conflicts[] = [
+                            'booking_id' => $bk->id,
+                            'status'     => $hstatus,
+                            'time'       => $h->time ?? null
+                        ];
+                    }
+                }
+            } else {
+                // no helpers -> rely on booking status
+                if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+                    $conflicts[] = [
+                        'booking_id' => $bk->id,
+                        'status'     => $bstatus,
+                        'time'       => $bk->time ?? null
+                    ];
+                }
+            }
+        }
+        if (empty($conflicts)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'Plot appears available (no active bookings found).']);
+        } else {
+            echo json_encode(['status' => 200, 'available' => false, 'message' => 'Active booking(s) found.', 'conflicts' => $conflicts]);
+        }
+        exit;
+    }
+
+// ------------------ Register / assign a purchase to a client (updated for booking money) ------------------
+if ($s === 'register_purchase' || $s === 'assign_purchase') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    // DEV: set to true during debugging; set false in production
+    $DEV_DEBUG = false;
+
+    try {
+        // Inputs (sanitize)
+        $client_id_raw   = $_POST['client_id'] ?? $_GET['client_id'] ?? 0;
+        $client_id       = (int)$client_id_raw;
+
+        $project_raw     = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $file_num_raw    = isset($_POST['file_num']) ? trim($_POST['file_num']) : (isset($_GET['file_num']) ? trim($_GET['file_num']) : '');
+        $purchase_id     = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+        $down_payment    = isset($_POST['down_payment']) ? floatval($_POST['down_payment']) : 0.0;
+        $booking_money   = isset($_POST['booking_money']) ? floatval($_POST['booking_money']) : 0.0; // Add booking money
+        $per_katha       = isset($_POST['per_katha']) ? floatval($_POST['per_katha']) : 0.0;
+        $nominee_ids_raw = $_POST['nominee_ids'] ?? $_GET['nominee_ids'] ?? '[]';
+        $force           = isset($_POST['force']) ? ($_POST['force'] === '1' || $_POST['force'] === 1 || $_POST['force'] === true) :
+                           (isset($_GET['force']) ? ($_GET['force'] === '1' || $_GET['force'] === 1) : false);
+
+        // Basic required validation
+        $missing = [];
+        if ($client_id <= 0)      $missing[] = 'client_id';
+        if ($project_raw === '')  $missing[] = 'project_id';
+        if ($file_num_raw === '') $missing[] = 'file_num';
+        if ($purchase_id <= 0)    $missing[] = 'purchase_id';
+        if ($per_katha <= 0)      $missing[] = 'per_katha';
+        if ($down_payment < 0)    $missing[] = 'down_payment';
+        if ($booking_money < 0)   $missing[] = 'booking_money'; // Validate booking money
+
+        if (!empty($missing)) {
+            http_response_code(400);
+            echo json_encode(['status'=>400,'message'=>'Missing or invalid parameters: ' . implode(', ', $missing)]);
+            exit;
+        }
+
+        // Normalize file_num: keep letters/numbers, dash, underscore, slash and spaces
+        $file_num = preg_replace('/[^\p{L}\p{N}\-\_\/\s]/u', '', $file_num_raw);
+        $file_num = trim($file_num);
+
+        // nominee_ids -> array of ints (accept JSON or comma list or array)
+        $nominee_ids = [];
+        if (is_string($nominee_ids_raw)) {
+            $decoded = json_decode($nominee_ids_raw, true);
+            if (is_array($decoded)) {
+                $nominee_ids = $decoded;
+            } else {
+                // try comma separated
+                $tmp = preg_split('/\s*,\s*/', trim($nominee_ids_raw));
+                $nominee_ids = array_filter($tmp, function($v){ return $v !== ''; });
+            }
+        } elseif (is_array($nominee_ids_raw)) {
+            $nominee_ids = $nominee_ids_raw;
+        }
+        // coerce to ints where possible
+        $nominee_ids = array_values(array_map(function($v){
+            if (is_numeric($v)) return (int)$v;
+            return $v;
+        }, $nominee_ids));
+        $nominee_ids_json = json_encode($nominee_ids);
+
+        // --- Verify client exists in crm_customers ---
+        $clientExists = $db->where('id', $client_id)->getValue('crm_customers', 'id');
+        if (!$clientExists) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Client not found (crm_customers).']);
+            exit;
+        }
+
+        // --- Find booking in wo_booking ---
+        $booking = $db->where('id', $purchase_id)->getOne('wo_booking');
+        if (!$booking) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Selected booking not found (wo_booking).']);
+            exit;
+        }
+
+        // store booking katha for later price validation (if present)
+        $booking_katha = null;
+        if (isset($booking->katha)) {
+            // booking.katha is varchar, so sanitize numeric part
+            $bk = preg_replace('/[^\d\.\-]/', '', (string)$booking->katha);
+            $booking_katha = $bk !== '' ? floatval($bk) : null;
+        }
+
+        // optional strict validation: ensure (booking_money + down_payment) <= per_katha * katha
+        if ($booking_katha !== null) {
+            $expected_total = $per_katha * $booking_katha;
+            if (($booking_money + $down_payment) > $expected_total) {
+                http_response_code(422);
+                echo json_encode(['status'=>422,'message'=>'Total advance (booking money + down payment) cannot exceed total price (per_katha * katha).','debug'=>[
+                    'per_katha'=>$per_katha,'katha'=>$booking_katha,'expected_total'=>$expected_total,'booking_money'=>$booking_money,'down_payment'=>$down_payment
+                ]]);
+                exit;
+            }
+        }
+
+        // Conflict detection (use wo_booking_helper)
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+
+        // We'll look for existing helper that belongs to the *same client* + booking.
+        $existingHelperForClient = $db
+            ->where('booking_id', $booking->id)
+            ->where('client_id', (string)$client_id)
+            ->orderBy('id', 'DESC')
+            ->getOne('wo_booking_helper');
+
+        // Fetch all helpers for this booking to detect conflicts from *other* clients
+        $helpers = $db->where('booking_id', $booking->id)->get('wo_booking_helper');
+        if (!empty($helpers)) {
+            foreach ($helpers as $h) {
+                // if the helper belongs to the current client, skip adding as a conflict
+                $h_client_id = isset($h->client_id) ? (string)$h->client_id : '';
+                $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : '';
+
+                if ($h_client_id === (string)$client_id) {
+                    // skip conflict for same client; we'll update this helper later instead of inserting
+                    continue;
+                }
+
+                if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
+                    $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $h->file_num ?? ($h->file_id ?? null), 'status' => $hstatus, 'helper_id' => $h->id ?? null];
+                }
+            }
+        }
+
+        // Also consider booking.status itself as conflict (but if booking was created by same client we don't know; so treat booking.status as conflict)
+        $bstatus = isset($booking->status) ? strtolower(trim((string)$booking->status)) : '';
+        if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+            // If booking already marked sold but the same client has helper, allow update â€” otherwise count as conflict.
+            $allow_if_same_client = ($existingHelperForClient ? true : false);
+            if (!$allow_if_same_client) {
+                $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $booking->file_num ?? null, 'status' => $bstatus];
+            }
+        }
+
+        // If there are conflicts (from other clients) and not forcing, reject
+        if (!empty($conflicts) && !$force) {
+            http_response_code(409);
+            echo json_encode(['status'=>409,'message'=>'Active booking(s) exist for this plot (other client). Use force to override.','conflicts'=>$conflicts]);
+            exit;
+        }
+
+        // ------------------ Now: either update existing helper (same client) OR insert new ------------------
+
+        // Start transaction
+        $db->startTransaction();
+
+        if ($existingHelperForClient) {
+            // Update existing helper for same client instead of inserting a new helper
+            $updateData = [
+                'file_num'     => $file_num,
+                'status'       => '2', // sold
+                'time'         => time(),
+                'nominee_ids'  => $nominee_ids_json,
+                'per_katha'    => $per_katha,
+                'down_payment' => $down_payment,
+                'booking_money'=> $booking_money, // Add booking money
+                'cancel_date'  => '', // clear cancel date on re-book
+            ];
+
+            $ok = $db->where('id', $existingHelperForClient->id)->update('wo_booking_helper', $updateData);
+            if ($ok === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update existing booking helper.','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            // Update booking record in wo_booking: status (int) and file_num
+            $updateBooking = ['status' => 2, 'file_num' => $file_num];
+            $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+            if ($updateOk === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            $db->commit();
+
+            $insert = $existingHelperForClient->id; // treat as the 'purchase id' returned
+
+            // Build response row (reuse your existing HTML)
+            $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+            $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+            $status_badges = [
+                '1' => '<span class="badge bg-info">Available</span>',
+                '2' => '<span class="badge bg-success">Sold</span>',
+                '3' => '<span class="badge bg-success">Complete</span>',
+                '4' => '<span class="badge bg-danger">Canceled</span>'
+            ];
+            $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+            $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+            $rowHtml .= '<td>' . $proj_display . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+            $rowHtml .= '<td>' . date('d M Y') . '</td>';
+            $rowHtml .= '<td>' . $status_html . '</td>';
+            $rowHtml .= '<td><div class="d-flex gap-1">';
+            $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+            $rowHtml .= '</div></td>';
+            $rowHtml .= '</tr>';
+
+            $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+            logActivity('purchase', 'update', "{$logUser} updated purchase #{$insert} for booking #{$booking->id}");
+
+            $resp = ['status'=>200,'message'=>'Existing purchase updated.','purchase_id'=>$insert,'html'=>$rowHtml];
+            if ($DEV_DEBUG) {
+                $resp['debug'] = [
+                    'action'        => 'updated_existing_helper',
+                    'existing_id'   => $existingHelperForClient->id,
+                    'booking_id'    => $booking->id,
+                    'client_id'     => $client_id,
+                    'nominee_ids'   => $nominee_ids,
+                    'booking_money' => $booking_money,
+                ];
+            }
+
+            echo json_encode($resp);
+            exit;
+        }
+
+        // No existing helper for this client -> insert new as usual
+        $helperData = [
+            'booking_id'    => $booking->id,
+            'client_id'     => (string)$client_id, // your schema shows client_id is varchar(32)
+            'file_num'      => $file_num, // sold (schema uses varchar)
+            'status'        => '2', // sold (schema uses varchar)
+            'time'          => time(),
+            'nominee_ids'   => $nominee_ids_json,
+            'per_katha'     => $per_katha,
+            'down_payment'  => $down_payment,
+            'booking_money' => $booking_money, // Add booking money
+            'cancel_date'   => '',
+        ];
+
+        $insert = $db->insert('wo_booking_helper', $helperData);
+        if (!$insert) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to create booking helper (wo_booking_helper).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        // Update booking record in wo_booking: status (int) and file_num (text)
+        $updateBooking = ['status' => 2, 'file_num' => $file_num];
+        $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+        if ($updateOk === false) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        $db->commit();
+
+        // build response row for new insert
+        $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+        $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+        $status_badges = [
+            '1' => '<span class="badge bg-info">Available</span>',
+            '2' => '<span class="badge bg-success">Sold</span>',
+            '3' => '<span class="badge bg-success">Complete</span>',
+            '4' => '<span class="badge bg-danger">Canceled</span>'
+        ];
+        $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+        $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+        $rowHtml .= '<td>' . $proj_display . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+        $rowHtml .= '<td>' . date('d M Y') . '</td>';
+        $rowHtml .= '<td>' . $status_html . '</td>';
+        $rowHtml .= '<td><div class="d-flex gap-1">';
+        $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+        $rowHtml .= '</div></td>';
+        $rowHtml .= '</tr>';
+
+        $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+        logActivity('purchase', 'create', "{$logUser} created purchase #{$insert} for booking #{$booking->id}");
+
+        $resp = ['status'=>200,'message'=>'Purchase registered successfully.','purchase_id'=>$insert,'html'=>$rowHtml];
+        if ($DEV_DEBUG) {
+            $resp['debug'] = [
+                'booking_id'   => $booking->id,
+                'booking_katha'=> $booking_katha,
+                'nominee_ids'  => $nominee_ids,
+                'file_num'     => $file_num,
+                'booking_money'=> $booking_money,
+                'force'        => $force
+            ];
+        }
+
+        echo json_encode($resp);
+        exit;
+
+    } catch (Exception $ex) {
+        if (isset($db) && method_exists($db, 'rollback')) $db->rollback();
+        http_response_code(500);
+        echo json_encode(['status'=>500,'message'=>'Internal server error','error'=>$ex->getMessage()]);
+        exit;
+    }
+}
+
+    // ------------------ EDIT INVENTORY ------------------
+    if ($s === 'edit_inventory') {
+        $id        = $_POST['id']     ?? null;
+        $project   = $_POST['project'] ?? null;
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : null;
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : null;
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : null;
+        $road      = $_POST['road']      ?? null;
+        $plot_num  = $_POST['plot_num']  ?? null;
+    
+        if (empty($id)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid booking ID.']); exit;
+        }
+    
+        $booking = $db->where('id', $id)->getOne(T_BOOKING);
+        if (!$booking) {
+            echo json_encode(['status' => 404, 'message' => 'Booking not found.']); exit;
+        }
+    
+        $updateData = [];
+        $logChanges = [];
+    
+        // --- Check each field ---
+        if (!is_null($project) && $project != $booking->project) {
+            $updateData['project'] = $project;
+            $logChanges[] = "project changed from '{$booking->project}' to '{$project}'";
+        }
+        if (!is_null($block) && $block != $booking->block) {
+            $updateData['block'] = $block;
+            $logChanges[] = "block changed from '{$booking->block}' to '{$block}'";
+        }
+        if (!empty($facing) && $facing != $booking->facing) {
+            $updateData['facing'] = $facing;
+            $logChanges[] = "facing changed from '{$booking->facing}' to '{$facing}'";
+        }
+        if (!is_null($katha) && $katha != $booking->katha) {
+            $updateData['katha'] = $katha;
+            $logChanges[] = "katha changed from '{$booking->katha}' to '{$katha}'";
+        }
+        if (!is_null($road) && $road != $booking->road) {
+            $updateData['road'] = $road;
+            $logChanges[] = "road changed from '{$booking->road}' to '{$road}'";
+        }
+        if (!is_null($plot_num) && $plot_num != $booking->plot) {
+            $updateData['plot'] = $plot_num; // assuming DB column = plot
+            $logChanges[] = "plot changed from '{$booking->plot}' to '{$plot_num}'";
+        }
+    
+        if (empty($updateData)) {
+            echo json_encode(['status' => 400, 'message' => 'Nothing to update.']); exit;
+        }
+    
+        // --- Check duplicate ---
+        $db->where('id', $id, '!=')
+           ->where('project', $updateData['project'] ?? $booking->project)
+           ->where('katha', $updateData['katha'] ?? $booking->katha)
+           ->where('plot', $updateData['plot'] ?? $booking->plot)
+           ->where('road', $updateData['road'] ?? $booking->road);
+    
+        if (array_key_exists('block', $updateData)) {
+            $db->where('block', $updateData['block']);
+        } else {
+            $db->where('block', $booking->block);
+        }
+        if (array_key_exists('facing', $updateData)) {
+            $db->where('facing', $updateData['facing']);
+        } else {
+            $db->where('facing', $booking->facing);
+        }
+    
+        $exist = $db->getOne(T_BOOKING);
+        if ($exist) {
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Another booking with the same project, block, plot, road, katha & facing already exists!'
+            ]); exit;
+        }
+    
+        // --- Perform update ---
+        $update = $db->where('id', $id)->update(T_BOOKING, $updateData);
+    
+        if ($update) {
+            // --- Logging ---
+            $logUser    = 'User #' . $wo['user']['id']; // adjust to your user system
+            $logDate    = date('Y-m-d H:i:s');
+            $logDetails = "Booking ID #{$id} ({$booking->project}, Plot {$booking->plot}, Katha {$booking->katha})";
+            $logMessage = implode('; ', $logChanges);
+            logActivity('booking', 'update', "{$logUser} updated {$logDetails}: {$logMessage}");
+    
+            echo json_encode(['status' => 200, 'message' => 'Booking updated successfully!']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to update booking.']);
+        }
+        exit;
+    }
+
+    // ------------------ SUBMIT NEW BOOKING ------------------
+    if ($s == 'submit') {
+        $project   = isset($_POST['project']) ? strtolower(trim($_POST['project'])) : '';
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : '';
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $plot_num  = isset($_POST['plot_num']) ? trim($_POST['plot_num']) : '';
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : '';
+        $road      = isset($_POST['road']) ? trim($_POST['road']) : '';
+        $file_num  = isset($_POST['file_num']) ? strtolower(trim($_POST['file_num'])) : null;
+
+        if ($project == 'moon-hill') {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        } else {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        }
+
+        if ($is_exist) {
+            $data = ['status'=>400,'message'=>'Entry already exists!'];
+        } else {
+            $data_array = ['project'=>$project,'katha'=>$katha,'plot'=>$plot_num,'facing'=>$facing,'road'=>$road];
+            if ($project != 'moon-hill') $data_array['block']=$block;
+            if (!empty($file_num)) $data_array['file_num']=$file_num;
+
+            $insert = $db->insert(T_BOOKING,$data_array);
+            if ($insert) {
+                $data = ['status'=>200,'message'=>'Added successfully!'];
+                // Logging
+                $logUser    = 'User #' . $wo['user']['id'];
+                $logDate    = date('Y-m-d H:i:s');
+                $logDetails = "Booking ID #{$insert} ({$project}, Plot {$plot_num}, Katha {$katha})";
+                logActivity('booking', 'create', "{$logUser} added new booking {$logDetails}");
+            } else {
+                $data = ['status'=>400,'message'=>'Something went wrong!'];
+            }
+        }
+    }
+
+    // ------------------ EDIT MODAL ------------------
+    if ($s == 'edit_modal') {
+        $id = isset($_POST['id']) ? $_POST['id'] : '';
+        if (empty($id)) {
+            $data = ['status'=>400,'message'=>'Something went wrong!'];
+        } else {
+            $inventory = $db->where('id', $id)->getOne(T_BOOKING);
+            $data = ['status'=>200,'result'=>Wo_LoadManagePage('inventory/edit')];
+        }
+    }
+
+    // ------------------ UPDATE STATUS ------------------
+    if ($s === 'update_status') {
+        $id       = !empty($_POST['id']) ? $_POST['id'] : null;
+        $file_id  = !empty($_POST['file_id']) ? $_POST['file_id'] : null;
+        $file_id2 = !empty($_POST['file_id2']) ? $_POST['file_id2'] : null;
+        $status   = isset($_POST['status']) ? $_POST['status'] : '0';
+        $date     = !empty($_POST['date']) ? $_POST['date'] : '';
+
+        if (empty($id)) { echo json_encode(['status'=>400,'message'=>'Invalid booking ID.']); exit; }
+        if (empty($file_id) && empty($file_id2)) { echo json_encode(['status'=>400,'message'=>'Client/File ID is required!']); exit; }
+        if (empty($file_id)) $file_id=$file_id2;
+        $timestamp = ($date && strtotime($date)!==false) ? strtotime($date) : time();
+
+        $is_exist = $db->where('booking_id',$id)->where('file_num',$file_id)->getOne(T_BOOKING_HELPER);
+        $updateData = ['status'=>$status,'time'=>$timestamp];
+
+        if ($is_exist) {
+            $update = $db->where('booking_id',$id)->where('file_num',$file_id)->update(T_BOOKING_HELPER,$updateData);
+            $data = $update ? ['status'=>200,'message'=>'Record updated successfully!'] : ['status'=>500,'message'=>'Failed to update record!'];
+        } else {
+            $lastEntry = $db->where('booking_id',$id)->orderBy('time','DESC')->getOne(T_BOOKING_HELPER);
+            if ($lastEntry) {
+                $db->where('booking_id',$id)->where('id',$lastEntry->id,'!=')->update(T_BOOKING_HELPER,['status'=>4]);
+                $db->where('id',$lastEntry->id)->update(T_BOOKING_HELPER,['status'=>4,'time'=>$timestamp]);
+            }
+            $insertData = ['booking_id'=>$id,'status'=>$status,'time'=>$timestamp,'file_num'=>$file_id];
+            $insert = $db->insert(T_BOOKING_HELPER,$insertData);
+            $data = $insert ? ['status'=>200,'message'=>'Record inserted successfully!'] : ['status'=>500,'message'=>'Failed to insert record!'];
+        }
+        if ($data['status']===200) $db->where('id',$id)->update(T_BOOKING,['status'=>$status,'file_num'=>$file_id]);
+    }
+
+    // ------------------ FETCH DATA ------------------
+    if ($s == 'fetch') {
+        $page_num = isset($_POST['start']) ? $_POST['start']/$_POST['length']+1 : 1;
+        $searchValue = isset($_POST['search']['value']) ? $_POST['search']['value'] : '';
+        $project = isset($_POST['project']) ? $_POST['project'] : '';
+        $block   = isset($_POST['block']) ? $_POST['block'] : '';
+        $katha   = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $road    = isset($_POST['road']) ? $_POST['road'] : '';
+        $facing  = isset($_POST['facing']) ? $_POST['facing'] : '';
+        $plot_num= isset($_POST['plot_num']) ? $_POST['plot_num'] : '';
+
+        if (!empty($searchValue)) {
+            $db->where(is_numeric($searchValue)?'file_id':'name','%'.$searchValue.'%','LIKE');
+        }
+        if (!empty($project)) $db->where('project',$project);
+        if (!empty($block) && $block!='Select Block...') $db->where('block',$block);
+        if (!empty($katha) && $katha!='Select Katha...') $db->where('katha',$katha);
+        if (!empty($road) && $road!='Select Road...') $db->where('road',$road);
+        if (!empty($facing) && $facing!='Select Facing...') $db->where('facing',$facing);
+        if (!empty($plot_num)) $db->where('plot','%'.$plot_num.'%','LIKE');
+
+        $orderColumn = isset($_POST['order'][0]['column']) ? $_POST['order'][0]['column'] : null;
+        $orderDirection = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : null;
+        if ($orderColumn!==null && $orderColumn==3) $db->orderBy('plot',$orderDirection=='asc'?'ASC':'DESC');
+        else $db->orderBy('plot','DESC');
+
+        $db->pageLimit = $_POST['length'];
+        $inventory = $db->objectbuilder()->paginate(T_BOOKING,$page_num);
+
+        $outputData = [];
+        if ($inventory) {
+            foreach ($inventory as $value) {
+                $client = GetCustomerById($value->file_num);
+
+                $status_raw = $value->status;
+                if ($status_raw == '1') $status = '<span class="badge bg-info"> Available </span>';
+                else if ($status_raw == '2') $status = '<span class="badge bg-success"> Sold </span>';
+                else if ($status_raw == '3') $status = '<span class="badge bg-success"> Complete </span>';
+                else if ($status_raw == '4') $status = '<span class="badge bg-danger"> Canceled </span>';
+                else $status = '<span class="badge bg-info">Available</span>';
+
+                $facingDisplay = (strpos($value->facing,'-')!==false) ? ucwords($value->facing,'-') : ucfirst($value->facing);
+
+                $outputData[] = [
+                    'id'      => ucwords($value->id),
+                    'block'   => ucwords($value->block),
+                    'road'    => ucwords($value->road),
+                    'plot'    => 'Plot ' . $value->plot,
+                    'katha'   => $value->katha . ' katha',
+                    'facing'  => $facingDisplay,
+                    'status'  => $status,
+                    'file_num'=> $client['file_id']
+                ];
+            }
+        }
+
+        $data = [
+            "draw" => intval($_POST['draw']),
+            "recordsTotal" => $db->totalPages * $_POST['length'],
+            "recordsFiltered" => $db->totalPages * $_POST['length'],
+            "data" => $outputData
+        ];
+    }
+
+
+    // ===============================
+    //  📄 DOWNLOAD SCHEDULE PDF
+    // ===============================
+    if ($s == 'download_schedule_pdf') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate PDF content
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.pdf';
+            $downloadUrl = generateSchedulePDF($purchaseId, $schedule, $clientData, $printData, $filename);
+            
+            if ($downloadUrl) {
+                echo json_encode([
+                    'status' => 200,
+                    'download_url' => $downloadUrl,
+                    'filename' => $filename,
+                    'message' => 'PDF generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate PDF']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating PDF: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+
+    // ===============================
+    //  💾 SAVE SCHEDULE XLSX
+    // ===============================
+    if ($s == 'save_schedule_xlsx') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        $format = $_POST['format'] ?? 'xlsx';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate Excel file
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.' . $format;
+            $result = generateScheduleExcel($purchaseId, $schedule, $clientData, $printData, $filename, $format);
+            
+            if ($result && isset($result['file_path'])) {
+                echo json_encode([
+                    'status' => 200,
+                    'file_path' => $result['file_path'],
+                    'download_url' => $result['download_url'],
+                    'filename' => $filename,
+                    'message' => 'Excel file generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate Excel file']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating Excel: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ===============================
+    //  🔍 GET AVAILABLE PLOTS
+    // ===============================
+    if ($s == 'get_available_plots') {
+        $project_slug = isset($_GET['project_slug']) ? trim($_GET['project_slug']) : '';
+        
+        if (!$project_slug) {
+            echo json_encode([]);
+            exit;
+        }
+
+        // Get available plots for the project
+        $plots = $db->where('project', $project_slug)
+                   ->where('status', '1')
+                   ->orderBy('block', 'ASC')
+                   ->orderBy('plot', 'ASC')
+                   ->get(T_BOOKING);
+
+        $results = [];
+        foreach ($plots as $plot) {
+            $results[] = [
+                'id' => $plot->id,
+                'block' => $plot->block ?? '',
+                'plot' => $plot->plot ?? '',
+                'katha' => $plot->katha ?? '',
+                'road' => $plot->road ?? '',
+                'facing' => $plot->facing ?? ''
+            ];
+        }
+
+        echo json_encode($results);
+        exit;
+    }
+    // ------------------ NEW: Check plot/booking conflicts ------------------
+    if ($s === 'check_plot_booking') {
+        header('Content-Type: application/json; charset=utf-8');
+    
+        // Accept either POST or GET. Project can be numeric id or slug (string)
+        $project_raw = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+
+        // Basic validation
+        if ($project_raw === '' || $purchase_id <= 0) {
+            http_response_code(400);
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Missing or invalid parameters.',
+                'project' => $project_raw,
+                'purchase_id' => $purchase_id
+            ]);
+            exit;
+        }
+    
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+    
+        // Query booking
+        $bookings = $db->where('id', $purchase_id)->where('project', $project_raw)->get(T_BOOKING);
+    
+        if (empty($bookings)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'No booking found (treat as available).']);
+            exit;
+        }
+    
+        foreach ($bookings as $bk) {
+            $bstatus = isset($bk->status) ? strtolower(trim((string)$bk->status)) : '';
+    
+            // fetch helpers for this booking;
+            $helpers = $db->where('booking_id', $bk->id)->groupBy('client_id')->get(T_BOOKING_HELPER);
+    
+            if (!empty($helpers)) {
+                foreach ($helpers as $h) {
+                    $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : ($bstatus ?: '');
+                    if ($hstatus === '') $hstatus = 'unknown';
+    
+                    if (!in_array($hstatus, $free_statuses, true)) {
+                        $conflicts[] = [
+                            'booking_id' => $bk->id,
+                            'status'     => $hstatus,
+                            'time'       => $h->time ?? null
+                        ];
+                    }
+                }
+            } else {
+                // no helpers -> rely on booking status
+                if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+                    $conflicts[] = [
+                        'booking_id' => $bk->id,
+                        'status'     => $bstatus,
+                        'time'       => $bk->time ?? null
+                    ];
+                }
+            }
+        }
+        if (empty($conflicts)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'Plot appears available (no active bookings found).']);
+        } else {
+            echo json_encode(['status' => 200, 'available' => false, 'message' => 'Active booking(s) found.', 'conflicts' => $conflicts]);
+        }
+        exit;
+    }
+
+// ------------------ Register / assign a purchase to a client (updated for booking money) ------------------
+if ($s === 'register_purchase' || $s === 'assign_purchase') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    // DEV: set to true during debugging; set false in production
+    $DEV_DEBUG = false;
+
+    try {
+        // Inputs (sanitize)
+        $client_id_raw   = $_POST['client_id'] ?? $_GET['client_id'] ?? 0;
+        $client_id       = (int)$client_id_raw;
+
+        $project_raw     = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $file_num_raw    = isset($_POST['file_num']) ? trim($_POST['file_num']) : (isset($_GET['file_num']) ? trim($_GET['file_num']) : '');
+        $purchase_id     = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+        $down_payment    = isset($_POST['down_payment']) ? floatval($_POST['down_payment']) : 0.0;
+        $booking_money   = isset($_POST['booking_money']) ? floatval($_POST['booking_money']) : 0.0; // Add booking money
+        $per_katha       = isset($_POST['per_katha']) ? floatval($_POST['per_katha']) : 0.0;
+        $nominee_ids_raw = $_POST['nominee_ids'] ?? $_GET['nominee_ids'] ?? '[]';
+        $force           = isset($_POST['force']) ? ($_POST['force'] === '1' || $_POST['force'] === 1 || $_POST['force'] === true) :
+                           (isset($_GET['force']) ? ($_GET['force'] === '1' || $_GET['force'] === 1) : false);
+
+        // Basic required validation
+        $missing = [];
+        if ($client_id <= 0)      $missing[] = 'client_id';
+        if ($project_raw === '')  $missing[] = 'project_id';
+        if ($file_num_raw === '') $missing[] = 'file_num';
+        if ($purchase_id <= 0)    $missing[] = 'purchase_id';
+        if ($per_katha <= 0)      $missing[] = 'per_katha';
+        if ($down_payment < 0)    $missing[] = 'down_payment';
+        if ($booking_money < 0)   $missing[] = 'booking_money'; // Validate booking money
+
+        if (!empty($missing)) {
+            http_response_code(400);
+            echo json_encode(['status'=>400,'message'=>'Missing or invalid parameters: ' . implode(', ', $missing)]);
+            exit;
+        }
+
+        // Normalize file_num: keep letters/numbers, dash, underscore, slash and spaces
+        $file_num = preg_replace('/[^\p{L}\p{N}\-\_\/\s]/u', '', $file_num_raw);
+        $file_num = trim($file_num);
+
+        // nominee_ids -> array of ints (accept JSON or comma list or array)
+        $nominee_ids = [];
+        if (is_string($nominee_ids_raw)) {
+            $decoded = json_decode($nominee_ids_raw, true);
+            if (is_array($decoded)) {
+                $nominee_ids = $decoded;
+            } else {
+                // try comma separated
+                $tmp = preg_split('/\s*,\s*/', trim($nominee_ids_raw));
+                $nominee_ids = array_filter($tmp, function($v){ return $v !== ''; });
+            }
+        } elseif (is_array($nominee_ids_raw)) {
+            $nominee_ids = $nominee_ids_raw;
+        }
+        // coerce to ints where possible
+        $nominee_ids = array_values(array_map(function($v){
+            if (is_numeric($v)) return (int)$v;
+            return $v;
+        }, $nominee_ids));
+        $nominee_ids_json = json_encode($nominee_ids);
+
+        // --- Verify client exists in crm_customers ---
+        $clientExists = $db->where('id', $client_id)->getValue('crm_customers', 'id');
+        if (!$clientExists) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Client not found (crm_customers).']);
+            exit;
+        }
+
+        // --- Find booking in wo_booking ---
+        $booking = $db->where('id', $purchase_id)->getOne('wo_booking');
+        if (!$booking) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Selected booking not found (wo_booking).']);
+            exit;
+        }
+
+        // store booking katha for later price validation (if present)
+        $booking_katha = null;
+        if (isset($booking->katha)) {
+            // booking.katha is varchar, so sanitize numeric part
+            $bk = preg_replace('/[^\d\.\-]/', '', (string)$booking->katha);
+            $booking_katha = $bk !== '' ? floatval($bk) : null;
+        }
+
+        // optional strict validation: ensure (booking_money + down_payment) <= per_katha * katha
+        if ($booking_katha !== null) {
+            $expected_total = $per_katha * $booking_katha;
+            if (($booking_money + $down_payment) > $expected_total) {
+                http_response_code(422);
+                echo json_encode(['status'=>422,'message'=>'Total advance (booking money + down payment) cannot exceed total price (per_katha * katha).','debug'=>[
+                    'per_katha'=>$per_katha,'katha'=>$booking_katha,'expected_total'=>$expected_total,'booking_money'=>$booking_money,'down_payment'=>$down_payment
+                ]]);
+                exit;
+            }
+        }
+
+        // Conflict detection (use wo_booking_helper)
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+
+        // We'll look for existing helper that belongs to the *same client* + booking.
+        $existingHelperForClient = $db
+            ->where('booking_id', $booking->id)
+            ->where('client_id', (string)$client_id)
+            ->orderBy('id', 'DESC')
+            ->getOne('wo_booking_helper');
+
+        // Fetch all helpers for this booking to detect conflicts from *other* clients
+        $helpers = $db->where('booking_id', $booking->id)->get('wo_booking_helper');
+        if (!empty($helpers)) {
+            foreach ($helpers as $h) {
+                // if the helper belongs to the current client, skip adding as a conflict
+                $h_client_id = isset($h->client_id) ? (string)$h->client_id : '';
+                $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : '';
+
+                if ($h_client_id === (string)$client_id) {
+                    // skip conflict for same client; we'll update this helper later instead of inserting
+                    continue;
+                }
+
+                if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
+                    $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $h->file_num ?? ($h->file_id ?? null), 'status' => $hstatus, 'helper_id' => $h->id ?? null];
+                }
+            }
+        }
+
+        // Also consider booking.status itself as conflict (but if booking was created by same client we don't know; so treat booking.status as conflict)
+        $bstatus = isset($booking->status) ? strtolower(trim((string)$booking->status)) : '';
+        if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+            // If booking already marked sold but the same client has helper, allow update â€” otherwise count as conflict.
+            $allow_if_same_client = ($existingHelperForClient ? true : false);
+            if (!$allow_if_same_client) {
+                $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $booking->file_num ?? null, 'status' => $bstatus];
+            }
+        }
+
+        // If there are conflicts (from other clients) and not forcing, reject
+        if (!empty($conflicts) && !$force) {
+            http_response_code(409);
+            echo json_encode(['status'=>409,'message'=>'Active booking(s) exist for this plot (other client). Use force to override.','conflicts'=>$conflicts]);
+            exit;
+        }
+
+        // ------------------ Now: either update existing helper (same client) OR insert new ------------------
+
+        // Start transaction
+        $db->startTransaction();
+
+        if ($existingHelperForClient) {
+            // Update existing helper for same client instead of inserting a new helper
+            $updateData = [
+                'file_num'     => $file_num,
+                'status'       => '2', // sold
+                'time'         => time(),
+                'nominee_ids'  => $nominee_ids_json,
+                'per_katha'    => $per_katha,
+                'down_payment' => $down_payment,
+                'booking_money'=> $booking_money, // Add booking money
+                'cancel_date'  => '', // clear cancel date on re-book
+            ];
+
+            $ok = $db->where('id', $existingHelperForClient->id)->update('wo_booking_helper', $updateData);
+            if ($ok === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update existing booking helper.','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            // Update booking record in wo_booking: status (int) and file_num
+            $updateBooking = ['status' => 2, 'file_num' => $file_num];
+            $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+            if ($updateOk === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            $db->commit();
+
+            $insert = $existingHelperForClient->id; // treat as the 'purchase id' returned
+
+            // Build response row (reuse your existing HTML)
+            $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+            $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+            $status_badges = [
+                '1' => '<span class="badge bg-info">Available</span>',
+                '2' => '<span class="badge bg-success">Sold</span>',
+                '3' => '<span class="badge bg-success">Complete</span>',
+                '4' => '<span class="badge bg-danger">Canceled</span>'
+            ];
+            $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+            $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+            $rowHtml .= '<td>' . $proj_display . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+            $rowHtml .= '<td>' . date('d M Y') . '</td>';
+            $rowHtml .= '<td>' . $status_html . '</td>';
+            $rowHtml .= '<td><div class="d-flex gap-1">';
+            $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+            $rowHtml .= '</div></td>';
+            $rowHtml .= '</tr>';
+
+            $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+            logActivity('purchase', 'update', "{$logUser} updated purchase #{$insert} for booking #{$booking->id}");
+
+            $resp = ['status'=>200,'message'=>'Existing purchase updated.','purchase_id'=>$insert,'html'=>$rowHtml];
+            if ($DEV_DEBUG) {
+                $resp['debug'] = [
+                    'action'        => 'updated_existing_helper',
+                    'existing_id'   => $existingHelperForClient->id,
+                    'booking_id'    => $booking->id,
+                    'client_id'     => $client_id,
+                    'nominee_ids'   => $nominee_ids,
+                    'booking_money' => $booking_money,
+                ];
+            }
+
+            echo json_encode($resp);
+            exit;
+        }
+
+        // No existing helper for this client -> insert new as usual
+        $helperData = [
+            'booking_id'    => $booking->id,
+            'client_id'     => (string)$client_id, // your schema shows client_id is varchar(32)
+            'file_num'      => $file_num, // sold (schema uses varchar)
+            'status'        => '2', // sold (schema uses varchar)
+            'time'          => time(),
+            'nominee_ids'   => $nominee_ids_json,
+            'per_katha'     => $per_katha,
+            'down_payment'  => $down_payment,
+            'booking_money' => $booking_money, // Add booking money
+            'cancel_date'   => '',
+        ];
+
+        $insert = $db->insert('wo_booking_helper', $helperData);
+        if (!$insert) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to create booking helper (wo_booking_helper).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        // Update booking record in wo_booking: status (int) and file_num (text)
+        $updateBooking = ['status' => 2, 'file_num' => $file_num];
+        $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+        if ($updateOk === false) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        $db->commit();
+
+        // build response row for new insert
+        $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+        $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+        $status_badges = [
+            '1' => '<span class="badge bg-info">Available</span>',
+            '2' => '<span class="badge bg-success">Sold</span>',
+            '3' => '<span class="badge bg-success">Complete</span>',
+            '4' => '<span class="badge bg-danger">Canceled</span>'
+        ];
+        $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+        $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+        $rowHtml .= '<td>' . $proj_display . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+        $rowHtml .= '<td>' . date('d M Y') . '</td>';
+        $rowHtml .= '<td>' . $status_html . '</td>';
+        $rowHtml .= '<td><div class="d-flex gap-1">';
+        $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+        $rowHtml .= '</div></td>';
+        $rowHtml .= '</tr>';
+
+        $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+        logActivity('purchase', 'create', "{$logUser} created purchase #{$insert} for booking #{$booking->id}");
+
+        $resp = ['status'=>200,'message'=>'Purchase registered successfully.','purchase_id'=>$insert,'html'=>$rowHtml];
+        if ($DEV_DEBUG) {
+            $resp['debug'] = [
+                'booking_id'   => $booking->id,
+                'booking_katha'=> $booking_katha,
+                'nominee_ids'  => $nominee_ids,
+                'file_num'     => $file_num,
+                'booking_money'=> $booking_money,
+                'force'        => $force
+            ];
+        }
+
+        echo json_encode($resp);
+        exit;
+
+    } catch (Exception $ex) {
+        if (isset($db) && method_exists($db, 'rollback')) $db->rollback();
+        http_response_code(500);
+        echo json_encode(['status'=>500,'message'=>'Internal server error','error'=>$ex->getMessage()]);
+        exit;
+    }
+}
+
+    // ------------------ EDIT INVENTORY ------------------
+    if ($s === 'edit_inventory') {
+        $id        = $_POST['id']     ?? null;
+        $project   = $_POST['project'] ?? null;
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : null;
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : null;
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : null;
+        $road      = $_POST['road']      ?? null;
+        $plot_num  = $_POST['plot_num']  ?? null;
+    
+        if (empty($id)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid booking ID.']); exit;
+        }
+    
+        $booking = $db->where('id', $id)->getOne(T_BOOKING);
+        if (!$booking) {
+            echo json_encode(['status' => 404, 'message' => 'Booking not found.']); exit;
+        }
+    
+        $updateData = [];
+        $logChanges = [];
+    
+        // --- Check each field ---
+        if (!is_null($project) && $project != $booking->project) {
+            $updateData['project'] = $project;
+            $logChanges[] = "project changed from '{$booking->project}' to '{$project}'";
+        }
+        if (!is_null($block) && $block != $booking->block) {
+            $updateData['block'] = $block;
+            $logChanges[] = "block changed from '{$booking->block}' to '{$block}'";
+        }
+        if (!empty($facing) && $facing != $booking->facing) {
+            $updateData['facing'] = $facing;
+            $logChanges[] = "facing changed from '{$booking->facing}' to '{$facing}'";
+        }
+        if (!is_null($katha) && $katha != $booking->katha) {
+            $updateData['katha'] = $katha;
+            $logChanges[] = "katha changed from '{$booking->katha}' to '{$katha}'";
+        }
+        if (!is_null($road) && $road != $booking->road) {
+            $updateData['road'] = $road;
+            $logChanges[] = "road changed from '{$booking->road}' to '{$road}'";
+        }
+        if (!is_null($plot_num) && $plot_num != $booking->plot) {
+            $updateData['plot'] = $plot_num; // assuming DB column = plot
+            $logChanges[] = "plot changed from '{$booking->plot}' to '{$plot_num}'";
+        }
+    
+        if (empty($updateData)) {
+            echo json_encode(['status' => 400, 'message' => 'Nothing to update.']); exit;
+        }
+    
+        // --- Check duplicate ---
+        $db->where('id', $id, '!=')
+           ->where('project', $updateData['project'] ?? $booking->project)
+           ->where('katha', $updateData['katha'] ?? $booking->katha)
+           ->where('plot', $updateData['plot'] ?? $booking->plot)
+           ->where('road', $updateData['road'] ?? $booking->road);
+    
+        if (array_key_exists('block', $updateData)) {
+            $db->where('block', $updateData['block']);
+        } else {
+            $db->where('block', $booking->block);
+        }
+        if (array_key_exists('facing', $updateData)) {
+            $db->where('facing', $updateData['facing']);
+        } else {
+            $db->where('facing', $booking->facing);
+        }
+    
+        $exist = $db->getOne(T_BOOKING);
+        if ($exist) {
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Another booking with the same project, block, plot, road, katha & facing already exists!'
+            ]); exit;
+        }
+    
+        // --- Perform update ---
+        $update = $db->where('id', $id)->update(T_BOOKING, $updateData);
+    
+        if ($update) {
+            // --- Logging ---
+            $logUser    = 'User #' . $wo['user']['id']; // adjust to your user system
+            $logDate    = date('Y-m-d H:i:s');
+            $logDetails = "Booking ID #{$id} ({$booking->project}, Plot {$booking->plot}, Katha {$booking->katha})";
+            $logMessage = implode('; ', $logChanges);
+            logActivity('booking', 'update', "{$logUser} updated {$logDetails}: {$logMessage}");
+    
+            echo json_encode(['status' => 200, 'message' => 'Booking updated successfully!']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to update booking.']);
+        }
+        exit;
+    }
+
+    // ------------------ SUBMIT NEW BOOKING ------------------
+    if ($s == 'submit') {
+        $project   = isset($_POST['project']) ? strtolower(trim($_POST['project'])) : '';
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : '';
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $plot_num  = isset($_POST['plot_num']) ? trim($_POST['plot_num']) : '';
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : '';
+        $road      = isset($_POST['road']) ? trim($_POST['road']) : '';
+        $file_num  = isset($_POST['file_num']) ? strtolower(trim($_POST['file_num'])) : null;
+
+        if ($project == 'moon-hill') {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        } else {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        }
+
+        if ($is_exist) {
+            $data = ['status'=>400,'message'=>'Entry already exists!'];
+        } else {
+            $data_array = ['project'=>$project,'katha'=>$katha,'plot'=>$plot_num,'facing'=>$facing,'road'=>$road];
+            if ($project != 'moon-hill') $data_array['block']=$block;
+            if (!empty($file_num)) $data_array['file_num']=$file_num;
+
+            $insert = $db->insert(T_BOOKING,$data_array);
+            if ($insert) {
+                $data = ['status'=>200,'message'=>'Added successfully!'];
+                // Logging
+                $logUser    = 'User #' . $wo['user']['id'];
+                $logDate    = date('Y-m-d H:i:s');
+                $logDetails = "Booking ID #{$insert} ({$project}, Plot {$plot_num}, Katha {$katha})";
+                logActivity('booking', 'create', "{$logUser} added new booking {$logDetails}");
+            } else {
+                $data = ['status'=>400,'message'=>'Something went wrong!'];
+            }
+        }
+    }
+
+    // ------------------ EDIT MODAL ------------------
+    if ($s == 'edit_modal') {
+        $id = isset($_POST['id']) ? $_POST['id'] : '';
+        if (empty($id)) {
+            $data = ['status'=>400,'message'=>'Something went wrong!'];
+        } else {
+            $inventory = $db->where('id', $id)->getOne(T_BOOKING);
+            $data = ['status'=>200,'result'=>Wo_LoadManagePage('inventory/edit')];
+        }
+    }
+
+    // ------------------ UPDATE STATUS ------------------
+    if ($s === 'update_status') {
+        $id       = !empty($_POST['id']) ? $_POST['id'] : null;
+        $file_id  = !empty($_POST['file_id']) ? $_POST['file_id'] : null;
+        $file_id2 = !empty($_POST['file_id2']) ? $_POST['file_id2'] : null;
+        $status   = isset($_POST['status']) ? $_POST['status'] : '0';
+        $date     = !empty($_POST['date']) ? $_POST['date'] : '';
+
+        if (empty($id)) { echo json_encode(['status'=>400,'message'=>'Invalid booking ID.']); exit; }
+        if (empty($file_id) && empty($file_id2)) { echo json_encode(['status'=>400,'message'=>'Client/File ID is required!']); exit; }
+        if (empty($file_id)) $file_id=$file_id2;
+        $timestamp = ($date && strtotime($date)!==false) ? strtotime($date) : time();
+
+        $is_exist = $db->where('booking_id',$id)->where('file_num',$file_id)->getOne(T_BOOKING_HELPER);
+        $updateData = ['status'=>$status,'time'=>$timestamp];
+
+        if ($is_exist) {
+            $update = $db->where('booking_id',$id)->where('file_num',$file_id)->update(T_BOOKING_HELPER,$updateData);
+            $data = $update ? ['status'=>200,'message'=>'Record updated successfully!'] : ['status'=>500,'message'=>'Failed to update record!'];
+        } else {
+            $lastEntry = $db->where('booking_id',$id)->orderBy('time','DESC')->getOne(T_BOOKING_HELPER);
+            if ($lastEntry) {
+                $db->where('booking_id',$id)->where('id',$lastEntry->id,'!=')->update(T_BOOKING_HELPER,['status'=>4]);
+                $db->where('id',$lastEntry->id)->update(T_BOOKING_HELPER,['status'=>4,'time'=>$timestamp]);
+            }
+            $insertData = ['booking_id'=>$id,'status'=>$status,'time'=>$timestamp,'file_num'=>$file_id];
+            $insert = $db->insert(T_BOOKING_HELPER,$insertData);
+            $data = $insert ? ['status'=>200,'message'=>'Record inserted successfully!'] : ['status'=>500,'message'=>'Failed to insert record!'];
+        }
+        if ($data['status']===200) $db->where('id',$id)->update(T_BOOKING,['status'=>$status,'file_num'=>$file_id]);
+    }
+
+    // ------------------ FETCH DATA ------------------
+    if ($s == 'fetch') {
+        $page_num = isset($_POST['start']) ? $_POST['start']/$_POST['length']+1 : 1;
+        $searchValue = isset($_POST['search']['value']) ? $_POST['search']['value'] : '';
+        $project = isset($_POST['project']) ? $_POST['project'] : '';
+        $block   = isset($_POST['block']) ? $_POST['block'] : '';
+        $katha   = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $road    = isset($_POST['road']) ? $_POST['road'] : '';
+        $facing  = isset($_POST['facing']) ? $_POST['facing'] : '';
+        $plot_num= isset($_POST['plot_num']) ? $_POST['plot_num'] : '';
+
+        if (!empty($searchValue)) {
+            $db->where(is_numeric($searchValue)?'file_id':'name','%'.$searchValue.'%','LIKE');
+        }
+        if (!empty($project)) $db->where('project',$project);
+        if (!empty($block) && $block!='Select Block...') $db->where('block',$block);
+        if (!empty($katha) && $katha!='Select Katha...') $db->where('katha',$katha);
+        if (!empty($road) && $road!='Select Road...') $db->where('road',$road);
+        if (!empty($facing) && $facing!='Select Facing...') $db->where('facing',$facing);
+        if (!empty($plot_num)) $db->where('plot','%'.$plot_num.'%','LIKE');
+
+        $orderColumn = isset($_POST['order'][0]['column']) ? $_POST['order'][0]['column'] : null;
+        $orderDirection = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : null;
+        if ($orderColumn!==null && $orderColumn==3) $db->orderBy('plot',$orderDirection=='asc'?'ASC':'DESC');
+        else $db->orderBy('plot','DESC');
+
+        $db->pageLimit = $_POST['length'];
+        $inventory = $db->objectbuilder()->paginate(T_BOOKING,$page_num);
+
+        $outputData = [];
+        if ($inventory) {
+            foreach ($inventory as $value) {
+                $client = GetCustomerById($value->file_num);
+
+                $status_raw = $value->status;
+                if ($status_raw == '1') $status = '<span class="badge bg-info"> Available </span>';
+                else if ($status_raw == '2') $status = '<span class="badge bg-success"> Sold </span>';
+                else if ($status_raw == '3') $status = '<span class="badge bg-success"> Complete </span>';
+                else if ($status_raw == '4') $status = '<span class="badge bg-danger"> Canceled </span>';
+                else $status = '<span class="badge bg-info">Available</span>';
+
+                $facingDisplay = (strpos($value->facing,'-')!==false) ? ucwords($value->facing,'-') : ucfirst($value->facing);
+
+                $outputData[] = [
+                    'id'      => ucwords($value->id),
+                    'block'   => ucwords($value->block),
+                    'road'    => ucwords($value->road),
+                    'plot'    => 'Plot ' . $value->plot,
+                    'katha'   => $value->katha . ' katha',
+                    'facing'  => $facingDisplay,
+                    'status'  => $status,
+                    'file_num'=> $client['file_id']
+                ];
+            }
+        }
+
+        $data = [
+            "draw" => intval($_POST['draw']),
+            "recordsTotal" => $db->totalPages * $_POST['length'],
+            "recordsFiltered" => $db->totalPages * $_POST['length'],
+            "data" => $outputData
+        ];
+    }
+
+
+    // ===============================
+    //  📄 DOWNLOAD SCHEDULE PDF
+    // ===============================
+    if ($s == 'download_schedule_pdf') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate PDF content
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.pdf';
+            $downloadUrl = generateSchedulePDF($purchaseId, $schedule, $clientData, $printData, $filename);
+            
+            if ($downloadUrl) {
+                echo json_encode([
+                    'status' => 200,
+                    'download_url' => $downloadUrl,
+                    'filename' => $filename,
+                    'message' => 'PDF generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate PDF']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating PDF: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+
+    // ===============================
+    //  💾 SAVE SCHEDULE XLSX
+    // ===============================
+    if ($s == 'save_schedule_xlsx') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        $format = $_POST['format'] ?? 'xlsx';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate Excel file
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.' . $format;
+            $result = generateScheduleExcel($purchaseId, $schedule, $clientData, $printData, $filename, $format);
+            
+            if ($result && isset($result['file_path'])) {
+                echo json_encode([
+                    'status' => 200,
+                    'file_path' => $result['file_path'],
+                    'download_url' => $result['download_url'],
+                    'filename' => $filename,
+                    'message' => 'Excel file generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate Excel file']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating Excel: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ===============================
+    //  🔍 GET AVAILABLE PLOTS
+    // ===============================
+    if ($s == 'get_available_plots') {
+        $project_slug = isset($_GET['project_slug']) ? trim($_GET['project_slug']) : '';
+        
+        if (!$project_slug) {
+            echo json_encode([]);
+            exit;
+        }
+
+        // Get available plots for the project
+        $plots = $db->where('project', $project_slug)
+                   ->where('status', '1')
+                   ->orderBy('block', 'ASC')
+                   ->orderBy('plot', 'ASC')
+                   ->get(T_BOOKING);
+
+        $results = [];
+        foreach ($plots as $plot) {
+            $results[] = [
+                'id' => $plot->id,
+                'block' => $plot->block ?? '',
+                'plot' => $plot->plot ?? '',
+                'katha' => $plot->katha ?? '',
+                'road' => $plot->road ?? '',
+                'facing' => $plot->facing ?? ''
+            ];
+        }
+
+        echo json_encode($results);
+        exit;
+    }
+    // ------------------ NEW: Check plot/booking conflicts ------------------
+    if ($s === 'check_plot_booking') {
+        header('Content-Type: application/json; charset=utf-8');
+    
+        // Accept either POST or GET. Project can be numeric id or slug (string)
+        $project_raw = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+
+        // Basic validation
+        if ($project_raw === '' || $purchase_id <= 0) {
+            http_response_code(400);
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Missing or invalid parameters.',
+                'project' => $project_raw,
+                'purchase_id' => $purchase_id
+            ]);
+            exit;
+        }
+    
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+    
+        // Query booking
+        $bookings = $db->where('id', $purchase_id)->where('project', $project_raw)->get(T_BOOKING);
+    
+        if (empty($bookings)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'No booking found (treat as available).']);
+            exit;
+        }
+    
+        foreach ($bookings as $bk) {
+            $bstatus = isset($bk->status) ? strtolower(trim((string)$bk->status)) : '';
+    
+            // fetch helpers for this booking;
+            $helpers = $db->where('booking_id', $bk->id)->groupBy('client_id')->get(T_BOOKING_HELPER);
+    
+            if (!empty($helpers)) {
+                foreach ($helpers as $h) {
+                    $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : ($bstatus ?: '');
+                    if ($hstatus === '') $hstatus = 'unknown';
+    
+                    if (!in_array($hstatus, $free_statuses, true)) {
+                        $conflicts[] = [
+                            'booking_id' => $bk->id,
+                            'status'     => $hstatus,
+                            'time'       => $h->time ?? null
+                        ];
+                    }
+                }
+            } else {
+                // no helpers -> rely on booking status
+                if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+                    $conflicts[] = [
+                        'booking_id' => $bk->id,
+                        'status'     => $bstatus,
+                        'time'       => $bk->time ?? null
+                    ];
+                }
+            }
+        }
+        if (empty($conflicts)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'Plot appears available (no active bookings found).']);
+        } else {
+            echo json_encode(['status' => 200, 'available' => false, 'message' => 'Active booking(s) found.', 'conflicts' => $conflicts]);
+        }
+        exit;
+    }
+
+// ------------------ Register / assign a purchase to a client (updated for booking money) ------------------
+if ($s === 'register_purchase' || $s === 'assign_purchase') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    // DEV: set to true during debugging; set false in production
+    $DEV_DEBUG = false;
+
+    try {
+        // Inputs (sanitize)
+        $client_id_raw   = $_POST['client_id'] ?? $_GET['client_id'] ?? 0;
+        $client_id       = (int)$client_id_raw;
+
+        $project_raw     = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $file_num_raw    = isset($_POST['file_num']) ? trim($_POST['file_num']) : (isset($_GET['file_num']) ? trim($_GET['file_num']) : '');
+        $purchase_id     = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+        $down_payment    = isset($_POST['down_payment']) ? floatval($_POST['down_payment']) : 0.0;
+        $booking_money   = isset($_POST['booking_money']) ? floatval($_POST['booking_money']) : 0.0; // Add booking money
+        $per_katha       = isset($_POST['per_katha']) ? floatval($_POST['per_katha']) : 0.0;
+        $nominee_ids_raw = $_POST['nominee_ids'] ?? $_GET['nominee_ids'] ?? '[]';
+        $force           = isset($_POST['force']) ? ($_POST['force'] === '1' || $_POST['force'] === 1 || $_POST['force'] === true) :
+                           (isset($_GET['force']) ? ($_GET['force'] === '1' || $_GET['force'] === 1) : false);
+
+        // Basic required validation
+        $missing = [];
+        if ($client_id <= 0)      $missing[] = 'client_id';
+        if ($project_raw === '')  $missing[] = 'project_id';
+        if ($file_num_raw === '') $missing[] = 'file_num';
+        if ($purchase_id <= 0)    $missing[] = 'purchase_id';
+        if ($per_katha <= 0)      $missing[] = 'per_katha';
+        if ($down_payment < 0)    $missing[] = 'down_payment';
+        if ($booking_money < 0)   $missing[] = 'booking_money'; // Validate booking money
+
+        if (!empty($missing)) {
+            http_response_code(400);
+            echo json_encode(['status'=>400,'message'=>'Missing or invalid parameters: ' . implode(', ', $missing)]);
+            exit;
+        }
+
+        // Normalize file_num: keep letters/numbers, dash, underscore, slash and spaces
+        $file_num = preg_replace('/[^\p{L}\p{N}\-\_\/\s]/u', '', $file_num_raw);
+        $file_num = trim($file_num);
+
+        // nominee_ids -> array of ints (accept JSON or comma list or array)
+        $nominee_ids = [];
+        if (is_string($nominee_ids_raw)) {
+            $decoded = json_decode($nominee_ids_raw, true);
+            if (is_array($decoded)) {
+                $nominee_ids = $decoded;
+            } else {
+                // try comma separated
+                $tmp = preg_split('/\s*,\s*/', trim($nominee_ids_raw));
+                $nominee_ids = array_filter($tmp, function($v){ return $v !== ''; });
+            }
+        } elseif (is_array($nominee_ids_raw)) {
+            $nominee_ids = $nominee_ids_raw;
+        }
+        // coerce to ints where possible
+        $nominee_ids = array_values(array_map(function($v){
+            if (is_numeric($v)) return (int)$v;
+            return $v;
+        }, $nominee_ids));
+        $nominee_ids_json = json_encode($nominee_ids);
+
+        // --- Verify client exists in crm_customers ---
+        $clientExists = $db->where('id', $client_id)->getValue('crm_customers', 'id');
+        if (!$clientExists) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Client not found (crm_customers).']);
+            exit;
+        }
+
+        // --- Find booking in wo_booking ---
+        $booking = $db->where('id', $purchase_id)->getOne('wo_booking');
+        if (!$booking) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Selected booking not found (wo_booking).']);
+            exit;
+        }
+
+        // store booking katha for later price validation (if present)
+        $booking_katha = null;
+        if (isset($booking->katha)) {
+            // booking.katha is varchar, so sanitize numeric part
+            $bk = preg_replace('/[^\d\.\-]/', '', (string)$booking->katha);
+            $booking_katha = $bk !== '' ? floatval($bk) : null;
+        }
+
+        // optional strict validation: ensure (booking_money + down_payment) <= per_katha * katha
+        if ($booking_katha !== null) {
+            $expected_total = $per_katha * $booking_katha;
+            if (($booking_money + $down_payment) > $expected_total) {
+                http_response_code(422);
+                echo json_encode(['status'=>422,'message'=>'Total advance (booking money + down payment) cannot exceed total price (per_katha * katha).','debug'=>[
+                    'per_katha'=>$per_katha,'katha'=>$booking_katha,'expected_total'=>$expected_total,'booking_money'=>$booking_money,'down_payment'=>$down_payment
+                ]]);
+                exit;
+            }
+        }
+
+        // Conflict detection (use wo_booking_helper)
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+
+        // We'll look for existing helper that belongs to the *same client* + booking.
+        $existingHelperForClient = $db
+            ->where('booking_id', $booking->id)
+            ->where('client_id', (string)$client_id)
+            ->orderBy('id', 'DESC')
+            ->getOne('wo_booking_helper');
+
+        // Fetch all helpers for this booking to detect conflicts from *other* clients
+        $helpers = $db->where('booking_id', $booking->id)->get('wo_booking_helper');
+        if (!empty($helpers)) {
+            foreach ($helpers as $h) {
+                // if the helper belongs to the current client, skip adding as a conflict
+                $h_client_id = isset($h->client_id) ? (string)$h->client_id : '';
+                $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : '';
+
+                if ($h_client_id === (string)$client_id) {
+                    // skip conflict for same client; we'll update this helper later instead of inserting
+                    continue;
+                }
+
+                if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
+                    $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $h->file_num ?? ($h->file_id ?? null), 'status' => $hstatus, 'helper_id' => $h->id ?? null];
+                }
+            }
+        }
+
+        // Also consider booking.status itself as conflict (but if booking was created by same client we don't know; so treat booking.status as conflict)
+        $bstatus = isset($booking->status) ? strtolower(trim((string)$booking->status)) : '';
+        if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+            // If booking already marked sold but the same client has helper, allow update â€” otherwise count as conflict.
+            $allow_if_same_client = ($existingHelperForClient ? true : false);
+            if (!$allow_if_same_client) {
+                $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $booking->file_num ?? null, 'status' => $bstatus];
+            }
+        }
+
+        // If there are conflicts (from other clients) and not forcing, reject
+        if (!empty($conflicts) && !$force) {
+            http_response_code(409);
+            echo json_encode(['status'=>409,'message'=>'Active booking(s) exist for this plot (other client). Use force to override.','conflicts'=>$conflicts]);
+            exit;
+        }
+
+        // ------------------ Now: either update existing helper (same client) OR insert new ------------------
+
+        // Start transaction
+        $db->startTransaction();
+
+        if ($existingHelperForClient) {
+            // Update existing helper for same client instead of inserting a new helper
+            $updateData = [
+                'file_num'     => $file_num,
+                'status'       => '2', // sold
+                'time'         => time(),
+                'nominee_ids'  => $nominee_ids_json,
+                'per_katha'    => $per_katha,
+                'down_payment' => $down_payment,
+                'booking_money'=> $booking_money, // Add booking money
+                'cancel_date'  => '', // clear cancel date on re-book
+            ];
+
+            $ok = $db->where('id', $existingHelperForClient->id)->update('wo_booking_helper', $updateData);
+            if ($ok === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update existing booking helper.','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            // Update booking record in wo_booking: status (int) and file_num
+            $updateBooking = ['status' => 2, 'file_num' => $file_num];
+            $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+            if ($updateOk === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            $db->commit();
+
+            $insert = $existingHelperForClient->id; // treat as the 'purchase id' returned
+
+            // Build response row (reuse your existing HTML)
+            $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+            $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+            $status_badges = [
+                '1' => '<span class="badge bg-info">Available</span>',
+                '2' => '<span class="badge bg-success">Sold</span>',
+                '3' => '<span class="badge bg-success">Complete</span>',
+                '4' => '<span class="badge bg-danger">Canceled</span>'
+            ];
+            $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+            $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+            $rowHtml .= '<td>' . $proj_display . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+            $rowHtml .= '<td>' . date('d M Y') . '</td>';
+            $rowHtml .= '<td>' . $status_html . '</td>';
+            $rowHtml .= '<td><div class="d-flex gap-1">';
+            $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+            $rowHtml .= '</div></td>';
+            $rowHtml .= '</tr>';
+
+            $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+            logActivity('purchase', 'update', "{$logUser} updated purchase #{$insert} for booking #{$booking->id}");
+
+            $resp = ['status'=>200,'message'=>'Existing purchase updated.','purchase_id'=>$insert,'html'=>$rowHtml];
+            if ($DEV_DEBUG) {
+                $resp['debug'] = [
+                    'action'        => 'updated_existing_helper',
+                    'existing_id'   => $existingHelperForClient->id,
+                    'booking_id'    => $booking->id,
+                    'client_id'     => $client_id,
+                    'nominee_ids'   => $nominee_ids,
+                    'booking_money' => $booking_money,
+                ];
+            }
+
+            echo json_encode($resp);
+            exit;
+        }
+
+        // No existing helper for this client -> insert new as usual
+        $helperData = [
+            'booking_id'    => $booking->id,
+            'client_id'     => (string)$client_id, // your schema shows client_id is varchar(32)
+            'file_num'      => $file_num, // sold (schema uses varchar)
+            'status'        => '2', // sold (schema uses varchar)
+            'time'          => time(),
+            'nominee_ids'   => $nominee_ids_json,
+            'per_katha'     => $per_katha,
+            'down_payment'  => $down_payment,
+            'booking_money' => $booking_money, // Add booking money
+            'cancel_date'   => '',
+        ];
+
+        $insert = $db->insert('wo_booking_helper', $helperData);
+        if (!$insert) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to create booking helper (wo_booking_helper).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        // Update booking record in wo_booking: status (int) and file_num (text)
+        $updateBooking = ['status' => 2, 'file_num' => $file_num];
+        $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+        if ($updateOk === false) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        $db->commit();
+
+        // build response row for new insert
+        $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+        $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+        $status_badges = [
+            '1' => '<span class="badge bg-info">Available</span>',
+            '2' => '<span class="badge bg-success">Sold</span>',
+            '3' => '<span class="badge bg-success">Complete</span>',
+            '4' => '<span class="badge bg-danger">Canceled</span>'
+        ];
+        $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+        $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+        $rowHtml .= '<td>' . $proj_display . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+        $rowHtml .= '<td>' . date('d M Y') . '</td>';
+        $rowHtml .= '<td>' . $status_html . '</td>';
+        $rowHtml .= '<td><div class="d-flex gap-1">';
+        $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+        $rowHtml .= '</div></td>';
+        $rowHtml .= '</tr>';
+
+        $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+        logActivity('purchase', 'create', "{$logUser} created purchase #{$insert} for booking #{$booking->id}");
+
+        $resp = ['status'=>200,'message'=>'Purchase registered successfully.','purchase_id'=>$insert,'html'=>$rowHtml];
+        if ($DEV_DEBUG) {
+            $resp['debug'] = [
+                'booking_id'   => $booking->id,
+                'booking_katha'=> $booking_katha,
+                'nominee_ids'  => $nominee_ids,
+                'file_num'     => $file_num,
+                'booking_money'=> $booking_money,
+                'force'        => $force
+            ];
+        }
+
+        echo json_encode($resp);
+        exit;
+
+    } catch (Exception $ex) {
+        if (isset($db) && method_exists($db, 'rollback')) $db->rollback();
+        http_response_code(500);
+        echo json_encode(['status'=>500,'message'=>'Internal server error','error'=>$ex->getMessage()]);
+        exit;
+    }
+}
+
+    // ------------------ EDIT INVENTORY ------------------
+    if ($s === 'edit_inventory') {
+        $id        = $_POST['id']     ?? null;
+        $project   = $_POST['project'] ?? null;
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : null;
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : null;
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : null;
+        $road      = $_POST['road']      ?? null;
+        $plot_num  = $_POST['plot_num']  ?? null;
+    
+        if (empty($id)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid booking ID.']); exit;
+        }
+    
+        $booking = $db->where('id', $id)->getOne(T_BOOKING);
+        if (!$booking) {
+            echo json_encode(['status' => 404, 'message' => 'Booking not found.']); exit;
+        }
+    
+        $updateData = [];
+        $logChanges = [];
+    
+        // --- Check each field ---
+        if (!is_null($project) && $project != $booking->project) {
+            $updateData['project'] = $project;
+            $logChanges[] = "project changed from '{$booking->project}' to '{$project}'";
+        }
+        if (!is_null($block) && $block != $booking->block) {
+            $updateData['block'] = $block;
+            $logChanges[] = "block changed from '{$booking->block}' to '{$block}'";
+        }
+        if (!empty($facing) && $facing != $booking->facing) {
+            $updateData['facing'] = $facing;
+            $logChanges[] = "facing changed from '{$booking->facing}' to '{$facing}'";
+        }
+        if (!is_null($katha) && $katha != $booking->katha) {
+            $updateData['katha'] = $katha;
+            $logChanges[] = "katha changed from '{$booking->katha}' to '{$katha}'";
+        }
+        if (!is_null($road) && $road != $booking->road) {
+            $updateData['road'] = $road;
+            $logChanges[] = "road changed from '{$booking->road}' to '{$road}'";
+        }
+        if (!is_null($plot_num) && $plot_num != $booking->plot) {
+            $updateData['plot'] = $plot_num; // assuming DB column = plot
+            $logChanges[] = "plot changed from '{$booking->plot}' to '{$plot_num}'";
+        }
+    
+        if (empty($updateData)) {
+            echo json_encode(['status' => 400, 'message' => 'Nothing to update.']); exit;
+        }
+    
+        // --- Check duplicate ---
+        $db->where('id', $id, '!=')
+           ->where('project', $updateData['project'] ?? $booking->project)
+           ->where('katha', $updateData['katha'] ?? $booking->katha)
+           ->where('plot', $updateData['plot'] ?? $booking->plot)
+           ->where('road', $updateData['road'] ?? $booking->road);
+    
+        if (array_key_exists('block', $updateData)) {
+            $db->where('block', $updateData['block']);
+        } else {
+            $db->where('block', $booking->block);
+        }
+        if (array_key_exists('facing', $updateData)) {
+            $db->where('facing', $updateData['facing']);
+        } else {
+            $db->where('facing', $booking->facing);
+        }
+    
+        $exist = $db->getOne(T_BOOKING);
+        if ($exist) {
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Another booking with the same project, block, plot, road, katha & facing already exists!'
+            ]); exit;
+        }
+    
+        // --- Perform update ---
+        $update = $db->where('id', $id)->update(T_BOOKING, $updateData);
+    
+        if ($update) {
+            // --- Logging ---
+            $logUser    = 'User #' . $wo['user']['id']; // adjust to your user system
+            $logDate    = date('Y-m-d H:i:s');
+            $logDetails = "Booking ID #{$id} ({$booking->project}, Plot {$booking->plot}, Katha {$booking->katha})";
+            $logMessage = implode('; ', $logChanges);
+            logActivity('booking', 'update', "{$logUser} updated {$logDetails}: {$logMessage}");
+    
+            echo json_encode(['status' => 200, 'message' => 'Booking updated successfully!']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to update booking.']);
+        }
+        exit;
+    }
+
+    // ------------------ SUBMIT NEW BOOKING ------------------
+    if ($s == 'submit') {
+        $project   = isset($_POST['project']) ? strtolower(trim($_POST['project'])) : '';
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : '';
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $plot_num  = isset($_POST['plot_num']) ? trim($_POST['plot_num']) : '';
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : '';
+        $road      = isset($_POST['road']) ? trim($_POST['road']) : '';
+        $file_num  = isset($_POST['file_num']) ? strtolower(trim($_POST['file_num'])) : null;
+
+        if ($project == 'moon-hill') {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        } else {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        }
+
+        if ($is_exist) {
+            $data = ['status'=>400,'message'=>'Entry already exists!'];
+        } else {
+            $data_array = ['project'=>$project,'katha'=>$katha,'plot'=>$plot_num,'facing'=>$facing,'road'=>$road];
+            if ($project != 'moon-hill') $data_array['block']=$block;
+            if (!empty($file_num)) $data_array['file_num']=$file_num;
+
+            $insert = $db->insert(T_BOOKING,$data_array);
+            if ($insert) {
+                $data = ['status'=>200,'message'=>'Added successfully!'];
+                // Logging
+                $logUser    = 'User #' . $wo['user']['id'];
+                $logDate    = date('Y-m-d H:i:s');
+                $logDetails = "Booking ID #{$insert} ({$project}, Plot {$plot_num}, Katha {$katha})";
+                logActivity('booking', 'create', "{$logUser} added new booking {$logDetails}");
+            } else {
+                $data = ['status'=>400,'message'=>'Something went wrong!'];
+            }
+        }
+    }
+
+    // ------------------ EDIT MODAL ------------------
+    if ($s == 'edit_modal') {
+        $id = isset($_POST['id']) ? $_POST['id'] : '';
+        if (empty($id)) {
+            $data = ['status'=>400,'message'=>'Something went wrong!'];
+        } else {
+            $inventory = $db->where('id', $id)->getOne(T_BOOKING);
+            $data = ['status'=>200,'result'=>Wo_LoadManagePage('inventory/edit')];
+        }
+    }
+
+    // ------------------ UPDATE STATUS ------------------
+    if ($s === 'update_status') {
+        $id       = !empty($_POST['id']) ? $_POST['id'] : null;
+        $file_id  = !empty($_POST['file_id']) ? $_POST['file_id'] : null;
+        $file_id2 = !empty($_POST['file_id2']) ? $_POST['file_id2'] : null;
+        $status   = isset($_POST['status']) ? $_POST['status'] : '0';
+        $date     = !empty($_POST['date']) ? $_POST['date'] : '';
+
+        if (empty($id)) { echo json_encode(['status'=>400,'message'=>'Invalid booking ID.']); exit; }
+        if (empty($file_id) && empty($file_id2)) { echo json_encode(['status'=>400,'message'=>'Client/File ID is required!']); exit; }
+        if (empty($file_id)) $file_id=$file_id2;
+        $timestamp = ($date && strtotime($date)!==false) ? strtotime($date) : time();
+
+        $is_exist = $db->where('booking_id',$id)->where('file_num',$file_id)->getOne(T_BOOKING_HELPER);
+        $updateData = ['status'=>$status,'time'=>$timestamp];
+
+        if ($is_exist) {
+            $update = $db->where('booking_id',$id)->where('file_num',$file_id)->update(T_BOOKING_HELPER,$updateData);
+            $data = $update ? ['status'=>200,'message'=>'Record updated successfully!'] : ['status'=>500,'message'=>'Failed to update record!'];
+        } else {
+            $lastEntry = $db->where('booking_id',$id)->orderBy('time','DESC')->getOne(T_BOOKING_HELPER);
+            if ($lastEntry) {
+                $db->where('booking_id',$id)->where('id',$lastEntry->id,'!=')->update(T_BOOKING_HELPER,['status'=>4]);
+                $db->where('id',$lastEntry->id)->update(T_BOOKING_HELPER,['status'=>4,'time'=>$timestamp]);
+            }
+            $insertData = ['booking_id'=>$id,'status'=>$status,'time'=>$timestamp,'file_num'=>$file_id];
+            $insert = $db->insert(T_BOOKING_HELPER,$insertData);
+            $data = $insert ? ['status'=>200,'message'=>'Record inserted successfully!'] : ['status'=>500,'message'=>'Failed to insert record!'];
+        }
+        if ($data['status']===200) $db->where('id',$id)->update(T_BOOKING,['status'=>$status,'file_num'=>$file_id]);
+    }
+
+    // ------------------ FETCH DATA ------------------
+    if ($s == 'fetch') {
+        $page_num = isset($_POST['start']) ? $_POST['start']/$_POST['length']+1 : 1;
+        $searchValue = isset($_POST['search']['value']) ? $_POST['search']['value'] : '';
+        $project = isset($_POST['project']) ? $_POST['project'] : '';
+        $block   = isset($_POST['block']) ? $_POST['block'] : '';
+        $katha   = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $road    = isset($_POST['road']) ? $_POST['road'] : '';
+        $facing  = isset($_POST['facing']) ? $_POST['facing'] : '';
+        $plot_num= isset($_POST['plot_num']) ? $_POST['plot_num'] : '';
+
+        if (!empty($searchValue)) {
+            $db->where(is_numeric($searchValue)?'file_id':'name','%'.$searchValue.'%','LIKE');
+        }
+        if (!empty($project)) $db->where('project',$project);
+        if (!empty($block) && $block!='Select Block...') $db->where('block',$block);
+        if (!empty($katha) && $katha!='Select Katha...') $db->where('katha',$katha);
+        if (!empty($road) && $road!='Select Road...') $db->where('road',$road);
+        if (!empty($facing) && $facing!='Select Facing...') $db->where('facing',$facing);
+        if (!empty($plot_num)) $db->where('plot','%'.$plot_num.'%','LIKE');
+
+        $orderColumn = isset($_POST['order'][0]['column']) ? $_POST['order'][0]['column'] : null;
+        $orderDirection = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : null;
+        if ($orderColumn!==null && $orderColumn==3) $db->orderBy('plot',$orderDirection=='asc'?'ASC':'DESC');
+        else $db->orderBy('plot','DESC');
+
+        $db->pageLimit = $_POST['length'];
+        $inventory = $db->objectbuilder()->paginate(T_BOOKING,$page_num);
+
+        $outputData = [];
+        if ($inventory) {
+            foreach ($inventory as $value) {
+                $client = GetCustomerById($value->file_num);
+
+                $status_raw = $value->status;
+                if ($status_raw == '1') $status = '<span class="badge bg-info"> Available </span>';
+                else if ($status_raw == '2') $status = '<span class="badge bg-success"> Sold </span>';
+                else if ($status_raw == '3') $status = '<span class="badge bg-success"> Complete </span>';
+                else if ($status_raw == '4') $status = '<span class="badge bg-danger"> Canceled </span>';
+                else $status = '<span class="badge bg-info">Available</span>';
+
+                $facingDisplay = (strpos($value->facing,'-')!==false) ? ucwords($value->facing,'-') : ucfirst($value->facing);
+
+                $outputData[] = [
+                    'id'      => ucwords($value->id),
+                    'block'   => ucwords($value->block),
+                    'road'    => ucwords($value->road),
+                    'plot'    => 'Plot ' . $value->plot,
+                    'katha'   => $value->katha . ' katha',
+                    'facing'  => $facingDisplay,
+                    'status'  => $status,
+                    'file_num'=> $client['file_id']
+                ];
+            }
+        }
+
+        $data = [
+            "draw" => intval($_POST['draw']),
+            "recordsTotal" => $db->totalPages * $_POST['length'],
+            "recordsFiltered" => $db->totalPages * $_POST['length'],
+            "data" => $outputData
+        ];
+    }
+
+
+    // ===============================
+    //  📄 DOWNLOAD SCHEDULE PDF
+    // ===============================
+    if ($s == 'download_schedule_pdf') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate PDF content
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.pdf';
+            $downloadUrl = generateSchedulePDF($purchaseId, $schedule, $clientData, $printData, $filename);
+            
+            if ($downloadUrl) {
+                echo json_encode([
+                    'status' => 200,
+                    'download_url' => $downloadUrl,
+                    'filename' => $filename,
+                    'message' => 'PDF generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate PDF']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating PDF: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+
+    // ===============================
+    //  💾 SAVE SCHEDULE XLSX
+    // ===============================
+    if ($s == 'save_schedule_xlsx') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        $format = $_POST['format'] ?? 'xlsx';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate Excel file
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.' . $format;
+            $result = generateScheduleExcel($purchaseId, $schedule, $clientData, $printData, $filename, $format);
+            
+            if ($result && isset($result['file_path'])) {
+                echo json_encode([
+                    'status' => 200,
+                    'file_path' => $result['file_path'],
+                    'download_url' => $result['download_url'],
+                    'filename' => $filename,
+                    'message' => 'Excel file generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate Excel file']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating Excel: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ===============================
+    //  🔍 GET AVAILABLE PLOTS
+    // ===============================
+    if ($s == 'get_available_plots') {
+        $project_slug = isset($_GET['project_slug']) ? trim($_GET['project_slug']) : '';
+        
+        if (!$project_slug) {
+            echo json_encode([]);
+            exit;
+        }
+
+        // Get available plots for the project
+        $plots = $db->where('project', $project_slug)
+                   ->where('status', '1')
+                   ->orderBy('block', 'ASC')
+                   ->orderBy('plot', 'ASC')
+                   ->get(T_BOOKING);
+
+        $results = [];
+        foreach ($plots as $plot) {
+            $results[] = [
+                'id' => $plot->id,
+                'block' => $plot->block ?? '',
+                'plot' => $plot->plot ?? '',
+                'katha' => $plot->katha ?? '',
+                'road' => $plot->road ?? '',
+                'facing' => $plot->facing ?? ''
+            ];
+        }
+
+        echo json_encode($results);
+        exit;
+    }
+    // ------------------ NEW: Check plot/booking conflicts ------------------
+    if ($s === 'check_plot_booking') {
+        header('Content-Type: application/json; charset=utf-8');
+    
+        // Accept either POST or GET. Project can be numeric id or slug (string)
+        $project_raw = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+
+        // Basic validation
+        if ($project_raw === '' || $purchase_id <= 0) {
+            http_response_code(400);
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Missing or invalid parameters.',
+                'project' => $project_raw,
+                'purchase_id' => $purchase_id
+            ]);
+            exit;
+        }
+    
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+    
+        // Query booking
+        $bookings = $db->where('id', $purchase_id)->where('project', $project_raw)->get(T_BOOKING);
+    
+        if (empty($bookings)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'No booking found (treat as available).']);
+            exit;
+        }
+    
+        foreach ($bookings as $bk) {
+            $bstatus = isset($bk->status) ? strtolower(trim((string)$bk->status)) : '';
+    
+            // fetch helpers for this booking;
+            $helpers = $db->where('booking_id', $bk->id)->groupBy('client_id')->get(T_BOOKING_HELPER);
+    
+            if (!empty($helpers)) {
+                foreach ($helpers as $h) {
+                    $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : ($bstatus ?: '');
+                    if ($hstatus === '') $hstatus = 'unknown';
+    
+                    if (!in_array($hstatus, $free_statuses, true)) {
+                        $conflicts[] = [
+                            'booking_id' => $bk->id,
+                            'status'     => $hstatus,
+                            'time'       => $h->time ?? null
+                        ];
+                    }
+                }
+            } else {
+                // no helpers -> rely on booking status
+                if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+                    $conflicts[] = [
+                        'booking_id' => $bk->id,
+                        'status'     => $bstatus,
+                        'time'       => $bk->time ?? null
+                    ];
+                }
+            }
+        }
+        if (empty($conflicts)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'Plot appears available (no active bookings found).']);
+        } else {
+            echo json_encode(['status' => 200, 'available' => false, 'message' => 'Active booking(s) found.', 'conflicts' => $conflicts]);
+        }
+        exit;
+    }
+
+// ------------------ Register / assign a purchase to a client (updated for booking money) ------------------
+if ($s === 'register_purchase' || $s === 'assign_purchase') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    // DEV: set to true during debugging; set false in production
+    $DEV_DEBUG = false;
+
+    try {
+        // Inputs (sanitize)
+        $client_id_raw   = $_POST['client_id'] ?? $_GET['client_id'] ?? 0;
+        $client_id       = (int)$client_id_raw;
+
+        $project_raw     = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $file_num_raw    = isset($_POST['file_num']) ? trim($_POST['file_num']) : (isset($_GET['file_num']) ? trim($_GET['file_num']) : '');
+        $purchase_id     = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+        $down_payment    = isset($_POST['down_payment']) ? floatval($_POST['down_payment']) : 0.0;
+        $booking_money   = isset($_POST['booking_money']) ? floatval($_POST['booking_money']) : 0.0; // Add booking money
+        $per_katha       = isset($_POST['per_katha']) ? floatval($_POST['per_katha']) : 0.0;
+        $nominee_ids_raw = $_POST['nominee_ids'] ?? $_GET['nominee_ids'] ?? '[]';
+        $force           = isset($_POST['force']) ? ($_POST['force'] === '1' || $_POST['force'] === 1 || $_POST['force'] === true) :
+                           (isset($_GET['force']) ? ($_GET['force'] === '1' || $_GET['force'] === 1) : false);
+
+        // Basic required validation
+        $missing = [];
+        if ($client_id <= 0)      $missing[] = 'client_id';
+        if ($project_raw === '')  $missing[] = 'project_id';
+        if ($file_num_raw === '') $missing[] = 'file_num';
+        if ($purchase_id <= 0)    $missing[] = 'purchase_id';
+        if ($per_katha <= 0)      $missing[] = 'per_katha';
+        if ($down_payment < 0)    $missing[] = 'down_payment';
+        if ($booking_money < 0)   $missing[] = 'booking_money'; // Validate booking money
+
+        if (!empty($missing)) {
+            http_response_code(400);
+            echo json_encode(['status'=>400,'message'=>'Missing or invalid parameters: ' . implode(', ', $missing)]);
+            exit;
+        }
+
+        // Normalize file_num: keep letters/numbers, dash, underscore, slash and spaces
+        $file_num = preg_replace('/[^\p{L}\p{N}\-\_\/\s]/u', '', $file_num_raw);
+        $file_num = trim($file_num);
+
+        // nominee_ids -> array of ints (accept JSON or comma list or array)
+        $nominee_ids = [];
+        if (is_string($nominee_ids_raw)) {
+            $decoded = json_decode($nominee_ids_raw, true);
+            if (is_array($decoded)) {
+                $nominee_ids = $decoded;
+            } else {
+                // try comma separated
+                $tmp = preg_split('/\s*,\s*/', trim($nominee_ids_raw));
+                $nominee_ids = array_filter($tmp, function($v){ return $v !== ''; });
+            }
+        } elseif (is_array($nominee_ids_raw)) {
+            $nominee_ids = $nominee_ids_raw;
+        }
+        // coerce to ints where possible
+        $nominee_ids = array_values(array_map(function($v){
+            if (is_numeric($v)) return (int)$v;
+            return $v;
+        }, $nominee_ids));
+        $nominee_ids_json = json_encode($nominee_ids);
+
+        // --- Verify client exists in crm_customers ---
+        $clientExists = $db->where('id', $client_id)->getValue('crm_customers', 'id');
+        if (!$clientExists) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Client not found (crm_customers).']);
+            exit;
+        }
+
+        // --- Find booking in wo_booking ---
+        $booking = $db->where('id', $purchase_id)->getOne('wo_booking');
+        if (!$booking) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Selected booking not found (wo_booking).']);
+            exit;
+        }
+
+        // store booking katha for later price validation (if present)
+        $booking_katha = null;
+        if (isset($booking->katha)) {
+            // booking.katha is varchar, so sanitize numeric part
+            $bk = preg_replace('/[^\d\.\-]/', '', (string)$booking->katha);
+            $booking_katha = $bk !== '' ? floatval($bk) : null;
+        }
+
+        // optional strict validation: ensure (booking_money + down_payment) <= per_katha * katha
+        if ($booking_katha !== null) {
+            $expected_total = $per_katha * $booking_katha;
+            if (($booking_money + $down_payment) > $expected_total) {
+                http_response_code(422);
+                echo json_encode(['status'=>422,'message'=>'Total advance (booking money + down payment) cannot exceed total price (per_katha * katha).','debug'=>[
+                    'per_katha'=>$per_katha,'katha'=>$booking_katha,'expected_total'=>$expected_total,'booking_money'=>$booking_money,'down_payment'=>$down_payment
+                ]]);
+                exit;
+            }
+        }
+
+        // Conflict detection (use wo_booking_helper)
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+
+        // We'll look for existing helper that belongs to the *same client* + booking.
+        $existingHelperForClient = $db
+            ->where('booking_id', $booking->id)
+            ->where('client_id', (string)$client_id)
+            ->orderBy('id', 'DESC')
+            ->getOne('wo_booking_helper');
+
+        // Fetch all helpers for this booking to detect conflicts from *other* clients
+        $helpers = $db->where('booking_id', $booking->id)->get('wo_booking_helper');
+        if (!empty($helpers)) {
+            foreach ($helpers as $h) {
+                // if the helper belongs to the current client, skip adding as a conflict
+                $h_client_id = isset($h->client_id) ? (string)$h->client_id : '';
+                $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : '';
+
+                if ($h_client_id === (string)$client_id) {
+                    // skip conflict for same client; we'll update this helper later instead of inserting
+                    continue;
+                }
+
+                if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
+                    $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $h->file_num ?? ($h->file_id ?? null), 'status' => $hstatus, 'helper_id' => $h->id ?? null];
+                }
+            }
+        }
+
+        // Also consider booking.status itself as conflict (but if booking was created by same client we don't know; so treat booking.status as conflict)
+        $bstatus = isset($booking->status) ? strtolower(trim((string)$booking->status)) : '';
+        if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+            // If booking already marked sold but the same client has helper, allow update â€” otherwise count as conflict.
+            $allow_if_same_client = ($existingHelperForClient ? true : false);
+            if (!$allow_if_same_client) {
+                $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $booking->file_num ?? null, 'status' => $bstatus];
+            }
+        }
+
+        // If there are conflicts (from other clients) and not forcing, reject
+        if (!empty($conflicts) && !$force) {
+            http_response_code(409);
+            echo json_encode(['status'=>409,'message'=>'Active booking(s) exist for this plot (other client). Use force to override.','conflicts'=>$conflicts]);
+            exit;
+        }
+
+        // ------------------ Now: either update existing helper (same client) OR insert new ------------------
+
+        // Start transaction
+        $db->startTransaction();
+
+        if ($existingHelperForClient) {
+            // Update existing helper for same client instead of inserting a new helper
+            $updateData = [
+                'file_num'     => $file_num,
+                'status'       => '2', // sold
+                'time'         => time(),
+                'nominee_ids'  => $nominee_ids_json,
+                'per_katha'    => $per_katha,
+                'down_payment' => $down_payment,
+                'booking_money'=> $booking_money, // Add booking money
+                'cancel_date'  => '', // clear cancel date on re-book
+            ];
+
+            $ok = $db->where('id', $existingHelperForClient->id)->update('wo_booking_helper', $updateData);
+            if ($ok === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update existing booking helper.','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            // Update booking record in wo_booking: status (int) and file_num
+            $updateBooking = ['status' => 2, 'file_num' => $file_num];
+            $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+            if ($updateOk === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            $db->commit();
+
+            $insert = $existingHelperForClient->id; // treat as the 'purchase id' returned
+
+            // Build response row (reuse your existing HTML)
+            $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+            $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+            $status_badges = [
+                '1' => '<span class="badge bg-info">Available</span>',
+                '2' => '<span class="badge bg-success">Sold</span>',
+                '3' => '<span class="badge bg-success">Complete</span>',
+                '4' => '<span class="badge bg-danger">Canceled</span>'
+            ];
+            $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+            $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+            $rowHtml .= '<td>' . $proj_display . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+            $rowHtml .= '<td>' . date('d M Y') . '</td>';
+            $rowHtml .= '<td>' . $status_html . '</td>';
+            $rowHtml .= '<td><div class="d-flex gap-1">';
+            $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+            $rowHtml .= '</div></td>';
+            $rowHtml .= '</tr>';
+
+            $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+            logActivity('purchase', 'update', "{$logUser} updated purchase #{$insert} for booking #{$booking->id}");
+
+            $resp = ['status'=>200,'message'=>'Existing purchase updated.','purchase_id'=>$insert,'html'=>$rowHtml];
+            if ($DEV_DEBUG) {
+                $resp['debug'] = [
+                    'action'        => 'updated_existing_helper',
+                    'existing_id'   => $existingHelperForClient->id,
+                    'booking_id'    => $booking->id,
+                    'client_id'     => $client_id,
+                    'nominee_ids'   => $nominee_ids,
+                    'booking_money' => $booking_money,
+                ];
+            }
+
+            echo json_encode($resp);
+            exit;
+        }
+
+        // No existing helper for this client -> insert new as usual
+        $helperData = [
+            'booking_id'    => $booking->id,
+            'client_id'     => (string)$client_id, // your schema shows client_id is varchar(32)
+            'file_num'      => $file_num, // sold (schema uses varchar)
+            'status'        => '2', // sold (schema uses varchar)
+            'time'          => time(),
+            'nominee_ids'   => $nominee_ids_json,
+            'per_katha'     => $per_katha,
+            'down_payment'  => $down_payment,
+            'booking_money' => $booking_money, // Add booking money
+            'cancel_date'   => '',
+        ];
+
+        $insert = $db->insert('wo_booking_helper', $helperData);
+        if (!$insert) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to create booking helper (wo_booking_helper).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        // Update booking record in wo_booking: status (int) and file_num (text)
+        $updateBooking = ['status' => 2, 'file_num' => $file_num];
+        $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+        if ($updateOk === false) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        $db->commit();
+
+        // build response row for new insert
+        $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+        $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+        $status_badges = [
+            '1' => '<span class="badge bg-info">Available</span>',
+            '2' => '<span class="badge bg-success">Sold</span>',
+            '3' => '<span class="badge bg-success">Complete</span>',
+            '4' => '<span class="badge bg-danger">Canceled</span>'
+        ];
+        $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+        $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+        $rowHtml .= '<td>' . $proj_display . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+        $rowHtml .= '<td>' . date('d M Y') . '</td>';
+        $rowHtml .= '<td>' . $status_html . '</td>';
+        $rowHtml .= '<td><div class="d-flex gap-1">';
+        $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+        $rowHtml .= '</div></td>';
+        $rowHtml .= '</tr>';
+
+        $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+        logActivity('purchase', 'create', "{$logUser} created purchase #{$insert} for booking #{$booking->id}");
+
+        $resp = ['status'=>200,'message'=>'Purchase registered successfully.','purchase_id'=>$insert,'html'=>$rowHtml];
+        if ($DEV_DEBUG) {
+            $resp['debug'] = [
+                'booking_id'   => $booking->id,
+                'booking_katha'=> $booking_katha,
+                'nominee_ids'  => $nominee_ids,
+                'file_num'     => $file_num,
+                'booking_money'=> $booking_money,
+                'force'        => $force
+            ];
+        }
+
+        echo json_encode($resp);
+        exit;
+
+    } catch (Exception $ex) {
+        if (isset($db) && method_exists($db, 'rollback')) $db->rollback();
+        http_response_code(500);
+        echo json_encode(['status'=>500,'message'=>'Internal server error','error'=>$ex->getMessage()]);
+        exit;
+    }
+}
+
+    // ------------------ EDIT INVENTORY ------------------
+    if ($s === 'edit_inventory') {
+        $id        = $_POST['id']     ?? null;
+        $project   = $_POST['project'] ?? null;
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : null;
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : null;
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : null;
+        $road      = $_POST['road']      ?? null;
+        $plot_num  = $_POST['plot_num']  ?? null;
+    
+        if (empty($id)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid booking ID.']); exit;
+        }
+    
+        $booking = $db->where('id', $id)->getOne(T_BOOKING);
+        if (!$booking) {
+            echo json_encode(['status' => 404, 'message' => 'Booking not found.']); exit;
+        }
+    
+        $updateData = [];
+        $logChanges = [];
+    
+        // --- Check each field ---
+        if (!is_null($project) && $project != $booking->project) {
+            $updateData['project'] = $project;
+            $logChanges[] = "project changed from '{$booking->project}' to '{$project}'";
+        }
+        if (!is_null($block) && $block != $booking->block) {
+            $updateData['block'] = $block;
+            $logChanges[] = "block changed from '{$booking->block}' to '{$block}'";
+        }
+        if (!empty($facing) && $facing != $booking->facing) {
+            $updateData['facing'] = $facing;
+            $logChanges[] = "facing changed from '{$booking->facing}' to '{$facing}'";
+        }
+        if (!is_null($katha) && $katha != $booking->katha) {
+            $updateData['katha'] = $katha;
+            $logChanges[] = "katha changed from '{$booking->katha}' to '{$katha}'";
+        }
+        if (!is_null($road) && $road != $booking->road) {
+            $updateData['road'] = $road;
+            $logChanges[] = "road changed from '{$booking->road}' to '{$road}'";
+        }
+        if (!is_null($plot_num) && $plot_num != $booking->plot) {
+            $updateData['plot'] = $plot_num; // assuming DB column = plot
+            $logChanges[] = "plot changed from '{$booking->plot}' to '{$plot_num}'";
+        }
+    
+        if (empty($updateData)) {
+            echo json_encode(['status' => 400, 'message' => 'Nothing to update.']); exit;
+        }
+    
+        // --- Check duplicate ---
+        $db->where('id', $id, '!=')
+           ->where('project', $updateData['project'] ?? $booking->project)
+           ->where('katha', $updateData['katha'] ?? $booking->katha)
+           ->where('plot', $updateData['plot'] ?? $booking->plot)
+           ->where('road', $updateData['road'] ?? $booking->road);
+    
+        if (array_key_exists('block', $updateData)) {
+            $db->where('block', $updateData['block']);
+        } else {
+            $db->where('block', $booking->block);
+        }
+        if (array_key_exists('facing', $updateData)) {
+            $db->where('facing', $updateData['facing']);
+        } else {
+            $db->where('facing', $booking->facing);
+        }
+    
+        $exist = $db->getOne(T_BOOKING);
+        if ($exist) {
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Another booking with the same project, block, plot, road, katha & facing already exists!'
+            ]); exit;
+        }
+    
+        // --- Perform update ---
+        $update = $db->where('id', $id)->update(T_BOOKING, $updateData);
+    
+        if ($update) {
+            // --- Logging ---
+            $logUser    = 'User #' . $wo['user']['id']; // adjust to your user system
+            $logDate    = date('Y-m-d H:i:s');
+            $logDetails = "Booking ID #{$id} ({$booking->project}, Plot {$booking->plot}, Katha {$booking->katha})";
+            $logMessage = implode('; ', $logChanges);
+            logActivity('booking', 'update', "{$logUser} updated {$logDetails}: {$logMessage}");
+    
+            echo json_encode(['status' => 200, 'message' => 'Booking updated successfully!']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to update booking.']);
+        }
+        exit;
+    }
+
+    // ------------------ SUBMIT NEW BOOKING ------------------
+    if ($s == 'submit') {
+        $project   = isset($_POST['project']) ? strtolower(trim($_POST['project'])) : '';
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : '';
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $plot_num  = isset($_POST['plot_num']) ? trim($_POST['plot_num']) : '';
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : '';
+        $road      = isset($_POST['road']) ? trim($_POST['road']) : '';
+        $file_num  = isset($_POST['file_num']) ? strtolower(trim($_POST['file_num'])) : null;
+
+        if ($project == 'moon-hill') {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        } else {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        }
+
+        if ($is_exist) {
+            $data = ['status'=>400,'message'=>'Entry already exists!'];
+        } else {
+            $data_array = ['project'=>$project,'katha'=>$katha,'plot'=>$plot_num,'facing'=>$facing,'road'=>$road];
+            if ($project != 'moon-hill') $data_array['block']=$block;
+            if (!empty($file_num)) $data_array['file_num']=$file_num;
+
+            $insert = $db->insert(T_BOOKING,$data_array);
+            if ($insert) {
+                $data = ['status'=>200,'message'=>'Added successfully!'];
+                // Logging
+                $logUser    = 'User #' . $wo['user']['id'];
+                $logDate    = date('Y-m-d H:i:s');
+                $logDetails = "Booking ID #{$insert} ({$project}, Plot {$plot_num}, Katha {$katha})";
+                logActivity('booking', 'create', "{$logUser} added new booking {$logDetails}");
+            } else {
+                $data = ['status'=>400,'message'=>'Something went wrong!'];
+            }
+        }
+    }
+
+    // ------------------ EDIT MODAL ------------------
+    if ($s == 'edit_modal') {
+        $id = isset($_POST['id']) ? $_POST['id'] : '';
+        if (empty($id)) {
+            $data = ['status'=>400,'message'=>'Something went wrong!'];
+        } else {
+            $inventory = $db->where('id', $id)->getOne(T_BOOKING);
+            $data = ['status'=>200,'result'=>Wo_LoadManagePage('inventory/edit')];
+        }
+    }
+
+    // ------------------ UPDATE STATUS ------------------
+    if ($s === 'update_status') {
+        $id       = !empty($_POST['id']) ? $_POST['id'] : null;
+        $file_id  = !empty($_POST['file_id']) ? $_POST['file_id'] : null;
+        $file_id2 = !empty($_POST['file_id2']) ? $_POST['file_id2'] : null;
+        $status   = isset($_POST['status']) ? $_POST['status'] : '0';
+        $date     = !empty($_POST['date']) ? $_POST['date'] : '';
+
+        if (empty($id)) { echo json_encode(['status'=>400,'message'=>'Invalid booking ID.']); exit; }
+        if (empty($file_id) && empty($file_id2)) { echo json_encode(['status'=>400,'message'=>'Client/File ID is required!']); exit; }
+        if (empty($file_id)) $file_id=$file_id2;
+        $timestamp = ($date && strtotime($date)!==false) ? strtotime($date) : time();
+
+        $is_exist = $db->where('booking_id',$id)->where('file_num',$file_id)->getOne(T_BOOKING_HELPER);
+        $updateData = ['status'=>$status,'time'=>$timestamp];
+
+        if ($is_exist) {
+            $update = $db->where('booking_id',$id)->where('file_num',$file_id)->update(T_BOOKING_HELPER,$updateData);
+            $data = $update ? ['status'=>200,'message'=>'Record updated successfully!'] : ['status'=>500,'message'=>'Failed to update record!'];
+        } else {
+            $lastEntry = $db->where('booking_id',$id)->orderBy('time','DESC')->getOne(T_BOOKING_HELPER);
+            if ($lastEntry) {
+                $db->where('booking_id',$id)->where('id',$lastEntry->id,'!=')->update(T_BOOKING_HELPER,['status'=>4]);
+                $db->where('id',$lastEntry->id)->update(T_BOOKING_HELPER,['status'=>4,'time'=>$timestamp]);
+            }
+            $insertData = ['booking_id'=>$id,'status'=>$status,'time'=>$timestamp,'file_num'=>$file_id];
+            $insert = $db->insert(T_BOOKING_HELPER,$insertData);
+            $data = $insert ? ['status'=>200,'message'=>'Record inserted successfully!'] : ['status'=>500,'message'=>'Failed to insert record!'];
+        }
+        if ($data['status']===200) $db->where('id',$id)->update(T_BOOKING,['status'=>$status,'file_num'=>$file_id]);
+    }
+
+    // ------------------ FETCH DATA ------------------
+    if ($s == 'fetch') {
+        $page_num = isset($_POST['start']) ? $_POST['start']/$_POST['length']+1 : 1;
+        $searchValue = isset($_POST['search']['value']) ? $_POST['search']['value'] : '';
+        $project = isset($_POST['project']) ? $_POST['project'] : '';
+        $block   = isset($_POST['block']) ? $_POST['block'] : '';
+        $katha   = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $road    = isset($_POST['road']) ? $_POST['road'] : '';
+        $facing  = isset($_POST['facing']) ? $_POST['facing'] : '';
+        $plot_num= isset($_POST['plot_num']) ? $_POST['plot_num'] : '';
+
+        if (!empty($searchValue)) {
+            $db->where(is_numeric($searchValue)?'file_id':'name','%'.$searchValue.'%','LIKE');
+        }
+        if (!empty($project)) $db->where('project',$project);
+        if (!empty($block) && $block!='Select Block...') $db->where('block',$block);
+        if (!empty($katha) && $katha!='Select Katha...') $db->where('katha',$katha);
+        if (!empty($road) && $road!='Select Road...') $db->where('road',$road);
+        if (!empty($facing) && $facing!='Select Facing...') $db->where('facing',$facing);
+        if (!empty($plot_num)) $db->where('plot','%'.$plot_num.'%','LIKE');
+
+        $orderColumn = isset($_POST['order'][0]['column']) ? $_POST['order'][0]['column'] : null;
+        $orderDirection = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : null;
+        if ($orderColumn!==null && $orderColumn==3) $db->orderBy('plot',$orderDirection=='asc'?'ASC':'DESC');
+        else $db->orderBy('plot','DESC');
+
+        $db->pageLimit = $_POST['length'];
+        $inventory = $db->objectbuilder()->paginate(T_BOOKING,$page_num);
+
+        $outputData = [];
+        if ($inventory) {
+            foreach ($inventory as $value) {
+                $client = GetCustomerById($value->file_num);
+
+                $status_raw = $value->status;
+                if ($status_raw == '1') $status = '<span class="badge bg-info"> Available </span>';
+                else if ($status_raw == '2') $status = '<span class="badge bg-success"> Sold </span>';
+                else if ($status_raw == '3') $status = '<span class="badge bg-success"> Complete </span>';
+                else if ($status_raw == '4') $status = '<span class="badge bg-danger"> Canceled </span>';
+                else $status = '<span class="badge bg-info">Available</span>';
+
+                $facingDisplay = (strpos($value->facing,'-')!==false) ? ucwords($value->facing,'-') : ucfirst($value->facing);
+
+                $outputData[] = [
+                    'id'      => ucwords($value->id),
+                    'block'   => ucwords($value->block),
+                    'road'    => ucwords($value->road),
+                    'plot'    => 'Plot ' . $value->plot,
+                    'katha'   => $value->katha . ' katha',
+                    'facing'  => $facingDisplay,
+                    'status'  => $status,
+                    'file_num'=> $client['file_id']
+                ];
+            }
+        }
+
+        $data = [
+            "draw" => intval($_POST['draw']),
+            "recordsTotal" => $db->totalPages * $_POST['length'],
+            "recordsFiltered" => $db->totalPages * $_POST['length'],
+            "data" => $outputData
+        ];
+    }
+
+
+    // ===============================
+    //  📄 DOWNLOAD SCHEDULE PDF
+    // ===============================
+    if ($s == 'download_schedule_pdf') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate PDF content
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.pdf';
+            $downloadUrl = generateSchedulePDF($purchaseId, $schedule, $clientData, $printData, $filename);
+            
+            if ($downloadUrl) {
+                echo json_encode([
+                    'status' => 200,
+                    'download_url' => $downloadUrl,
+                    'filename' => $filename,
+                    'message' => 'PDF generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate PDF']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating PDF: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+
+    // ===============================
+    //  💾 SAVE SCHEDULE XLSX
+    // ===============================
+    if ($s == 'save_schedule_xlsx') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        $format = $_POST['format'] ?? 'xlsx';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate Excel file
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.' . $format;
+            $result = generateScheduleExcel($purchaseId, $schedule, $clientData, $printData, $filename, $format);
+            
+            if ($result && isset($result['file_path'])) {
+                echo json_encode([
+                    'status' => 200,
+                    'file_path' => $result['file_path'],
+                    'download_url' => $result['download_url'],
+                    'filename' => $filename,
+                    'message' => 'Excel file generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate Excel file']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating Excel: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ===============================
+    //  🔍 GET AVAILABLE PLOTS
+    // ===============================
+    if ($s == 'get_available_plots') {
+        $project_slug = isset($_GET['project_slug']) ? trim($_GET['project_slug']) : '';
+        
+        if (!$project_slug) {
+            echo json_encode([]);
+            exit;
+        }
+
+        // Get available plots for the project
+        $plots = $db->where('project', $project_slug)
+                   ->where('status', '1')
+                   ->orderBy('block', 'ASC')
+                   ->orderBy('plot', 'ASC')
+                   ->get(T_BOOKING);
+
+        $results = [];
+        foreach ($plots as $plot) {
+            $results[] = [
+                'id' => $plot->id,
+                'block' => $plot->block ?? '',
+                'plot' => $plot->plot ?? '',
+                'katha' => $plot->katha ?? '',
+                'road' => $plot->road ?? '',
+                'facing' => $plot->facing ?? ''
+            ];
+        }
+
+        echo json_encode($results);
+        exit;
+    }
+    // ------------------ NEW: Check plot/booking conflicts ------------------
+    if ($s === 'check_plot_booking') {
+        header('Content-Type: application/json; charset=utf-8');
+    
+        // Accept either POST or GET. Project can be numeric id or slug (string)
+        $project_raw = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+
+        // Basic validation
+        if ($project_raw === '' || $purchase_id <= 0) {
+            http_response_code(400);
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Missing or invalid parameters.',
+                'project' => $project_raw,
+                'purchase_id' => $purchase_id
+            ]);
+            exit;
+        }
+    
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+    
+        // Query booking
+        $bookings = $db->where('id', $purchase_id)->where('project', $project_raw)->get(T_BOOKING);
+    
+        if (empty($bookings)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'No booking found (treat as available).']);
+            exit;
+        }
+    
+        foreach ($bookings as $bk) {
+            $bstatus = isset($bk->status) ? strtolower(trim((string)$bk->status)) : '';
+    
+            // fetch helpers for this booking;
+            $helpers = $db->where('booking_id', $bk->id)->groupBy('client_id')->get(T_BOOKING_HELPER);
+    
+            if (!empty($helpers)) {
+                foreach ($helpers as $h) {
+                    $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : ($bstatus ?: '');
+                    if ($hstatus === '') $hstatus = 'unknown';
+    
+                    if (!in_array($hstatus, $free_statuses, true)) {
+                        $conflicts[] = [
+                            'booking_id' => $bk->id,
+                            'status'     => $hstatus,
+                            'time'       => $h->time ?? null
+                        ];
+                    }
+                }
+            } else {
+                // no helpers -> rely on booking status
+                if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+                    $conflicts[] = [
+                        'booking_id' => $bk->id,
+                        'status'     => $bstatus,
+                        'time'       => $bk->time ?? null
+                    ];
+                }
+            }
+        }
+        if (empty($conflicts)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'Plot appears available (no active bookings found).']);
+        } else {
+            echo json_encode(['status' => 200, 'available' => false, 'message' => 'Active booking(s) found.', 'conflicts' => $conflicts]);
+        }
+        exit;
+    }
+
+// ------------------ Register / assign a purchase to a client (updated for booking money) ------------------
+if ($s === 'register_purchase' || $s === 'assign_purchase') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    // DEV: set to true during debugging; set false in production
+    $DEV_DEBUG = false;
+
+    try {
+        // Inputs (sanitize)
+        $client_id_raw   = $_POST['client_id'] ?? $_GET['client_id'] ?? 0;
+        $client_id       = (int)$client_id_raw;
+
+        $project_raw     = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $file_num_raw    = isset($_POST['file_num']) ? trim($_POST['file_num']) : (isset($_GET['file_num']) ? trim($_GET['file_num']) : '');
+        $purchase_id     = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+        $down_payment    = isset($_POST['down_payment']) ? floatval($_POST['down_payment']) : 0.0;
+        $booking_money   = isset($_POST['booking_money']) ? floatval($_POST['booking_money']) : 0.0; // Add booking money
+        $per_katha       = isset($_POST['per_katha']) ? floatval($_POST['per_katha']) : 0.0;
+        $nominee_ids_raw = $_POST['nominee_ids'] ?? $_GET['nominee_ids'] ?? '[]';
+        $force           = isset($_POST['force']) ? ($_POST['force'] === '1' || $_POST['force'] === 1 || $_POST['force'] === true) :
+                           (isset($_GET['force']) ? ($_GET['force'] === '1' || $_GET['force'] === 1) : false);
+
+        // Basic required validation
+        $missing = [];
+        if ($client_id <= 0)      $missing[] = 'client_id';
+        if ($project_raw === '')  $missing[] = 'project_id';
+        if ($file_num_raw === '') $missing[] = 'file_num';
+        if ($purchase_id <= 0)    $missing[] = 'purchase_id';
+        if ($per_katha <= 0)      $missing[] = 'per_katha';
+        if ($down_payment < 0)    $missing[] = 'down_payment';
+        if ($booking_money < 0)   $missing[] = 'booking_money'; // Validate booking money
+
+        if (!empty($missing)) {
+            http_response_code(400);
+            echo json_encode(['status'=>400,'message'=>'Missing or invalid parameters: ' . implode(', ', $missing)]);
+            exit;
+        }
+
+        // Normalize file_num: keep letters/numbers, dash, underscore, slash and spaces
+        $file_num = preg_replace('/[^\p{L}\p{N}\-\_\/\s]/u', '', $file_num_raw);
+        $file_num = trim($file_num);
+
+        // nominee_ids -> array of ints (accept JSON or comma list or array)
+        $nominee_ids = [];
+        if (is_string($nominee_ids_raw)) {
+            $decoded = json_decode($nominee_ids_raw, true);
+            if (is_array($decoded)) {
+                $nominee_ids = $decoded;
+            } else {
+                // try comma separated
+                $tmp = preg_split('/\s*,\s*/', trim($nominee_ids_raw));
+                $nominee_ids = array_filter($tmp, function($v){ return $v !== ''; });
+            }
+        } elseif (is_array($nominee_ids_raw)) {
+            $nominee_ids = $nominee_ids_raw;
+        }
+        // coerce to ints where possible
+        $nominee_ids = array_values(array_map(function($v){
+            if (is_numeric($v)) return (int)$v;
+            return $v;
+        }, $nominee_ids));
+        $nominee_ids_json = json_encode($nominee_ids);
+
+        // --- Verify client exists in crm_customers ---
+        $clientExists = $db->where('id', $client_id)->getValue('crm_customers', 'id');
+        if (!$clientExists) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Client not found (crm_customers).']);
+            exit;
+        }
+
+        // --- Find booking in wo_booking ---
+        $booking = $db->where('id', $purchase_id)->getOne('wo_booking');
+        if (!$booking) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Selected booking not found (wo_booking).']);
+            exit;
+        }
+
+        // store booking katha for later price validation (if present)
+        $booking_katha = null;
+        if (isset($booking->katha)) {
+            // booking.katha is varchar, so sanitize numeric part
+            $bk = preg_replace('/[^\d\.\-]/', '', (string)$booking->katha);
+            $booking_katha = $bk !== '' ? floatval($bk) : null;
+        }
+
+        // optional strict validation: ensure (booking_money + down_payment) <= per_katha * katha
+        if ($booking_katha !== null) {
+            $expected_total = $per_katha * $booking_katha;
+            if (($booking_money + $down_payment) > $expected_total) {
+                http_response_code(422);
+                echo json_encode(['status'=>422,'message'=>'Total advance (booking money + down payment) cannot exceed total price (per_katha * katha).','debug'=>[
+                    'per_katha'=>$per_katha,'katha'=>$booking_katha,'expected_total'=>$expected_total,'booking_money'=>$booking_money,'down_payment'=>$down_payment
+                ]]);
+                exit;
+            }
+        }
+
+        // Conflict detection (use wo_booking_helper)
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+
+        // We'll look for existing helper that belongs to the *same client* + booking.
+        $existingHelperForClient = $db
+            ->where('booking_id', $booking->id)
+            ->where('client_id', (string)$client_id)
+            ->orderBy('id', 'DESC')
+            ->getOne('wo_booking_helper');
+
+        // Fetch all helpers for this booking to detect conflicts from *other* clients
+        $helpers = $db->where('booking_id', $booking->id)->get('wo_booking_helper');
+        if (!empty($helpers)) {
+            foreach ($helpers as $h) {
+                // if the helper belongs to the current client, skip adding as a conflict
+                $h_client_id = isset($h->client_id) ? (string)$h->client_id : '';
+                $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : '';
+
+                if ($h_client_id === (string)$client_id) {
+                    // skip conflict for same client; we'll update this helper later instead of inserting
+                    continue;
+                }
+
+                if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
+                    $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $h->file_num ?? ($h->file_id ?? null), 'status' => $hstatus, 'helper_id' => $h->id ?? null];
+                }
+            }
+        }
+
+        // Also consider booking.status itself as conflict (but if booking was created by same client we don't know; so treat booking.status as conflict)
+        $bstatus = isset($booking->status) ? strtolower(trim((string)$booking->status)) : '';
+        if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+            // If booking already marked sold but the same client has helper, allow update â€” otherwise count as conflict.
+            $allow_if_same_client = ($existingHelperForClient ? true : false);
+            if (!$allow_if_same_client) {
+                $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $booking->file_num ?? null, 'status' => $bstatus];
+            }
+        }
+
+        // If there are conflicts (from other clients) and not forcing, reject
+        if (!empty($conflicts) && !$force) {
+            http_response_code(409);
+            echo json_encode(['status'=>409,'message'=>'Active booking(s) exist for this plot (other client). Use force to override.','conflicts'=>$conflicts]);
+            exit;
+        }
+
+        // ------------------ Now: either update existing helper (same client) OR insert new ------------------
+
+        // Start transaction
+        $db->startTransaction();
+
+        if ($existingHelperForClient) {
+            // Update existing helper for same client instead of inserting a new helper
+            $updateData = [
+                'file_num'     => $file_num,
+                'status'       => '2', // sold
+                'time'         => time(),
+                'nominee_ids'  => $nominee_ids_json,
+                'per_katha'    => $per_katha,
+                'down_payment' => $down_payment,
+                'booking_money'=> $booking_money, // Add booking money
+                'cancel_date'  => '', // clear cancel date on re-book
+            ];
+
+            $ok = $db->where('id', $existingHelperForClient->id)->update('wo_booking_helper', $updateData);
+            if ($ok === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update existing booking helper.','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            // Update booking record in wo_booking: status (int) and file_num
+            $updateBooking = ['status' => 2, 'file_num' => $file_num];
+            $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+            if ($updateOk === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            $db->commit();
+
+            $insert = $existingHelperForClient->id; // treat as the 'purchase id' returned
+
+            // Build response row (reuse your existing HTML)
+            $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+            $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+            $status_badges = [
+                '1' => '<span class="badge bg-info">Available</span>',
+                '2' => '<span class="badge bg-success">Sold</span>',
+                '3' => '<span class="badge bg-success">Complete</span>',
+                '4' => '<span class="badge bg-danger">Canceled</span>'
+            ];
+            $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+            $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+            $rowHtml .= '<td>' . $proj_display . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+            $rowHtml .= '<td>' . date('d M Y') . '</td>';
+            $rowHtml .= '<td>' . $status_html . '</td>';
+            $rowHtml .= '<td><div class="d-flex gap-1">';
+            $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+            $rowHtml .= '</div></td>';
+            $rowHtml .= '</tr>';
+
+            $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+            logActivity('purchase', 'update', "{$logUser} updated purchase #{$insert} for booking #{$booking->id}");
+
+            $resp = ['status'=>200,'message'=>'Existing purchase updated.','purchase_id'=>$insert,'html'=>$rowHtml];
+            if ($DEV_DEBUG) {
+                $resp['debug'] = [
+                    'action'        => 'updated_existing_helper',
+                    'existing_id'   => $existingHelperForClient->id,
+                    'booking_id'    => $booking->id,
+                    'client_id'     => $client_id,
+                    'nominee_ids'   => $nominee_ids,
+                    'booking_money' => $booking_money,
+                ];
+            }
+
+            echo json_encode($resp);
+            exit;
+        }
+
+        // No existing helper for this client -> insert new as usual
+        $helperData = [
+            'booking_id'    => $booking->id,
+            'client_id'     => (string)$client_id, // your schema shows client_id is varchar(32)
+            'file_num'      => $file_num, // sold (schema uses varchar)
+            'status'        => '2', // sold (schema uses varchar)
+            'time'          => time(),
+            'nominee_ids'   => $nominee_ids_json,
+            'per_katha'     => $per_katha,
+            'down_payment'  => $down_payment,
+            'booking_money' => $booking_money, // Add booking money
+            'cancel_date'   => '',
+        ];
+
+        $insert = $db->insert('wo_booking_helper', $helperData);
+        if (!$insert) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to create booking helper (wo_booking_helper).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        // Update booking record in wo_booking: status (int) and file_num (text)
+        $updateBooking = ['status' => 2, 'file_num' => $file_num];
+        $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+        if ($updateOk === false) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        $db->commit();
+
+        // build response row for new insert
+        $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+        $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+        $status_badges = [
+            '1' => '<span class="badge bg-info">Available</span>',
+            '2' => '<span class="badge bg-success">Sold</span>',
+            '3' => '<span class="badge bg-success">Complete</span>',
+            '4' => '<span class="badge bg-danger">Canceled</span>'
+        ];
+        $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+        $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+        $rowHtml .= '<td>' . $proj_display . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+        $rowHtml .= '<td>' . date('d M Y') . '</td>';
+        $rowHtml .= '<td>' . $status_html . '</td>';
+        $rowHtml .= '<td><div class="d-flex gap-1">';
+        $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+        $rowHtml .= '</div></td>';
+        $rowHtml .= '</tr>';
+
+        $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+        logActivity('purchase', 'create', "{$logUser} created purchase #{$insert} for booking #{$booking->id}");
+
+        $resp = ['status'=>200,'message'=>'Purchase registered successfully.','purchase_id'=>$insert,'html'=>$rowHtml];
+        if ($DEV_DEBUG) {
+            $resp['debug'] = [
+                'booking_id'   => $booking->id,
+                'booking_katha'=> $booking_katha,
+                'nominee_ids'  => $nominee_ids,
+                'file_num'     => $file_num,
+                'booking_money'=> $booking_money,
+                'force'        => $force
+            ];
+        }
+
+        echo json_encode($resp);
+        exit;
+
+    } catch (Exception $ex) {
+        if (isset($db) && method_exists($db, 'rollback')) $db->rollback();
+        http_response_code(500);
+        echo json_encode(['status'=>500,'message'=>'Internal server error','error'=>$ex->getMessage()]);
+        exit;
+    }
+}
+
+    // ------------------ EDIT INVENTORY ------------------
+    if ($s === 'edit_inventory') {
+        $id        = $_POST['id']     ?? null;
+        $project   = $_POST['project'] ?? null;
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : null;
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : null;
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : null;
+        $road      = $_POST['road']      ?? null;
+        $plot_num  = $_POST['plot_num']  ?? null;
+    
+        if (empty($id)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid booking ID.']); exit;
+        }
+    
+        $booking = $db->where('id', $id)->getOne(T_BOOKING);
+        if (!$booking) {
+            echo json_encode(['status' => 404, 'message' => 'Booking not found.']); exit;
+        }
+    
+        $updateData = [];
+        $logChanges = [];
+    
+        // --- Check each field ---
+        if (!is_null($project) && $project != $booking->project) {
+            $updateData['project'] = $project;
+            $logChanges[] = "project changed from '{$booking->project}' to '{$project}'";
+        }
+        if (!is_null($block) && $block != $booking->block) {
+            $updateData['block'] = $block;
+            $logChanges[] = "block changed from '{$booking->block}' to '{$block}'";
+        }
+        if (!empty($facing) && $facing != $booking->facing) {
+            $updateData['facing'] = $facing;
+            $logChanges[] = "facing changed from '{$booking->facing}' to '{$facing}'";
+        }
+        if (!is_null($katha) && $katha != $booking->katha) {
+            $updateData['katha'] = $katha;
+            $logChanges[] = "katha changed from '{$booking->katha}' to '{$katha}'";
+        }
+        if (!is_null($road) && $road != $booking->road) {
+            $updateData['road'] = $road;
+            $logChanges[] = "road changed from '{$booking->road}' to '{$road}'";
+        }
+        if (!is_null($plot_num) && $plot_num != $booking->plot) {
+            $updateData['plot'] = $plot_num; // assuming DB column = plot
+            $logChanges[] = "plot changed from '{$booking->plot}' to '{$plot_num}'";
+        }
+    
+        if (empty($updateData)) {
+            echo json_encode(['status' => 400, 'message' => 'Nothing to update.']); exit;
+        }
+    
+        // --- Check duplicate ---
+        $db->where('id', $id, '!=')
+           ->where('project', $updateData['project'] ?? $booking->project)
+           ->where('katha', $updateData['katha'] ?? $booking->katha)
+           ->where('plot', $updateData['plot'] ?? $booking->plot)
+           ->where('road', $updateData['road'] ?? $booking->road);
+    
+        if (array_key_exists('block', $updateData)) {
+            $db->where('block', $updateData['block']);
+        } else {
+            $db->where('block', $booking->block);
+        }
+        if (array_key_exists('facing', $updateData)) {
+            $db->where('facing', $updateData['facing']);
+        } else {
+            $db->where('facing', $booking->facing);
+        }
+    
+        $exist = $db->getOne(T_BOOKING);
+        if ($exist) {
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Another booking with the same project, block, plot, road, katha & facing already exists!'
+            ]); exit;
+        }
+    
+        // --- Perform update ---
+        $update = $db->where('id', $id)->update(T_BOOKING, $updateData);
+    
+        if ($update) {
+            // --- Logging ---
+            $logUser    = 'User #' . $wo['user']['id']; // adjust to your user system
+            $logDate    = date('Y-m-d H:i:s');
+            $logDetails = "Booking ID #{$id} ({$booking->project}, Plot {$booking->plot}, Katha {$booking->katha})";
+            $logMessage = implode('; ', $logChanges);
+            logActivity('booking', 'update', "{$logUser} updated {$logDetails}: {$logMessage}");
+    
+            echo json_encode(['status' => 200, 'message' => 'Booking updated successfully!']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to update booking.']);
+        }
+        exit;
+    }
+
+    // ------------------ SUBMIT NEW BOOKING ------------------
+    if ($s == 'submit') {
+        $project   = isset($_POST['project']) ? strtolower(trim($_POST['project'])) : '';
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : '';
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $plot_num  = isset($_POST['plot_num']) ? trim($_POST['plot_num']) : '';
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : '';
+        $road      = isset($_POST['road']) ? trim($_POST['road']) : '';
+        $file_num  = isset($_POST['file_num']) ? strtolower(trim($_POST['file_num'])) : null;
+
+        if ($project == 'moon-hill') {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        } else {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        }
+
+        if ($is_exist) {
+            $data = ['status'=>400,'message'=>'Entry already exists!'];
+        } else {
+            $data_array = ['project'=>$project,'katha'=>$katha,'plot'=>$plot_num,'facing'=>$facing,'road'=>$road];
+            if ($project != 'moon-hill') $data_array['block']=$block;
+            if (!empty($file_num)) $data_array['file_num']=$file_num;
+
+            $insert = $db->insert(T_BOOKING,$data_array);
+            if ($insert) {
+                $data = ['status'=>200,'message'=>'Added successfully!'];
+                // Logging
+                $logUser    = 'User #' . $wo['user']['id'];
+                $logDate    = date('Y-m-d H:i:s');
+                $logDetails = "Booking ID #{$insert} ({$project}, Plot {$plot_num}, Katha {$katha})";
+                logActivity('booking', 'create', "{$logUser} added new booking {$logDetails}");
+            } else {
+                $data = ['status'=>400,'message'=>'Something went wrong!'];
+            }
+        }
+    }
+
+    // ------------------ EDIT MODAL ------------------
+    if ($s == 'edit_modal') {
+        $id = isset($_POST['id']) ? $_POST['id'] : '';
+        if (empty($id)) {
+            $data = ['status'=>400,'message'=>'Something went wrong!'];
+        } else {
+            $inventory = $db->where('id', $id)->getOne(T_BOOKING);
+            $data = ['status'=>200,'result'=>Wo_LoadManagePage('inventory/edit')];
+        }
+    }
+
+    // ------------------ UPDATE STATUS ------------------
+    if ($s === 'update_status') {
+        $id       = !empty($_POST['id']) ? $_POST['id'] : null;
+        $file_id  = !empty($_POST['file_id']) ? $_POST['file_id'] : null;
+        $file_id2 = !empty($_POST['file_id2']) ? $_POST['file_id2'] : null;
+        $status   = isset($_POST['status']) ? $_POST['status'] : '0';
+        $date     = !empty($_POST['date']) ? $_POST['date'] : '';
+
+        if (empty($id)) { echo json_encode(['status'=>400,'message'=>'Invalid booking ID.']); exit; }
+        if (empty($file_id) && empty($file_id2)) { echo json_encode(['status'=>400,'message'=>'Client/File ID is required!']); exit; }
+        if (empty($file_id)) $file_id=$file_id2;
+        $timestamp = ($date && strtotime($date)!==false) ? strtotime($date) : time();
+
+        $is_exist = $db->where('booking_id',$id)->where('file_num',$file_id)->getOne(T_BOOKING_HELPER);
+        $updateData = ['status'=>$status,'time'=>$timestamp];
+
+        if ($is_exist) {
+            $update = $db->where('booking_id',$id)->where('file_num',$file_id)->update(T_BOOKING_HELPER,$updateData);
+            $data = $update ? ['status'=>200,'message'=>'Record updated successfully!'] : ['status'=>500,'message'=>'Failed to update record!'];
+        } else {
+            $lastEntry = $db->where('booking_id',$id)->orderBy('time','DESC')->getOne(T_BOOKING_HELPER);
+            if ($lastEntry) {
+                $db->where('booking_id',$id)->where('id',$lastEntry->id,'!=')->update(T_BOOKING_HELPER,['status'=>4]);
+                $db->where('id',$lastEntry->id)->update(T_BOOKING_HELPER,['status'=>4,'time'=>$timestamp]);
+            }
+            $insertData = ['booking_id'=>$id,'status'=>$status,'time'=>$timestamp,'file_num'=>$file_id];
+            $insert = $db->insert(T_BOOKING_HELPER,$insertData);
+            $data = $insert ? ['status'=>200,'message'=>'Record inserted successfully!'] : ['status'=>500,'message'=>'Failed to insert record!'];
+        }
+        if ($data['status']===200) $db->where('id',$id)->update(T_BOOKING,['status'=>$status,'file_num'=>$file_id]);
+    }
+
+    // ------------------ FETCH DATA ------------------
+    if ($s == 'fetch') {
+        $page_num = isset($_POST['start']) ? $_POST['start']/$_POST['length']+1 : 1;
+        $searchValue = isset($_POST['search']['value']) ? $_POST['search']['value'] : '';
+        $project = isset($_POST['project']) ? $_POST['project'] : '';
+        $block   = isset($_POST['block']) ? $_POST['block'] : '';
+        $katha   = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $road    = isset($_POST['road']) ? $_POST['road'] : '';
+        $facing  = isset($_POST['facing']) ? $_POST['facing'] : '';
+        $plot_num= isset($_POST['plot_num']) ? $_POST['plot_num'] : '';
+
+        if (!empty($searchValue)) {
+            $db->where(is_numeric($searchValue)?'file_id':'name','%'.$searchValue.'%','LIKE');
+        }
+        if (!empty($project)) $db->where('project',$project);
+        if (!empty($block) && $block!='Select Block...') $db->where('block',$block);
+        if (!empty($katha) && $katha!='Select Katha...') $db->where('katha',$katha);
+        if (!empty($road) && $road!='Select Road...') $db->where('road',$road);
+        if (!empty($facing) && $facing!='Select Facing...') $db->where('facing',$facing);
+        if (!empty($plot_num)) $db->where('plot','%'.$plot_num.'%','LIKE');
+
+        $orderColumn = isset($_POST['order'][0]['column']) ? $_POST['order'][0]['column'] : null;
+        $orderDirection = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : null;
+        if ($orderColumn!==null && $orderColumn==3) $db->orderBy('plot',$orderDirection=='asc'?'ASC':'DESC');
+        else $db->orderBy('plot','DESC');
+
+        $db->pageLimit = $_POST['length'];
+        $inventory = $db->objectbuilder()->paginate(T_BOOKING,$page_num);
+
+        $outputData = [];
+        if ($inventory) {
+            foreach ($inventory as $value) {
+                $client = GetCustomerById($value->file_num);
+
+                $status_raw = $value->status;
+                if ($status_raw == '1') $status = '<span class="badge bg-info"> Available </span>';
+                else if ($status_raw == '2') $status = '<span class="badge bg-success"> Sold </span>';
+                else if ($status_raw == '3') $status = '<span class="badge bg-success"> Complete </span>';
+                else if ($status_raw == '4') $status = '<span class="badge bg-danger"> Canceled </span>';
+                else $status = '<span class="badge bg-info">Available</span>';
+
+                $facingDisplay = (strpos($value->facing,'-')!==false) ? ucwords($value->facing,'-') : ucfirst($value->facing);
+
+                $outputData[] = [
+                    'id'      => ucwords($value->id),
+                    'block'   => ucwords($value->block),
+                    'road'    => ucwords($value->road),
+                    'plot'    => 'Plot ' . $value->plot,
+                    'katha'   => $value->katha . ' katha',
+                    'facing'  => $facingDisplay,
+                    'status'  => $status,
+                    'file_num'=> $client['file_id']
+                ];
+            }
+        }
+
+        $data = [
+            "draw" => intval($_POST['draw']),
+            "recordsTotal" => $db->totalPages * $_POST['length'],
+            "recordsFiltered" => $db->totalPages * $_POST['length'],
+            "data" => $outputData
+        ];
+    }
+
+
+    // ===============================
+    //  📄 DOWNLOAD SCHEDULE PDF
+    // ===============================
+    if ($s == 'download_schedule_pdf') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate PDF content
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.pdf';
+            $downloadUrl = generateSchedulePDF($purchaseId, $schedule, $clientData, $printData, $filename);
+            
+            if ($downloadUrl) {
+                echo json_encode([
+                    'status' => 200,
+                    'download_url' => $downloadUrl,
+                    'filename' => $filename,
+                    'message' => 'PDF generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate PDF']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating PDF: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+
+    // ===============================
+    //  💾 SAVE SCHEDULE XLSX
+    // ===============================
+    if ($s == 'save_schedule_xlsx') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        $format = $_POST['format'] ?? 'xlsx';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate Excel file
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.' . $format;
+            $result = generateScheduleExcel($purchaseId, $schedule, $clientData, $printData, $filename, $format);
+            
+            if ($result && isset($result['file_path'])) {
+                echo json_encode([
+                    'status' => 200,
+                    'file_path' => $result['file_path'],
+                    'download_url' => $result['download_url'],
+                    'filename' => $filename,
+                    'message' => 'Excel file generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate Excel file']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating Excel: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ===============================
+    //  🔍 GET AVAILABLE PLOTS
+    // ===============================
+    if ($s == 'get_available_plots') {
+        $project_slug = isset($_GET['project_slug']) ? trim($_GET['project_slug']) : '';
+        
+        if (!$project_slug) {
+            echo json_encode([]);
+            exit;
+        }
+
+        // Get available plots for the project
+        $plots = $db->where('project', $project_slug)
+                   ->where('status', '1')
+                   ->orderBy('block', 'ASC')
+                   ->orderBy('plot', 'ASC')
+                   ->get(T_BOOKING);
+
+        $results = [];
+        foreach ($plots as $plot) {
+            $results[] = [
+                'id' => $plot->id,
+                'block' => $plot->block ?? '',
+                'plot' => $plot->plot ?? '',
+                'katha' => $plot->katha ?? '',
+                'road' => $plot->road ?? '',
+                'facing' => $plot->facing ?? ''
+            ];
+        }
+
+        echo json_encode($results);
+        exit;
+    }
+    // ------------------ NEW: Check plot/booking conflicts ------------------
+    if ($s === 'check_plot_booking') {
+        header('Content-Type: application/json; charset=utf-8');
+    
+        // Accept either POST or GET. Project can be numeric id or slug (string)
+        $project_raw = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $purchase_id = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+
+        // Basic validation
+        if ($project_raw === '' || $purchase_id <= 0) {
+            http_response_code(400);
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Missing or invalid parameters.',
+                'project' => $project_raw,
+                'purchase_id' => $purchase_id
+            ]);
+            exit;
+        }
+    
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+    
+        // Query booking
+        $bookings = $db->where('id', $purchase_id)->where('project', $project_raw)->get(T_BOOKING);
+    
+        if (empty($bookings)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'No booking found (treat as available).']);
+            exit;
+        }
+    
+        foreach ($bookings as $bk) {
+            $bstatus = isset($bk->status) ? strtolower(trim((string)$bk->status)) : '';
+    
+            // fetch helpers for this booking;
+            $helpers = $db->where('booking_id', $bk->id)->groupBy('client_id')->get(T_BOOKING_HELPER);
+    
+            if (!empty($helpers)) {
+                foreach ($helpers as $h) {
+                    $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : ($bstatus ?: '');
+                    if ($hstatus === '') $hstatus = 'unknown';
+    
+                    if (!in_array($hstatus, $free_statuses, true)) {
+                        $conflicts[] = [
+                            'booking_id' => $bk->id,
+                            'status'     => $hstatus,
+                            'time'       => $h->time ?? null
+                        ];
+                    }
+                }
+            } else {
+                // no helpers -> rely on booking status
+                if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+                    $conflicts[] = [
+                        'booking_id' => $bk->id,
+                        'status'     => $bstatus,
+                        'time'       => $bk->time ?? null
+                    ];
+                }
+            }
+        }
+        if (empty($conflicts)) {
+            echo json_encode(['status' => 200, 'available' => true, 'message' => 'Plot appears available (no active bookings found).']);
+        } else {
+            echo json_encode(['status' => 200, 'available' => false, 'message' => 'Active booking(s) found.', 'conflicts' => $conflicts]);
+        }
+        exit;
+    }
+
+// ------------------ Register / assign a purchase to a client (updated for booking money) ------------------
+if ($s === 'register_purchase' || $s === 'assign_purchase') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    // DEV: set to true during debugging; set false in production
+    $DEV_DEBUG = false;
+
+    try {
+        // Inputs (sanitize)
+        $client_id_raw   = $_POST['client_id'] ?? $_GET['client_id'] ?? 0;
+        $client_id       = (int)$client_id_raw;
+
+        $project_raw     = isset($_POST['project_id']) ? trim($_POST['project_id']) : (isset($_GET['project_id']) ? trim($_GET['project_id']) : '');
+        $file_num_raw    = isset($_POST['file_num']) ? trim($_POST['file_num']) : (isset($_GET['file_num']) ? trim($_GET['file_num']) : '');
+        $purchase_id     = isset($_POST['purchase_id']) ? (int) $_POST['purchase_id'] : (isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : 0);
+        $down_payment    = isset($_POST['down_payment']) ? floatval($_POST['down_payment']) : 0.0;
+        $booking_money   = isset($_POST['booking_money']) ? floatval($_POST['booking_money']) : 0.0; // Add booking money
+        $per_katha       = isset($_POST['per_katha']) ? floatval($_POST['per_katha']) : 0.0;
+        $nominee_ids_raw = $_POST['nominee_ids'] ?? $_GET['nominee_ids'] ?? '[]';
+        $force           = isset($_POST['force']) ? ($_POST['force'] === '1' || $_POST['force'] === 1 || $_POST['force'] === true) :
+                           (isset($_GET['force']) ? ($_GET['force'] === '1' || $_GET['force'] === 1) : false);
+
+        // Basic required validation
+        $missing = [];
+        if ($client_id <= 0)      $missing[] = 'client_id';
+        if ($project_raw === '')  $missing[] = 'project_id';
+        if ($file_num_raw === '') $missing[] = 'file_num';
+        if ($purchase_id <= 0)    $missing[] = 'purchase_id';
+        if ($per_katha <= 0)      $missing[] = 'per_katha';
+        if ($down_payment < 0)    $missing[] = 'down_payment';
+        if ($booking_money < 0)   $missing[] = 'booking_money'; // Validate booking money
+
+        if (!empty($missing)) {
+            http_response_code(400);
+            echo json_encode(['status'=>400,'message'=>'Missing or invalid parameters: ' . implode(', ', $missing)]);
+            exit;
+        }
+
+        // Normalize file_num: keep letters/numbers, dash, underscore, slash and spaces
+        $file_num = preg_replace('/[^\p{L}\p{N}\-\_\/\s]/u', '', $file_num_raw);
+        $file_num = trim($file_num);
+
+        // nominee_ids -> array of ints (accept JSON or comma list or array)
+        $nominee_ids = [];
+        if (is_string($nominee_ids_raw)) {
+            $decoded = json_decode($nominee_ids_raw, true);
+            if (is_array($decoded)) {
+                $nominee_ids = $decoded;
+            } else {
+                // try comma separated
+                $tmp = preg_split('/\s*,\s*/', trim($nominee_ids_raw));
+                $nominee_ids = array_filter($tmp, function($v){ return $v !== ''; });
+            }
+        } elseif (is_array($nominee_ids_raw)) {
+            $nominee_ids = $nominee_ids_raw;
+        }
+        // coerce to ints where possible
+        $nominee_ids = array_values(array_map(function($v){
+            if (is_numeric($v)) return (int)$v;
+            return $v;
+        }, $nominee_ids));
+        $nominee_ids_json = json_encode($nominee_ids);
+
+        // --- Verify client exists in crm_customers ---
+        $clientExists = $db->where('id', $client_id)->getValue('crm_customers', 'id');
+        if (!$clientExists) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Client not found (crm_customers).']);
+            exit;
+        }
+
+        // --- Find booking in wo_booking ---
+        $booking = $db->where('id', $purchase_id)->getOne('wo_booking');
+        if (!$booking) {
+            http_response_code(404);
+            echo json_encode(['status'=>404,'message'=>'Selected booking not found (wo_booking).']);
+            exit;
+        }
+
+        // store booking katha for later price validation (if present)
+        $booking_katha = null;
+        if (isset($booking->katha)) {
+            // booking.katha is varchar, so sanitize numeric part
+            $bk = preg_replace('/[^\d\.\-]/', '', (string)$booking->katha);
+            $booking_katha = $bk !== '' ? floatval($bk) : null;
+        }
+
+        // optional strict validation: ensure (booking_money + down_payment) <= per_katha * katha
+        if ($booking_katha !== null) {
+            $expected_total = $per_katha * $booking_katha;
+            if (($booking_money + $down_payment) > $expected_total) {
+                http_response_code(422);
+                echo json_encode(['status'=>422,'message'=>'Total advance (booking money + down payment) cannot exceed total price (per_katha * katha).','debug'=>[
+                    'per_katha'=>$per_katha,'katha'=>$booking_katha,'expected_total'=>$expected_total,'booking_money'=>$booking_money,'down_payment'=>$down_payment
+                ]]);
+                exit;
+            }
+        }
+
+        // Conflict detection (use wo_booking_helper)
+        $conflicts = [];
+        $free_statuses = ['0','1','available','cancelled','canceled'];
+
+        // We'll look for existing helper that belongs to the *same client* + booking.
+        $existingHelperForClient = $db
+            ->where('booking_id', $booking->id)
+            ->where('client_id', (string)$client_id)
+            ->orderBy('id', 'DESC')
+            ->getOne('wo_booking_helper');
+
+        // Fetch all helpers for this booking to detect conflicts from *other* clients
+        $helpers = $db->where('booking_id', $booking->id)->get('wo_booking_helper');
+        if (!empty($helpers)) {
+            foreach ($helpers as $h) {
+                // if the helper belongs to the current client, skip adding as a conflict
+                $h_client_id = isset($h->client_id) ? (string)$h->client_id : '';
+                $hstatus = isset($h->status) ? strtolower(trim((string)$h->status)) : '';
+
+                if ($h_client_id === (string)$client_id) {
+                    // skip conflict for same client; we'll update this helper later instead of inserting
+                    continue;
+                }
+
+                if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
+                    $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $h->file_num ?? ($h->file_id ?? null), 'status' => $hstatus, 'helper_id' => $h->id ?? null];
+                }
+            }
+        }
+
+        // Also consider booking.status itself as conflict (but if booking was created by same client we don't know; so treat booking.status as conflict)
+        $bstatus = isset($booking->status) ? strtolower(trim((string)$booking->status)) : '';
+        if ($bstatus !== '' && !in_array($bstatus, $free_statuses, true)) {
+            // If booking already marked sold but the same client has helper, allow update â€” otherwise count as conflict.
+            $allow_if_same_client = ($existingHelperForClient ? true : false);
+            if (!$allow_if_same_client) {
+                $conflicts[] = ['booking_id' => $booking->id, 'file_id' => $booking->file_num ?? null, 'status' => $bstatus];
+            }
+        }
+
+        // If there are conflicts (from other clients) and not forcing, reject
+        if (!empty($conflicts) && !$force) {
+            http_response_code(409);
+            echo json_encode(['status'=>409,'message'=>'Active booking(s) exist for this plot (other client). Use force to override.','conflicts'=>$conflicts]);
+            exit;
+        }
+
+        // ------------------ Now: either update existing helper (same client) OR insert new ------------------
+
+        // Start transaction
+        $db->startTransaction();
+
+        if ($existingHelperForClient) {
+            // Update existing helper for same client instead of inserting a new helper
+            $updateData = [
+                'file_num'     => $file_num,
+                'status'       => '2', // sold
+                'time'         => time(),
+                'nominee_ids'  => $nominee_ids_json,
+                'per_katha'    => $per_katha,
+                'down_payment' => $down_payment,
+                'booking_money'=> $booking_money, // Add booking money
+                'cancel_date'  => '', // clear cancel date on re-book
+            ];
+
+            $ok = $db->where('id', $existingHelperForClient->id)->update('wo_booking_helper', $updateData);
+            if ($ok === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update existing booking helper.','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            // Update booking record in wo_booking: status (int) and file_num
+            $updateBooking = ['status' => 2, 'file_num' => $file_num];
+            $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+            if ($updateOk === false) {
+                $db->rollback();
+                $err = $db->getLastError();
+                http_response_code(500);
+                echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+                exit;
+            }
+
+            $db->commit();
+
+            $insert = $existingHelperForClient->id; // treat as the 'purchase id' returned
+
+            // Build response row (reuse your existing HTML)
+            $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+            $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+            $status_badges = [
+                '1' => '<span class="badge bg-info">Available</span>',
+                '2' => '<span class="badge bg-success">Sold</span>',
+                '3' => '<span class="badge bg-success">Complete</span>',
+                '4' => '<span class="badge bg-danger">Canceled</span>'
+            ];
+            $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+            $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+            $rowHtml .= '<td>' . $proj_display . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+            $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+            $rowHtml .= '<td>' . date('d M Y') . '</td>';
+            $rowHtml .= '<td>' . $status_html . '</td>';
+            $rowHtml .= '<td><div class="d-flex gap-1">';
+            $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+            $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+            $rowHtml .= '</div></td>';
+            $rowHtml .= '</tr>';
+
+            $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+            logActivity('purchase', 'update', "{$logUser} updated purchase #{$insert} for booking #{$booking->id}");
+
+            $resp = ['status'=>200,'message'=>'Existing purchase updated.','purchase_id'=>$insert,'html'=>$rowHtml];
+            if ($DEV_DEBUG) {
+                $resp['debug'] = [
+                    'action'        => 'updated_existing_helper',
+                    'existing_id'   => $existingHelperForClient->id,
+                    'booking_id'    => $booking->id,
+                    'client_id'     => $client_id,
+                    'nominee_ids'   => $nominee_ids,
+                    'booking_money' => $booking_money,
+                ];
+            }
+
+            echo json_encode($resp);
+            exit;
+        }
+
+        // No existing helper for this client -> insert new as usual
+        $helperData = [
+            'booking_id'    => $booking->id,
+            'client_id'     => (string)$client_id, // your schema shows client_id is varchar(32)
+            'file_num'      => $file_num, // sold (schema uses varchar)
+            'status'        => '2', // sold (schema uses varchar)
+            'time'          => time(),
+            'nominee_ids'   => $nominee_ids_json,
+            'per_katha'     => $per_katha,
+            'down_payment'  => $down_payment,
+            'booking_money' => $booking_money, // Add booking money
+            'cancel_date'   => '',
+        ];
+
+        $insert = $db->insert('wo_booking_helper', $helperData);
+        if (!$insert) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to create booking helper (wo_booking_helper).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        // Update booking record in wo_booking: status (int) and file_num (text)
+        $updateBooking = ['status' => 2, 'file_num' => $file_num];
+        $updateOk = $db->where('id', $booking->id)->update('wo_booking', $updateBooking);
+        if ($updateOk === false) {
+            $db->rollback();
+            $err = $db->getLastError();
+            http_response_code(500);
+            echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
+            exit;
+        }
+
+        $db->commit();
+
+        // build response row for new insert
+        $proj_display = htmlspecialchars($project_raw, ENT_QUOTES);
+        $status_raw = (string) ($updateBooking['status'] ?? ($booking->status ?? '1'));
+        $status_badges = [
+            '1' => '<span class="badge bg-info">Available</span>',
+            '2' => '<span class="badge bg-success">Sold</span>',
+            '3' => '<span class="badge bg-success">Complete</span>',
+            '4' => '<span class="badge bg-danger">Canceled</span>'
+        ];
+        $status_html = $status_badges[$status_raw] ?? $status_badges['1'];
+
+        $rowHtml  = '<tr id="purchaseRow_' . $insert . '">';
+        $rowHtml .= '<td>' . $proj_display . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->block ?? 'N/A') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->katha ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->plot ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($booking->road ?? '') . '</td>';
+        $rowHtml .= '<td>' . htmlspecialchars($file_num) . '</td>';
+        $rowHtml .= '<td>' . date('d M Y') . '</td>';
+        $rowHtml .= '<td>' . $status_html . '</td>';
+        $rowHtml .= '<td><div class="d-flex gap-1">';
+        $rowHtml .= '<button class="btn btn-sm btn-info print-booking-form" data-id="' . $insert . '" title="Print Form"><i class="lni lni-printer"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-success update_installment" data-id="' . $insert . '" title="Payment Schedule"><i class="lni lni-dollar"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-warning change_plot_btn" data-id="' . $insert . '" title="Change Plot"><i class="lni lni-exchange"></i></button>';
+        $rowHtml .= '<button class="btn btn-sm btn-danger cancel-purchase" data-id="' . $insert . '" title="Cancel Purchase"><i class="lni lni-close"></i></button>';
+        $rowHtml .= '</div></td>';
+        $rowHtml .= '</tr>';
+
+        $logUser = 'User #' . ($wo['user']['id'] ?? '999');
+        logActivity('purchase', 'create', "{$logUser} created purchase #{$insert} for booking #{$booking->id}");
+
+        $resp = ['status'=>200,'message'=>'Purchase registered successfully.','purchase_id'=>$insert,'html'=>$rowHtml];
+        if ($DEV_DEBUG) {
+            $resp['debug'] = [
+                'booking_id'   => $booking->id,
+                'booking_katha'=> $booking_katha,
+                'nominee_ids'  => $nominee_ids,
+                'file_num'     => $file_num,
+                'booking_money'=> $booking_money,
+                'force'        => $force
+            ];
+        }
+
+        echo json_encode($resp);
+        exit;
+
+    } catch (Exception $ex) {
+        if (isset($db) && method_exists($db, 'rollback')) $db->rollback();
+        http_response_code(500);
+        echo json_encode(['status'=>500,'message'=>'Internal server error','error'=>$ex->getMessage()]);
+        exit;
+    }
+}
+
+    // ------------------ EDIT INVENTORY ------------------
+    if ($s === 'edit_inventory') {
+        $id        = $_POST['id']     ?? null;
+        $project   = $_POST['project'] ?? null;
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : null;
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : null;
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : null;
+        $road      = $_POST['road']      ?? null;
+        $plot_num  = $_POST['plot_num']  ?? null;
+    
+        if (empty($id)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid booking ID.']); exit;
+        }
+    
+        $booking = $db->where('id', $id)->getOne(T_BOOKING);
+        if (!$booking) {
+            echo json_encode(['status' => 404, 'message' => 'Booking not found.']); exit;
+        }
+    
+        $updateData = [];
+        $logChanges = [];
+    
+        // --- Check each field ---
+        if (!is_null($project) && $project != $booking->project) {
+            $updateData['project'] = $project;
+            $logChanges[] = "project changed from '{$booking->project}' to '{$project}'";
+        }
+        if (!is_null($block) && $block != $booking->block) {
+            $updateData['block'] = $block;
+            $logChanges[] = "block changed from '{$booking->block}' to '{$block}'";
+        }
+        if (!empty($facing) && $facing != $booking->facing) {
+            $updateData['facing'] = $facing;
+            $logChanges[] = "facing changed from '{$booking->facing}' to '{$facing}'";
+        }
+        if (!is_null($katha) && $katha != $booking->katha) {
+            $updateData['katha'] = $katha;
+            $logChanges[] = "katha changed from '{$booking->katha}' to '{$katha}'";
+        }
+        if (!is_null($road) && $road != $booking->road) {
+            $updateData['road'] = $road;
+            $logChanges[] = "road changed from '{$booking->road}' to '{$road}'";
+        }
+        if (!is_null($plot_num) && $plot_num != $booking->plot) {
+            $updateData['plot'] = $plot_num; // assuming DB column = plot
+            $logChanges[] = "plot changed from '{$booking->plot}' to '{$plot_num}'";
+        }
+    
+        if (empty($updateData)) {
+            echo json_encode(['status' => 400, 'message' => 'Nothing to update.']); exit;
+        }
+    
+        // --- Check duplicate ---
+        $db->where('id', $id, '!=')
+           ->where('project', $updateData['project'] ?? $booking->project)
+           ->where('katha', $updateData['katha'] ?? $booking->katha)
+           ->where('plot', $updateData['plot'] ?? $booking->plot)
+           ->where('road', $updateData['road'] ?? $booking->road);
+    
+        if (array_key_exists('block', $updateData)) {
+            $db->where('block', $updateData['block']);
+        } else {
+            $db->where('block', $booking->block);
+        }
+        if (array_key_exists('facing', $updateData)) {
+            $db->where('facing', $updateData['facing']);
+        } else {
+            $db->where('facing', $booking->facing);
+        }
+    
+        $exist = $db->getOne(T_BOOKING);
+        if ($exist) {
+            echo json_encode([
+                'status' => 400,
+                'message' => 'Another booking with the same project, block, plot, road, katha & facing already exists!'
+            ]); exit;
+        }
+    
+        // --- Perform update ---
+        $update = $db->where('id', $id)->update(T_BOOKING, $updateData);
+    
+        if ($update) {
+            // --- Logging ---
+            $logUser    = 'User #' . $wo['user']['id']; // adjust to your user system
+            $logDate    = date('Y-m-d H:i:s');
+            $logDetails = "Booking ID #{$id} ({$booking->project}, Plot {$booking->plot}, Katha {$booking->katha})";
+            $logMessage = implode('; ', $logChanges);
+            logActivity('booking', 'update', "{$logUser} updated {$logDetails}: {$logMessage}");
+    
+            echo json_encode(['status' => 200, 'message' => 'Booking updated successfully!']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to update booking.']);
+        }
+        exit;
+    }
+
+    // ------------------ SUBMIT NEW BOOKING ------------------
+    if ($s == 'submit') {
+        $project   = isset($_POST['project']) ? strtolower(trim($_POST['project'])) : '';
+        $block     = isset($_POST['block']) ? strtolower(trim($_POST['block'])) : '';
+        $katha     = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $plot_num  = isset($_POST['plot_num']) ? trim($_POST['plot_num']) : '';
+        $facing    = isset($_POST['facing']) ? strtolower(trim($_POST['facing'])) : '';
+        $road      = isset($_POST['road']) ? trim($_POST['road']) : '';
+        $file_num  = isset($_POST['file_num']) ? strtolower(trim($_POST['file_num'])) : null;
+
+        if ($project == 'moon-hill') {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        } else {
+            if (empty($project) || empty($katha) || empty($plot_num) || empty($facing) || empty($road)) {
+                $data = ['status'=>400,'message'=>'All fields except file number are required!'];
+            }
+            $is_exist = $db->where('project', $project)
+                           ->where('katha', $katha)
+                           ->where('plot', $plot_num)
+                           ->where('facing', $facing)
+                           ->where('road', $road)
+                           ->getOne(T_BOOKING);
+        }
+
+        if ($is_exist) {
+            $data = ['status'=>400,'message'=>'Entry already exists!'];
+        } else {
+            $data_array = ['project'=>$project,'katha'=>$katha,'plot'=>$plot_num,'facing'=>$facing,'road'=>$road];
+            if ($project != 'moon-hill') $data_array['block']=$block;
+            if (!empty($file_num)) $data_array['file_num']=$file_num;
+
+            $insert = $db->insert(T_BOOKING,$data_array);
+            if ($insert) {
+                $data = ['status'=>200,'message'=>'Added successfully!'];
+                // Logging
+                $logUser    = 'User #' . $wo['user']['id'];
+                $logDate    = date('Y-m-d H:i:s');
+                $logDetails = "Booking ID #{$insert} ({$project}, Plot {$plot_num}, Katha {$katha})";
+                logActivity('booking', 'create', "{$logUser} added new booking {$logDetails}");
+            } else {
+                $data = ['status'=>400,'message'=>'Something went wrong!'];
+            }
+        }
+    }
+
+    // ------------------ EDIT MODAL ------------------
+    if ($s == 'edit_modal') {
+        $id = isset($_POST['id']) ? $_POST['id'] : '';
+        if (empty($id)) {
+            $data = ['status'=>400,'message'=>'Something went wrong!'];
+        } else {
+            $inventory = $db->where('id', $id)->getOne(T_BOOKING);
+            $data = ['status'=>200,'result'=>Wo_LoadManagePage('inventory/edit')];
+        }
+    }
+
+    // ------------------ UPDATE STATUS ------------------
+    if ($s === 'update_status') {
+        $id       = !empty($_POST['id']) ? $_POST['id'] : null;
+        $file_id  = !empty($_POST['file_id']) ? $_POST['file_id'] : null;
+        $file_id2 = !empty($_POST['file_id2']) ? $_POST['file_id2'] : null;
+        $status   = isset($_POST['status']) ? $_POST['status'] : '0';
+        $date     = !empty($_POST['date']) ? $_POST['date'] : '';
+
+        if (empty($id)) { echo json_encode(['status'=>400,'message'=>'Invalid booking ID.']); exit; }
+        if (empty($file_id) && empty($file_id2)) { echo json_encode(['status'=>400,'message'=>'Client/File ID is required!']); exit; }
+        if (empty($file_id)) $file_id=$file_id2;
+        $timestamp = ($date && strtotime($date)!==false) ? strtotime($date) : time();
+
+        $is_exist = $db->where('booking_id',$id)->where('file_num',$file_id)->getOne(T_BOOKING_HELPER);
+        $updateData = ['status'=>$status,'time'=>$timestamp];
+
+        if ($is_exist) {
+            $update = $db->where('booking_id',$id)->where('file_num',$file_id)->update(T_BOOKING_HELPER,$updateData);
+            $data = $update ? ['status'=>200,'message'=>'Record updated successfully!'] : ['status'=>500,'message'=>'Failed to update record!'];
+        } else {
+            $lastEntry = $db->where('booking_id',$id)->orderBy('time','DESC')->getOne(T_BOOKING_HELPER);
+            if ($lastEntry) {
+                $db->where('booking_id',$id)->where('id',$lastEntry->id,'!=')->update(T_BOOKING_HELPER,['status'=>4]);
+                $db->where('id',$lastEntry->id)->update(T_BOOKING_HELPER,['status'=>4,'time'=>$timestamp]);
+            }
+            $insertData = ['booking_id'=>$id,'status'=>$status,'time'=>$timestamp,'file_num'=>$file_id];
+            $insert = $db->insert(T_BOOKING_HELPER,$insertData);
+            $data = $insert ? ['status'=>200,'message'=>'Record inserted successfully!'] : ['status'=>500,'message'=>'Failed to insert record!'];
+        }
+        if ($data['status']===200) $db->where('id',$id)->update(T_BOOKING,['status'=>$status,'file_num'=>$file_id]);
+    }
+
+    // ------------------ FETCH DATA ------------------
+    if ($s == 'fetch') {
+        $page_num = isset($_POST['start']) ? $_POST['start']/$_POST['length']+1 : 1;
+        $searchValue = isset($_POST['search']['value']) ? $_POST['search']['value'] : '';
+        $project = isset($_POST['project']) ? $_POST['project'] : '';
+        $block   = isset($_POST['block']) ? $_POST['block'] : '';
+        $katha   = isset($_POST['katha']) ? normalizeKatha($_POST['katha']) : '';
+        $road    = isset($_POST['road']) ? $_POST['road'] : '';
+        $facing  = isset($_POST['facing']) ? $_POST['facing'] : '';
+        $plot_num= isset($_POST['plot_num']) ? $_POST['plot_num'] : '';
+
+        if (!empty($searchValue)) {
+            $db->where(is_numeric($searchValue)?'file_id':'name','%'.$searchValue.'%','LIKE');
+        }
+        if (!empty($project)) $db->where('project',$project);
+        if (!empty($block) && $block!='Select Block...') $db->where('block',$block);
+        if (!empty($katha) && $katha!='Select Katha...') $db->where('katha',$katha);
+        if (!empty($road) && $road!='Select Road...') $db->where('road',$road);
+        if (!empty($facing) && $facing!='Select Facing...') $db->where('facing',$facing);
+        if (!empty($plot_num)) $db->where('plot','%'.$plot_num.'%','LIKE');
+
+        $orderColumn = isset($_POST['order'][0]['column']) ? $_POST['order'][0]['column'] : null;
+        $orderDirection = isset($_POST['order'][0]['dir']) ? $_POST['order'][0]['dir'] : null;
+        if ($orderColumn!==null && $orderColumn==3) $db->orderBy('plot',$orderDirection=='asc'?'ASC':'DESC');
+        else $db->orderBy('plot','DESC');
+
+        $db->pageLimit = $_POST['length'];
+        $inventory = $db->objectbuilder()->paginate(T_BOOKING,$page_num);
+
+        $outputData = [];
+        if ($inventory) {
+            foreach ($inventory as $value) {
+                $client = GetCustomerById($value->file_num);
+
+                $status_raw = $value->status;
+                if ($status_raw == '1') $status = '<span class="badge bg-info"> Available </span>';
+                else if ($status_raw == '2') $status = '<span class="badge bg-success"> Sold </span>';
+                else if ($status_raw == '3') $status = '<span class="badge bg-success"> Complete </span>';
+                else if ($status_raw == '4') $status = '<span class="badge bg-danger"> Canceled </span>';
+                else $status = '<span class="badge bg-info">Available</span>';
+
+                $facingDisplay = (strpos($value->facing,'-')!==false) ? ucwords($value->facing,'-') : ucfirst($value->facing);
+
+                $outputData[] = [
+                    'id'      => ucwords($value->id),
+                    'block'   => ucwords($value->block),
+                    'road'    => ucwords($value->road),
+                    'plot'    => 'Plot ' . $value->plot,
+                    'katha'   => $value->katha . ' katha',
+                    'facing'  => $facingDisplay,
+                    'status'  => $status,
+                    'file_num'=> $client['file_id']
+                ];
+            }
+        }
+
+        $data = [
+            "draw" => intval($_POST['draw']),
+            "recordsTotal" => $db->totalPages * $_POST['length'],
+            "recordsFiltered" => $db->totalPages * $_POST['length'],
+            "data" => $outputData
+        ];
+    }
+
+
+    // ===============================
+    //  📄 DOWNLOAD SCHEDULE PDF
+    // ===============================
+    if ($s == 'download_schedule_pdf') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate PDF content
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.pdf';
+            $downloadUrl = generateSchedulePDF($purchaseId, $schedule, $clientData, $printData, $filename);
+            
+            if ($downloadUrl) {
+                echo json_encode([
+                    'status' => 200,
+                    'download_url' => $downloadUrl,
+                    'filename' => $filename,
+                    'message' => 'PDF generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate PDF']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating PDF: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+
+    // ===============================
+    //  💾 SAVE SCHEDULE XLSX
+    // ===============================
+    if ($s == 'save_schedule_xlsx') {
+        $purchaseId = $_POST['purchase_id'] ?? '';
+        $scheduleJson = $_POST['schedule'] ?? '';
+        $clientDataJson = $_POST['client_data'] ?? '';
+        $printDataJson = $_POST['print_data'] ?? '';
+        $format = $_POST['format'] ?? 'xlsx';
+        
+        if (!$purchaseId || !$scheduleJson) {
+            echo json_encode(['status' => 400, 'message' => 'Missing required data']);
+            exit;
+        }
+        
+        try {
+            $schedule = json_decode($scheduleJson, true);
+            $clientData = json_decode($clientDataJson, true);
+            $printData = json_decode($printDataJson, true);
+            
+            if (!$schedule || !is_array($schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            // Generate Excel file
+            $filename = 'payment_schedule_' . $purchaseId . '_' . date('Y-m-d') . '.' . $format;
+            $result = generateScheduleExcel($purchaseId, $schedule, $clientData, $printData, $filename, $format);
+            
+            if ($result && isset($result['file_path'])) {
+                echo json_encode([
+                    'status' => 200,
+                    'file_path' => $result['file_path'],
+                    'download_url' => $result['download_url'],
+                    'filename' => $filename,
+                    'message' => 'Excel file generated successfully'
+                ]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to generate Excel file']);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error generating Excel: ' . $e->getMessage()]);
+        }
         exit;
     }
 

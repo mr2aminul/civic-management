@@ -418,7 +418,11 @@ ion-icon {
                             $proj_raw = ucwords($proj_raw);
                             $proj_html = htmlspecialchars($proj_raw, ENT_QUOTES);
                             if ($proj_html === '') $proj_html = '-';
-                    
+                            
+                            $project_id = null;
+                            if (!empty($project_mapping) && !empty($booking['project']) && isset($project_mapping[$booking['project']])) {
+                                $project_id = $project_mapping[$booking['project']];
+                            }
                             // --- pass everything into the template ---
                             echo Wo_LoadManagePage('clients/booking_form_template', [
                                 'p' => $p,
@@ -441,18 +445,45 @@ ion-icon {
                       <td><?= htmlspecialchars($booking['katha']) ?></td>
                       <td><?= htmlspecialchars($booking['plot']) ?></td>
                       <td><?= htmlspecialchars($booking['road']) ?></td>
-                      <td><?= htmlspecialchars($booking['file_num']) ?></td>
+                      <td><?= htmlspecialchars($p['file_num']) ?></td>
                       <td><?= htmlspecialchars(date('d M Y', $p['time'])) ?></td>
-                      <td>
-                        <?php
-                          $sr = (string)($booking['status'] ?? '');
-                          if ($sr === '1') echo '<span class="badge bg-info"> Available </span>';
-                          elseif ($sr === '2') echo '<span class="badge bg-success"> Sold </span>';
-                          elseif ($sr === '3') echo '<span class="badge bg-success"> Complete </span>';
-                          elseif ($sr === '4') echo '<span class="badge bg-danger"> Canceled </span>';
-                          else echo '<span class="badge bg-info"> Available </span>';
-                        ?>
-                      </td>
+                        <td>
+                          <?php
+                            // status may be present on $p or $booking — check both
+                            $status = (string)( $p['status'] ?? ($booking['status'] ?? '') );
+                            // cancel date may be a timestamp or a string; check both sources
+                            $raw_cancel = $p['cancel_date'] ?? ($booking['cancel_date'] ?? '');
+                        
+                            // helper to format cancel date (handles timestamp or parseable string)
+                            $formatted_cancel = '';
+                            if ($raw_cancel !== '' && $raw_cancel !== null) {
+                                if (is_numeric($raw_cancel)) {
+                                    $ts = (int)$raw_cancel;
+                                    // skip zero/invalid timestamps
+                                    if ($ts > 0) $formatted_cancel = date('d M Y', $ts);
+                                } else {
+                                    $ts2 = strtotime($raw_cancel);
+                                    if ($ts2 !== false && $ts2 > 0) $formatted_cancel = date('d M Y', $ts2);
+                                }
+                            }
+                        
+                            if ($status === '1') {
+                                echo '<span class="badge bg-info"> Available </span>';
+                            } elseif ($status === '2') {
+                                echo '<span class="badge bg-success"> Sold </span>';
+                            } elseif ($status === '3') {
+                                echo '<span class="badge bg-success"> Complete </span>';
+                            } elseif ($status === '4') {
+                                echo '<span class="badge bg-danger"> Canceled </span>';
+                                if ($formatted_cancel !== '') {
+                                    echo '<br><small class="text-muted">Cancelled on: ' . htmlspecialchars($formatted_cancel) . '</small>';
+                                }
+                            } else {
+                                echo '<span class="badge bg-info"> Available </span>';
+                            }
+                          ?>
+                        </td>
+
                       <td class="text-center">
                         <!-- Enhanced Dropdown Actions -->
                         <div class="dropdown">
@@ -462,38 +493,39 @@ ion-icon {
                           </button>
                           <ul class="dropdown-menu dropdown-menu-end shadow-sm" aria-labelledby="dropdownMenuButton<?= (int)$p['id'] ?>">
                             <li>
-                              <a class="dropdown-item print-booking-form" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                              <a class="dropdown-item print-booking-form" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
                                 <i class="lni lni-printer me-2 text-primary"></i> Print Booking Form
                               </a>
                             </li>
                             <li>
-                              <a class="dropdown-item change_plot_btn" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
-                                <i class="lni lni-shuffle me-2 text-warning"></i> Change Plot
-                              </a>
-                            </li>
-                            <li>
-                              <a class="dropdown-item manage-schedule" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                              <a class="dropdown-item manage-schedule" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
                                 <i class="lni lni-calendar me-2 text-primary"></i> Manage Payment Schedule
                               </a>
                             </li>
                             <li>
-                              <a class="dropdown-item print_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                              <a class="dropdown-item print_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
                                 <i class="lni lni-calendar me-2 text-primary"></i> Print Payment Schedule
                               </a>
                             </li>
                             <li>
-                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="name">
                                 <i class="lni lni-shuffle me-2 text-warning"></i> Transfer Ownership
                               </a>
                             </li>
                             <li>
-                              <a class="dropdown-item manage-refund" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="plot">
+                                <i class="lni lni-shuffle me-2 text-warning"></i> Change Plot
+                              </a>
+                            </li>
+                            
+                            <li>
+                              <a class="dropdown-item manage-refund" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
                                 <i class="lni lni-money-location me-2 text-danger"></i> Manage Refund
                               </a>
                             </li>
                             <li><hr class="dropdown-divider"></li>
                             <li>
-                              <a class="dropdown-item cancel-purchase" href="javascript:;" data-id="<?= (int)$p['id'] ?>">
+                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="cancel">
                                 <i class="lni lni-close me-2 text-danger"></i> Cancel Purchase
                               </a>
                             </li>
@@ -733,8 +765,6 @@ ion-icon {
       <?= Wo_LoadManagePage('clients/payment_schedule_modal') ?>
       <?= Wo_LoadManagePage('clients/transfer_modal') ?>
       <?= Wo_LoadManagePage('clients/refund_modal') ?>
-      <?= Wo_LoadManagePage('clients/cancel_purchase_modal') ?>
-      <?= Wo_LoadManagePage('clients/change_plot_modal') ?>
 
 <!-- Core JavaScript for View Client -->
 <script>
@@ -914,8 +944,10 @@ jQuery(function($){
   $(document).off('click', '.transfer-plot').on('click', '.transfer-plot', function(e){
     e.preventDefault();
     var id = $(this).data('id');
+    var tab = $(this).data('tab');
     if (!id) { alert('Purchase id missing'); return; }
-    window.openTransferModal(id);
+    if (!tab) { tab = 'name_transfer'; }
+    window.openTransferModal(id, tab);
   });
 
   $(document).off('click', '.manage-refund').on('click', '.manage-refund', function(e){
