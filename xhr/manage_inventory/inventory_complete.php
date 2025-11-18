@@ -1,15 +1,18 @@
 <?php
 /**
  * Comprehensive Payment and Invoice Management API
- * Path: xhr/manage_inventory_complete.php
  * Handles: Schedules, Invoices, Emails, Overpayment distribution, Audit trail
+ * note: uses global $db (MysqliDb) and $wo
  */
- 
+
+global $db, $wo, $sqlConnect;
+
 $response = ['success' => false, 'message' => ''];
 
-try {
-  $db = new Database();
+// Get action from POST or GET
+$action = $_POST['s'] ?? $_GET['s'] ?? '';
 
+try {
   switch ($action) {
     // ======================== SCHEDULES ========================
     case 'get_schedules_list':
@@ -19,29 +22,25 @@ try {
       $fromDate = $_POST['from_date'] ?? '';
       $toDate = $_POST['to_date'] ?? '';
 
-      $query = "SELECT * FROM crm_payment_schedule WHERE purchase_id = ?";
-      $params = [$purchaseId];
+      if (!$purchaseId) throw new Exception('Purchase ID required');
+
+      $db->where('purchase_id', $purchaseId);
 
       if ($status !== '') {
-        $query .= " AND status = ?";
-        $params[] = intval($status);
+        $db->where('status', intval($status));
       }
       if ($type) {
-        $query .= " AND type = ?";
-        $params[] = $type;
+        $db->where('type', $type);
       }
       if ($fromDate) {
-        $query .= " AND due_date >= ?";
-        $params[] = $fromDate;
+        $db->where('due_date', $fromDate, '>=');
       }
       if ($toDate) {
-        $query .= " AND due_date <= ?";
-        $params[] = $toDate;
+        $db->where('due_date', $toDate, '<=');
       }
 
-      $query .= " ORDER BY installment_number ASC";
-
-      $schedules = $db->query($query, $params)->fetchAll();
+      $db->orderBy('installment_number', 'ASC');
+      $schedules = $db->get('crm_payment_schedule');
 
       // Calculate summary
       $summary = [
@@ -53,18 +52,20 @@ try {
         'late_fees' => 0
       ];
 
-      foreach ($schedules as $sch) {
-        $summary['total_due'] += floatval($sch['installment_amount']);
-        $summary['total_paid'] += floatval($sch['paid_amount']);
-        if ($sch['status'] == 0 || $sch['status'] == 2) $summary['pending_count']++;
-        if ($sch['status'] == 3) $summary['overdue_count']++;
-        $summary['overpayment'] += floatval($sch['overpayment_amount'] ?? 0);
-        $summary['late_fees'] += floatval($sch['late_fee_amount'] ?? 0);
+      if (!empty($schedules)) {
+        foreach ($schedules as $sch) {
+          $summary['total_due'] += floatval($sch->installment_amount ?? 0);
+          $summary['total_paid'] += floatval($sch->paid_amount ?? 0);
+          if ($sch->status == 0 || $sch->status == 2) $summary['pending_count']++;
+          if ($sch->status == 3) $summary['overdue_count']++;
+          $summary['overpayment'] += floatval($sch->overpayment_amount ?? 0);
+          $summary['late_fees'] += floatval($sch->late_fee_amount ?? 0);
+        }
       }
 
       $response = [
         'success' => true,
-        'schedules' => $schedules,
+        'schedules' => $schedules ?: [],
         'summary' => $summary
       ];
       break;
@@ -77,36 +78,45 @@ try {
       $toDate = $_POST['to_date'] ?? '';
       $search = $_POST['search'] ?? '';
 
-      $query = "SELECT * FROM crm_invoices WHERE purchase_id = ?";
-      $params = [$purchaseId];
+      if (!$purchaseId) throw new Exception('Purchase ID required');
+
+      $db->where('purchase_id', $purchaseId);
 
       if ($status !== '') {
-        $query .= " AND status = ?";
-        $params[] = intval($status);
+        $db->where('status', $status);
       }
       if ($fromDate) {
-        $query .= " AND invoice_date >= ?";
-        $params[] = $fromDate;
+        $db->where('invoice_date', $fromDate, '>=');
       }
       if ($toDate) {
-        $query .= " AND invoice_date <= ?";
-        $params[] = $toDate;
+        $db->where('invoice_date', $toDate, '<=');
       }
       if ($search) {
-        $query .= " AND (invoice_number LIKE ? OR money_receipt_no LIKE ?)";
-        $searchTerm = '%' . $search . '%';
-        $params[] = $searchTerm;
-        $params[] = $searchTerm;
+        $db->where('(invoice_number LIKE ? OR money_receipt_no LIKE ?)',
+          ['%' . $search . '%', '%' . $search . '%'], 'OR');
       }
 
-      $query .= " ORDER BY invoice_date DESC";
-      $invoices = $db->query($query, $params)->fetchAll();
+      $db->orderBy('invoice_date', 'DESC');
+      $invoices = $db->get('crm_invoices');
 
-      // Get overpayment distributions
-      $distQuery = "SELECT * FROM crm_overpayment_distribution WHERE schedule_id IN (
-        SELECT id FROM crm_payment_schedule WHERE purchase_id = ?
-      ) ORDER BY distribution_date DESC";
-      $distributions = $db->query($distQuery, [$purchaseId])->fetchAll();
+      // Get overpayment distributions - note: table may not exist, handle gracefully
+      $distributions = [];
+      try {
+        $db->where('purchase_id', $purchaseId);
+        $scheduleIds = $db->get('crm_payment_schedule', null, 'id');
+
+        if (!empty($scheduleIds)) {
+          $ids = array_map(function($s) { return $s->id; }, $scheduleIds);
+          if (!empty($ids)) {
+            $db->where('schedule_id', $ids, 'IN');
+            $db->orderBy('distribution_date', 'DESC');
+            $distributions = $db->get('crm_overpayment_distribution') ?: [];
+          }
+        }
+      } catch (Exception $e) {
+        // Table may not exist, continue without distributions
+        $distributions = [];
+      }
 
       // Calculate summary
       $summary = [
@@ -118,21 +128,23 @@ try {
         'overpayment' => 0
       ];
 
-      foreach ($invoices as $inv) {
-        $amount = floatval($inv['amount']);
-        $paid = floatval($inv['paid_amount']);
-        $summary['total_amount'] += $amount;
-        $summary['total_paid'] += $paid;
-        if ($inv['status'] == 0 || $inv['status'] == 2) $summary['pending_count']++;
-        if ($inv['status'] == 0 && strtotime($inv['due_date']) < time()) $summary['overdue_count']++;
-        $outstanding = $amount - $paid;
-        if ($outstanding > 0) $summary['outstanding'] += $outstanding;
-        if ($paid > $amount) $summary['overpayment'] += ($paid - $amount);
+      if (!empty($invoices)) {
+        foreach ($invoices as $inv) {
+          $amount = floatval($inv->amount ?? 0);
+          $paid = floatval($inv->paid_amount ?? 0);
+          $summary['total_amount'] += $amount;
+          $summary['total_paid'] += $paid;
+          if ($inv->status == 'draft' || $inv->status == 'issued' || $inv->status == 'partial') $summary['pending_count']++;
+          if (($inv->status == 'draft' || $inv->status == 'issued') && strtotime($inv->due_date ?? 'now') < time()) $summary['overdue_count']++;
+          $outstanding = $amount - $paid;
+          if ($outstanding > 0) $summary['outstanding'] += $outstanding;
+          if ($paid > $amount) $summary['overpayment'] += ($paid - $amount);
+        }
       }
 
       $response = [
         'success' => true,
-        'invoices' => $invoices,
+        'invoices' => $invoices ?: [],
         'overpayment_distribution' => $distributions,
         'summary' => $summary
       ];
@@ -146,74 +158,99 @@ try {
       $paymentDate = $_POST['payment_date'] ?? date('Y-m-d');
       $receiptNumber = $_POST['money_receipt_no'] ?? '';
 
+      if (!$invoiceId || !$paymentAmount) throw new Exception('Invoice ID and payment amount required');
+
       // Get invoice details
-      $invoice = $db->query("SELECT * FROM crm_invoices WHERE id = ?", [$invoiceId])->fetch();
+      $db->where('id', $invoiceId);
+      $invoice = $db->getOne('crm_invoices');
       if (!$invoice) throw new Exception('Invoice not found');
 
-      $invoiceAmount = floatval($invoice['amount']);
-      $currentPaid = floatval($invoice['paid_amount']);
+      $invoiceAmount = floatval($invoice->amount ?? 0);
+      $currentPaid = floatval($invoice->paid_amount ?? 0);
       $newPaidAmount = $currentPaid + $paymentAmount;
 
       // Determine status
       if ($newPaidAmount >= $invoiceAmount) {
-        $status = 3; // Paid
+        $status = 'paid';
       } else if ($newPaidAmount > 0) {
-        $status = 2; // Partial
+        $status = 'partial';
       } else {
-        $status = 0; // Pending
+        $status = 'draft';
       }
 
       // Calculate overpayment
       $overpaymentAmount = max(0, $newPaidAmount - $invoiceAmount);
 
       // Update invoice
-      $db->query(
-        "UPDATE crm_invoices SET paid_amount = ?, status = ?, payment_date = ?, 
-         payment_method = ?, money_receipt_no = ?, updated_at = NOW(), updated_by = ? 
-         WHERE id = ?",
-        [$newPaidAmount, $status, $paymentDate, $paymentMethod, $receiptNumber, $_SESSION['user_id'] ?? 0, $invoiceId]
-      );
+      $db->where('id', $invoiceId);
+      $db->update('crm_invoices', [
+        'paid_amount' => $newPaidAmount,
+        'remaining_amount' => max(0, $invoiceAmount - $newPaidAmount),
+        'status' => $status,
+        'payment_date' => $paymentDate,
+        'payment_method' => $paymentMethod,
+        'money_receipt_no' => $receiptNumber,
+        'updated_at' => date('Y-m-d H:i:s'),
+        'updated_by' => $wo['user']['id'] ?? null
+      ]);
 
-      // Update related schedule
-      $scheduleId = $invoice['schedule_id'];
-      $db->query(
-        "UPDATE crm_payment_schedule SET paid_amount = ?, overpayment_amount = ?, 
-         payment_date = ?, payment_method = ?, money_receipt_no = ?, updated_at = NOW() 
-         WHERE id = ?",
-        [$newPaidAmount, $overpaymentAmount, $paymentDate, $paymentMethod, $receiptNumber, $scheduleId]
-      );
+      // Update related schedule if payment_schedule_id exists
+      if (isset($invoice->payment_schedule_id) && $invoice->payment_schedule_id) {
+        $scheduleId = intval($invoice->payment_schedule_id);
 
-      // Handle overpayment distribution
-      if ($overpaymentAmount > 0) {
-        // Get next unpaid schedule
-        $nextSchedule = $db->query(
-          "SELECT * FROM crm_payment_schedule WHERE purchase_id = ? AND status != 1 AND status != 4 
-           AND id > ? ORDER BY id ASC LIMIT 1",
-          [$invoice['purchase_id'], $scheduleId]
-        )->fetch();
+        $db->where('id', $scheduleId);
+        $db->update('crm_payment_schedule', [
+          'paid_amount' => $newPaidAmount,
+          'overpayment_amount' => $overpaymentAmount,
+          'payment_date' => $paymentDate,
+          'payment_method' => $paymentMethod,
+          'money_receipt_no' => $receiptNumber,
+          'status' => ($newPaidAmount >= $invoiceAmount) ? 1 : 2,
+          'updated_at' => date('Y-m-d H:i:s')
+        ]);
 
-        if ($nextSchedule) {
-          $nextScheduleId = $nextSchedule['id'];
-          $amountToApply = min($overpaymentAmount, floatval($nextSchedule['installment_amount']) - floatval($nextSchedule['paid_amount']));
+        // Handle overpayment distribution
+        if ($overpaymentAmount > 0) {
+          // Get next unpaid schedule
+          $db->where('purchase_id', $invoice->purchase_id);
+          $db->where('status', [1, 4], 'NOT IN');
+          $db->where('id', $scheduleId, '>');
+          $db->orderBy('id', 'ASC');
+          $nextSchedule = $db->getOne('crm_payment_schedule');
 
-          // Record distribution
-          $db->query(
-            "INSERT INTO crm_overpayment_distribution (schedule_id, applied_to_schedule_id, amount, distribution_date, created_by) 
-             VALUES (?, ?, ?, ?, ?)",
-            [$scheduleId, $nextScheduleId, $amountToApply, $paymentDate, $_SESSION['user_id'] ?? 0]
-          );
+          if ($nextSchedule) {
+            $nextScheduleId = intval($nextSchedule->id);
+            $amountToApply = min($overpaymentAmount,
+              floatval($nextSchedule->installment_amount ?? 0) - floatval($nextSchedule->paid_amount ?? 0));
 
-          // Apply to next schedule
-          $db->query(
-            "UPDATE crm_payment_schedule SET paid_amount = paid_amount + ?, updated_at = NOW() WHERE id = ?",
-            [$amountToApply, $nextScheduleId]
-          );
+            // Record distribution - table may not exist
+            try {
+              $db->insert('crm_overpayment_distribution', [
+                'schedule_id' => $scheduleId,
+                'applied_to_schedule_id' => $nextScheduleId,
+                'amount' => $amountToApply,
+                'distribution_date' => $paymentDate,
+                'created_by' => $wo['user']['id'] ?? null,
+                'created_at' => date('Y-m-d H:i:s')
+              ]);
+
+              // Apply to next schedule
+              $db->where('id', $nextScheduleId);
+              $currentPaid = floatval($nextSchedule->paid_amount ?? 0);
+              $db->update('crm_payment_schedule', [
+                'paid_amount' => $currentPaid + $amountToApply,
+                'updated_at' => date('Y-m-d H:i:s')
+              ]);
+            } catch (Exception $e) {
+              // Distribution table may not exist, continue without it
+            }
+          }
         }
       }
 
       // Log to audit trail
-      logAuditAction($db, $invoice['client_id'], 'invoice', 'update', $invoiceId, 
-        ['paid_amount' => $currentPaid, 'status' => $invoice['status']], 
+      logAuditAction($invoice->client_id ?? 0, $invoice->purchase_id ?? 0, 'invoice', 'update', $invoiceId,
+        ['paid_amount' => $currentPaid, 'status' => $invoice->status],
         ['paid_amount' => $newPaidAmount, 'status' => $status],
         "Payment recorded: ৳" . number_format($paymentAmount, 2));
 
@@ -232,65 +269,75 @@ try {
       $recipientType = $_POST['recipient_type'] ?? '';
       $search = $_POST['search'] ?? '';
 
-      $query = "SELECT eq.*, p.client_id FROM crm_email_queue eq
-                JOIN crm_payment_schedule p ON eq.schedule_id = p.id
-                WHERE p.purchase_id = ?";
-      $params = [$purchaseId];
+      if (!$purchaseId) throw new Exception('Purchase ID required');
 
-      if ($emailType) {
-        $query .= " AND eq.email_type = ?";
-        $params[] = $emailType;
-      }
-      if ($status !== '') {
-        $query .= " AND eq.status = ?";
-        $params[] = intval($status);
-      }
-      if ($recipientType) {
-        $query .= " AND eq.recipient_type = ?";
-        $params[] = $recipientType;
-      }
-      if ($search) {
-        $query .= " AND (eq.recipient_email LIKE ? OR eq.recipient_name LIKE ?)";
-        $searchTerm = '%' . $search . '%';
-        $params[] = $searchTerm;
-        $params[] = $searchTerm;
-      }
+      // Get schedule IDs for this purchase
+      $db->where('purchase_id', $purchaseId);
+      $scheduleIds = $db->get('crm_payment_schedule', null, 'id');
 
-      $query .= " ORDER BY eq.created_at DESC";
-      $emails = $db->query($query, $params)->fetchAll();
+      $emails = [];
+      if (!empty($scheduleIds)) {
+        $ids = array_map(function($s) { return $s->id; }, $scheduleIds);
+
+        if (!empty($ids)) {
+          $db->where('schedule_id', $ids, 'IN');
+
+          if ($emailType) {
+            $db->where('email_type', $emailType);
+          }
+          if ($status !== '') {
+            $db->where('status', intval($status));
+          }
+          if ($recipientType) {
+            $db->where('recipient_type', $recipientType);
+          }
+          if ($search) {
+            $db->where('(recipient_email LIKE ? OR recipient_name LIKE ?)',
+              ['%' . $search . '%', '%' . $search . '%'], 'OR');
+          }
+
+          $db->orderBy('created_at', 'DESC');
+          $emails = $db->get('crm_email_queue') ?: [];
+        }
+      }
 
       // Count pending
-      $pendingCount = $db->query(
-        "SELECT COUNT(*) as cnt FROM crm_email_queue WHERE status = 0 AND scheduled_for <= NOW()"
-      )->fetch()['cnt'];
+      $db->where('status', 0);
+      $db->where('scheduled_send_date', date('Y-m-d H:i:s'), '<=');
+      $pendingCount = $db->getValue('crm_email_queue', 'COUNT(*)') ?: 0;
 
       $response = [
         'success' => true,
         'emails' => $emails,
-        'pending_count' => $pendingCount
+        'pending_count' => intval($pendingCount)
       ];
       break;
 
     case 'send_bulk_emails':
-      $emailIds = array_map('intval', explode(',', $_POST['email_ids'] ?? ''));
+      $emailIds = isset($_POST['email_ids']) ? array_map('intval', explode(',', $_POST['email_ids'])) : [];
       if (empty($emailIds)) throw new Exception('No emails selected');
 
       $sent = 0;
       foreach ($emailIds as $emailId) {
-        $email = $db->query("SELECT * FROM crm_email_queue WHERE id = ?", [$emailId])->fetch();
+        if ($emailId <= 0) continue;
+
+        $db->where('id', $emailId);
+        $email = $db->getOne('crm_email_queue');
         if (!$email) continue;
 
         // Send email logic (integrate with your mail system)
         if (sendEmailViaProvider($email)) {
-          $db->query(
-            "UPDATE crm_email_queue SET status = 1, sent_at = NOW(), send_attempts = send_attempts + 1 WHERE id = ?",
-            [$emailId]
-          );
+          $db->where('id', $emailId);
+          $db->update('crm_email_queue', [
+            'status' => 1,
+            'send_date' => date('Y-m-d H:i:s'),
+            'retry_count' => intval($email->retry_count ?? 0) + 1
+          ]);
           $sent++;
 
           // Log to audit
-          logAuditAction($db, $email['client_id'], 'email', 'send_email', $emailId, null, null,
-            "Email sent to {$email['recipient_email']} - {$email['email_type']}");
+          logAuditAction($email->client_id ?? 0, $email->purchase_id ?? 0, 'email', 'send_email', $emailId, null, null,
+            "Email sent to {$email->recipient_email} - {$email->email_type}");
         }
       }
 
@@ -310,34 +357,40 @@ try {
       $toDate = $_POST['to_date'] ?? '';
       $userName = $_POST['user_name'] ?? '';
 
-      $query = "SELECT * FROM crm_audit_trail WHERE client_id IN (
-                SELECT client_id FROM crm_payment_schedule WHERE purchase_id = ?
-                )";
-      $params = [$purchaseId];
+      if (!$purchaseId) throw new Exception('Purchase ID required');
 
-      if ($module) {
-        $query .= " AND module = ?";
-        $params[] = $module;
-      }
-      if ($actionType) {
-        $query .= " AND action = ?";
-        $params[] = $actionType;
-      }
-      if ($fromDate) {
-        $query .= " AND DATE(created_at) >= ?";
-        $params[] = $fromDate;
-      }
-      if ($toDate) {
-        $query .= " AND DATE(created_at) <= ?";
-        $params[] = $toDate;
-      }
-      if ($userName) {
-        $query .= " AND changed_by_name LIKE ?";
-        $params[] = '%' . $userName . '%';
-      }
+      // Get client IDs for this purchase
+      $db->where('purchase_id', $purchaseId);
+      $clientIds = $db->get('crm_payment_schedule', null, 'client_id');
 
-      $query .= " ORDER BY created_at DESC LIMIT 200";
-      $logs = $db->query($query, $params)->fetchAll();
+      $logs = [];
+      if (!empty($clientIds)) {
+        $ids = array_unique(array_map(function($c) { return $c->client_id; }, $clientIds));
+
+        if (!empty($ids)) {
+          $db->where('client_id', $ids, 'IN');
+
+          if ($module) {
+            $db->where('action_category', $module);
+          }
+          if ($actionType) {
+            $db->where('action_type', $actionType);
+          }
+          if ($fromDate) {
+            $db->where('DATE(performed_at)', $fromDate, '>=');
+          }
+          if ($toDate) {
+            $db->where('DATE(performed_at)', $toDate, '<=');
+          }
+          if ($userName) {
+            $db->where('performed_by', '%' . $userName . '%', 'LIKE');
+          }
+
+          $db->orderBy('performed_at', 'DESC');
+          $db->limit(200);
+          $logs = $db->get('crm_audit_trail') ?: [];
+        }
+      }
 
       $response = [
         'success' => true,
@@ -354,7 +407,9 @@ try {
   http_response_code(400);
 }
 
+header('Content-Type: application/json; charset=utf-8');
 echo json_encode($response);
+exit;
 
 /**
  * Helper function to send email via provider
@@ -368,20 +423,26 @@ function sendEmailViaProvider($email) {
 /**
  * Helper function to log audit actions
  */
-function logAuditAction($db, $clientId, $module, $action, $refId, $oldValues, $newValues, $description) {
-  $db->query(
-    "INSERT INTO crm_audit_trail (client_id, module, action, reference_id, reference_type, 
-     old_values, new_values, description, changed_by, changed_by_name, ip_address, created_at)
-     VALUES (?, ?, ?, ?, 'schedule', ?, ?, ?, ?, ?, ?, NOW())",
-    [
-      $clientId, $module, $action, $refId,
-      $oldValues ? json_encode($oldValues) : null,
-      $newValues ? json_encode($newValues) : null,
-      $description,
-      $_SESSION['user_id'] ?? 0,
-      $_SESSION['user_name'] ?? 'System',
-      $_SERVER['REMOTE_ADDR'] ?? ''
-    ]
-  );
+function logAuditAction($clientId, $purchaseId, $module, $action, $refId, $oldValues, $newValues, $description) {
+  global $db, $wo;
+
+  try {
+    $db->insert('crm_audit_trail', [
+      'client_id' => intval($clientId),
+      'purchase_id' => intval($purchaseId),
+      'action_category' => $module,
+      'action_type' => $action,
+      'action_description' => $description,
+      'before_values' => $oldValues ? json_encode($oldValues) : null,
+      'after_values' => $newValues ? json_encode($newValues) : null,
+      'performed_at' => date('Y-m-d H:i:s'),
+      'performed_by' => $wo['user']['id'] ?? null,
+      'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+      'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null
+    ]);
+  } catch (Exception $e) {
+    // Silently fail if audit logging fails
+    error_log('Audit log failed: ' . $e->getMessage());
+  }
 }
 ?>

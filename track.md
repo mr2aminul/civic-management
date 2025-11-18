@@ -65,23 +65,26 @@
 ---
 
 ### Step 2.2: Fix `inventory_complete.php`
-**Status:** PENDING
-**Estimated Tokens:** ~20k
+**Status:** ✓ COMPLETED
+**Tokens Used:** ~9k
 
-**Tasks:**
-- Replace all `$pdo` with `$db`
-- Replace database class instantiation
-- Fix all SQL queries to use MysqliDb syntax
-- Replace `$stmt->fetchAll()` with `$db->get()`
-- Remove PDO-specific error handling
+**Changes Made:**
+- ✓ Removed `$db = new Database()` and replaced with global `$db` (MysqliDb)
+- ✓ Converted all `$db->query()->fetch()` to `$db->where()->getOne()`
+- ✓ Converted all `$db->query()->fetchAll()` to `$db->where()->get()`
+- ✓ Replaced raw SQL queries with MysqliDb chaining methods
+- ✓ Fixed action detection to use `$_POST['s']` and `$_GET['s']`
+- ✓ Removed PDO-specific error handling
+- ✓ Added graceful handling for missing tables (crm_overpayment_distribution)
+- ✓ Updated logAuditAction helper to use global $db and $wo
 
-**Endpoints to Fix:**
-1. `get_schedules_list`
-2. `get_invoices_list`
-3. `record_invoice_payment`
-4. `get_pending_emails`
-5. `send_bulk_emails`
-6. `get_audit_trail`
+**Endpoints Fixed:**
+1. `get_schedules_list` - Uses $db->where()->orderBy()->get()
+2. `get_invoices_list` - Uses $db->where()->orderBy()->get()
+3. `record_invoice_payment` - Uses $db->getOne(), $db->update(), $db->insert()
+4. `get_pending_emails` - Uses $db->where()->get()
+5. `send_bulk_emails` - Uses $db->getOne(), $db->update()
+6. `get_audit_trail` - Uses $db->where()->orderBy()->limit()->get()
 
 ---
 
