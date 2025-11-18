@@ -90,21 +90,27 @@
 ---
 
 ### Step 2.3: Fix `inventory_invoice_system.php`
-**Status:** PENDING
-**Estimated Tokens:** ~18k
+**Status:** ✓ COMPLETED
+**Tokens Used:** ~8k
 
-**Tasks:**
-- Replace `$pdo` with `$db`
-- Fix transaction handling
-- Replace prepared statements with MysqliDb methods
-- Update audit logging helper function
+**Changes Made:**
+- ✓ Replaced all `$pdo` with `$db` (MysqliDb)
+- ✓ Fixed action detection to use `$_POST['s']` and `$_GET['s']`
+- ✓ Converted `$pdo->query()` to `$db->where()->getOne()` and `$db->get()`
+- ✓ Converted `$pdo->prepare()->execute()` to `$db->insert()` and `$db->update()`
+- ✓ Replaced `$pdo->beginTransaction()` with `mysqli_begin_transaction($sqlConnect)`
+- ✓ Replaced `$pdo->commit()` with `mysqli_commit($sqlConnect)`
+- ✓ Replaced `$pdo->rollBack()` with `mysqli_rollback($sqlConnect)`
+- ✓ Updated `logAuditTrail()` helper to use `$db->insert()`
+- ✓ Added graceful handling for missing overpayment_credits table
+- ✓ Fixed all 5 endpoints to use MysqliDb methods
 
-**Endpoints to Fix:**
-1. `create_invoice`
-2. `get_invoices`
-3. `record_payment` (complex overpayment logic)
-4. `get_credits`
-5. `apply_credit`
+**Endpoints Fixed:**
+1. `create_invoice` - Uses $db->where(), $db->insert(), $db->getValue()
+2. `get_invoices` - Uses $db->where()->orderBy()->get()
+3. `record_payment` - Uses mysqli transactions, $db->getOne(), $db->update(), $db->insert()
+4. `get_credits` - Uses $db->where()->orderBy()->get()
+5. `apply_credit` - Uses mysqli transactions, $db->getOne(), $db->update()
 
 ---
 
@@ -281,9 +287,9 @@
 | Phase | Step | Est. Tokens | Status |
 |-------|------|-------------|--------|
 | 1 | 1.1 | 5k | ✓ COMPLETED |
-| 2 | 2.1 | 15k | PENDING |
-| 2 | 2.2 | 20k | PENDING |
-| 2 | 2.3 | 18k | PENDING |
+| 2 | 2.1 | 12k | ✓ COMPLETED |
+| 2 | 2.2 | 9k | ✓ COMPLETED |
+| 2 | 2.3 | 8k | ✓ COMPLETED |
 | 2 | 2.4 | 16k | PENDING |
 | 3 | 3.1 | 12k | PENDING |
 | 3 | 3.2 | 10k | PENDING |
@@ -311,11 +317,11 @@
 
 ## Current Status
 
-**Next Step:** Step 2.1 - Fix `inventory_audit_email.php`
+**Next Step:** Step 2.4 - Fix `inventory_merge_purchase.php`
 
 **Command to proceed:**
 ```
-Complete Step 2.1
+Complete Step 2.4
 ```
 
 ---

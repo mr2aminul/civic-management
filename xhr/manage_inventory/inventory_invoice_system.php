@@ -2,12 +2,13 @@
 /**
  * Complete Invoice System API
  * Handles invoices, money receipts, overpayment credits, and payment schedule updates
+ * Note: Uses global $db (MysqliDb) and $wo
  */
 
 header('Content-Type: application/json');
-session_start();
+global $db, $wo, $sqlConnect;
 
-
+$s = isset($_GET['s']) ? trim($_GET['s']) : (isset($_POST['s']) ? trim($_POST['s']) : '');
 $user_id = $wo['user']['user_id'] ?? null;
 $client_id = intval($_POST['client_id'] ?? $_GET['client_id'] ?? 0);
 $purchase_id = intval($_POST['purchase_id'] ?? $_GET['purchase_id'] ?? 0);
@@ -18,38 +19,23 @@ if (!$user_id) {
 }
 
 try {
-    switch ($action) {
-        // ===================================
-        // 1. CREATE INVOICE
-        // ===================================
+    switch ($s) {
         case 'create_invoice':
             createInvoice($client_id, $purchase_id);
             break;
 
-        // ===================================
-        // 2. GET INVOICES FOR CLIENT/PURCHASE
-        // ===================================
         case 'get_invoices':
             getInvoices($client_id, $purchase_id);
             break;
 
-        // ===================================
-        // 3. RECORD PAYMENT (CREATE MONEY RECEIPT + UPDATE SCHEDULE + HANDLE OVERPAYMENT)
-        // ===================================
         case 'record_payment':
             recordPayment($client_id, $purchase_id, $user_id);
             break;
 
-        // ===================================
-        // 4. GET OVERPAYMENT CREDITS
-        // ===================================
         case 'get_credits':
             getOverpaymentCredits($client_id, $purchase_id);
             break;
 
-        // ===================================
-        // 5. APPLY CREDIT TO SCHEDULE
-        // ===================================
         case 'apply_credit':
             applyCredit($user_id);
             break;
@@ -67,7 +53,7 @@ try {
 // FUNCTION: Create Invoice
 // ========================================
 function createInvoice($client_id, $purchase_id) {
-    global $pdo, $user_id;
+    global $db, $user_id, $wo;
 
     if (!$client_id || !$purchase_id) {
         throw new Exception('Client ID and Purchase ID required');
@@ -77,7 +63,7 @@ function createInvoice($client_id, $purchase_id) {
     $description = trim($_POST['description'] ?? '');
     $amount = floatval($_POST['amount'] ?? 0);
     $due_date = trim($_POST['due_date'] ?? date('Y-m-d'));
-    $invoice_type = trim($_POST['invoice_type'] ?? 'installment'); // booking_money, down_payment, installment
+    $invoice_type = trim($_POST['invoice_type'] ?? 'installment');
 
     if ($amount <= 0) {
         throw new Exception('Invalid amount');
@@ -85,34 +71,38 @@ function createInvoice($client_id, $purchase_id) {
 
     // Generate invoice number
     $today = date('Y-m-d');
-    $count = $pdo->query("SELECT COUNT(*) FROM crm_invoices WHERE DATE(created_at) = '$today'")->fetchColumn();
+    $count = (int)$db->where('DATE(created_at)', $today, '=')->getValue('crm_invoices', 'COUNT(*) as cnt');
     $invoice_number = 'INV-' . date('Ym') . '-' . str_pad($count + 1, 5, '0', STR_PAD_LEFT);
 
-    $stmt = $pdo->prepare("
-        INSERT INTO crm_invoices 
-        (invoice_number, purchase_id, client_id, invoice_type, payment_schedule_id, description, 
-         invoice_date, due_date, amount, paid_amount, remaining_amount, status, created_by, updated_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'draft', ?, ?)
-    ");
+    $invoice_data = [
+        'invoice_number' => $invoice_number,
+        'purchase_id' => $purchase_id,
+        'client_id' => $client_id,
+        'invoice_type' => $invoice_type,
+        'payment_schedule_id' => $payment_schedule_id ?: null,
+        'description' => $description,
+        'invoice_date' => $today,
+        'due_date' => $due_date,
+        'amount' => $amount,
+        'paid_amount' => 0,
+        'remaining_amount' => $amount,
+        'status' => 'draft',
+        'created_by' => $wo['user']['id'] ?? null,
+        'updated_by' => $wo['user']['id'] ?? null
+    ];
 
-    $stmt->execute([
-        $invoice_number, $purchase_id, $client_id, $invoice_type, 
-        $payment_schedule_id ?: null, $description, $today, $due_date, 
-        $amount, $amount, $user_id, $user_id
-    ]);
-
-    $invoice_id = $pdo->lastInsertId();
+    $invoice_id = $db->insert('crm_invoices', $invoice_data);
 
     // Log audit trail
-    logAuditTrail($client_id, $purchase_id, 'invoice_create', 'invoice', 
-        "Invoice created: $invoice_number for $" . number_format($amount, 2), 
-        null, json_encode(['invoice_id' => $invoice_id, 'amount' => $amount]), 
-        'crm_invoices', $user_id);
+    logAuditTrail($client_id, $purchase_id, 'invoice_create', 'invoice',
+        "Invoice created: $invoice_number for $" . number_format($amount, 2),
+        null, json_encode(['invoice_id' => $invoice_id, 'amount' => $amount]),
+        'crm_invoices', $wo['user']['id'] ?? null);
 
     echo json_encode([
         'success' => true,
         'message' => 'Invoice created successfully',
-        'invoice_id' => $invoice_id,
+        'invoice_id' => (int)$invoice_id,
         'invoice_number' => $invoice_number
     ]);
 }
@@ -121,21 +111,20 @@ function createInvoice($client_id, $purchase_id) {
 // FUNCTION: Get Invoices
 // ========================================
 function getInvoices($client_id, $purchase_id) {
-    global $pdo;
+    global $db;
 
-    $query = "SELECT * FROM crm_invoices WHERE client_id = ?";
-    $params = [$client_id];
+    $db->where('client_id', $client_id);
 
     if ($purchase_id > 0) {
-        $query .= " AND purchase_id = ?";
-        $params[] = $purchase_id;
+        $db->where('purchase_id', $purchase_id);
     }
 
-    $query .= " ORDER BY created_at DESC";
-    
-    $stmt = $pdo->prepare($query);
-    $stmt->execute($params);
-    $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $db->orderBy('created_at', 'DESC');
+    $invoices = $db->get('crm_invoices');
+
+    if (!$invoices) {
+        $invoices = [];
+    }
 
     echo json_encode([
         'success' => true,
@@ -148,9 +137,9 @@ function getInvoices($client_id, $purchase_id) {
 // FUNCTION: Record Payment (Handle Overpayment)
 // ========================================
 function recordPayment($client_id, $purchase_id, $user_id) {
-    global $pdo;
+    global $db, $wo, $sqlConnect;
 
-    $invoice_ids = $_POST['invoice_ids'] ?? ''; // Comma-separated or JSON
+    $invoice_ids = $_POST['invoice_ids'] ?? '';
     $amount_paid = floatval($_POST['amount_paid'] ?? 0);
     $payment_date = trim($_POST['payment_date'] ?? date('Y-m-d'));
     $payment_method = trim($_POST['payment_method'] ?? 'cash');
@@ -161,12 +150,13 @@ function recordPayment($client_id, $purchase_id, $user_id) {
         throw new Exception('Invalid payment amount');
     }
 
-    $pdo->beginTransaction();
+    // Start transaction using raw mysqli
+    mysqli_begin_transaction($sqlConnect);
 
     try {
         // Generate receipt number
         $today = date('Y-m-d');
-        $count = $pdo->query("SELECT COUNT(*) FROM crm_money_receipts WHERE DATE(created_at) = '$today'")->fetchColumn();
+        $count = (int)$db->where('DATE(created_at)', $today, '=')->getValue('crm_money_receipts', 'COUNT(*) as cnt');
         $receipt_number = 'MR-' . date('Ym') . '-' . str_pad($count + 1, 5, '0', STR_PAD_LEFT);
 
         // Parse invoice IDs
@@ -183,23 +173,27 @@ function recordPayment($client_id, $purchase_id, $user_id) {
         // Apply payment to invoices
         foreach ($invoice_list as $inv_id) {
             $inv_id = is_array($inv_id) ? $inv_id['id'] : intval($inv_id);
-            
-            $invoice = $pdo->query("SELECT * FROM crm_invoices WHERE id = $inv_id AND client_id = $client_id")->fetch(PDO::FETCH_ASSOC);
-            
+
+            $db->where('id', $inv_id);
+            $db->where('client_id', $client_id);
+            $invoice = $db->getOne('crm_invoices');
+
             if (!$invoice) continue;
 
-            $amount_to_pay = min($remaining_payment, $invoice['remaining_amount']);
-            
+            $amount_to_pay = min($remaining_payment, floatval($invoice->remaining_amount));
+
             if ($amount_to_pay > 0) {
-                $new_paid = $invoice['paid_amount'] + $amount_to_pay;
-                $new_remaining = $invoice['remaining_amount'] - $amount_to_pay;
+                $new_paid = floatval($invoice->paid_amount) + $amount_to_pay;
+                $new_remaining = floatval($invoice->remaining_amount) - $amount_to_pay;
                 $new_status = $new_remaining == 0 ? 'paid' : 'partial';
 
-                $pdo->prepare("
-                    UPDATE crm_invoices 
-                    SET paid_amount = ?, remaining_amount = ?, status = ?, updated_by = ?
-                    WHERE id = ?
-                ")->execute([$new_paid, $new_remaining, $new_status, $user_id, $inv_id]);
+                $db->where('id', $inv_id);
+                $db->update('crm_invoices', [
+                    'paid_amount' => $new_paid,
+                    'remaining_amount' => $new_remaining,
+                    'status' => $new_status,
+                    'updated_by' => $wo['user']['id'] ?? null
+                ]);
 
                 $invoices_paid[] = [
                     'invoice_id' => $inv_id,
@@ -212,53 +206,65 @@ function recordPayment($client_id, $purchase_id, $user_id) {
         }
 
         // Create money receipt
-        $receipt_stmt = $pdo->prepare("
-            INSERT INTO crm_money_receipts 
-            (receipt_number, purchase_id, client_id, receipt_date, payment_date, amount_paid, 
-             payment_method, transaction_reference, invoices_paid, notes, created_by, updated_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
+        $receipt_data = [
+            'receipt_number' => $receipt_number,
+            'purchase_id' => $purchase_id,
+            'client_id' => $client_id,
+            'receipt_date' => $today,
+            'payment_date' => $payment_date,
+            'amount_paid' => $amount_paid,
+            'payment_method' => $payment_method,
+            'transaction_reference' => $transaction_reference,
+            'invoices_paid' => json_encode($invoices_paid),
+            'notes' => $notes,
+            'created_by' => $wo['user']['id'] ?? null,
+            'updated_by' => $wo['user']['id'] ?? null
+        ];
 
-        $receipt_stmt->execute([
-            $receipt_number, $purchase_id, $client_id, $today, $payment_date, $amount_paid,
-            $payment_method, $transaction_reference, json_encode($invoices_paid), $notes, $user_id, $user_id
-        ]);
-
-        $receipt_id = $pdo->lastInsertId();
+        $receipt_id = $db->insert('crm_money_receipts', $receipt_data);
 
         // Handle overpayment credit if any
         if ($remaining_payment > 0.01) {
-            $credit_stmt = $pdo->prepare("
-                INSERT INTO crm_overpayment_credits 
-                (purchase_id, client_id, receipt_id, credit_amount, remaining_credit, status, created_at)
-                VALUES (?, ?, ?, ?, ?, 'active', NOW())
-            ");
+            // Check if table exists
+            try {
+                $credit_data = [
+                    'purchase_id' => $purchase_id,
+                    'client_id' => $client_id,
+                    'receipt_id' => $receipt_id,
+                    'credit_amount' => $remaining_payment,
+                    'remaining_credit' => $remaining_payment,
+                    'status' => 'active',
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
 
-            $credit_stmt->execute([$purchase_id, $client_id, $receipt_id, $remaining_payment, $remaining_payment]);
+                $credit_id = $db->insert('crm_overpayment_credits', $credit_data);
 
-            $credit_id = $pdo->lastInsertId();
-
-            // Log credit created
-            logAuditTrail($client_id, $purchase_id, 'payment', 'payment',
-                "Overpayment credit created: $" . number_format($remaining_payment, 2),
-                null, json_encode(['credit_id' => $credit_id, 'amount' => $remaining_payment]),
-                'crm_overpayment_credits', $user_id);
+                // Log credit created
+                logAuditTrail($client_id, $purchase_id, 'payment', 'payment',
+                    "Overpayment credit created: $" . number_format($remaining_payment, 2),
+                    null, json_encode(['credit_id' => $credit_id, 'amount' => $remaining_payment]),
+                    'crm_overpayment_credits', $wo['user']['id'] ?? null);
+            } catch (Exception $e) {
+                // Table may not exist, continue without credit
+            }
         }
 
         // Update payment schedule status if linked
         foreach ($invoice_list as $inv_id) {
             $inv_id = is_array($inv_id) ? $inv_id['id'] : intval($inv_id);
-            $schedule = $pdo->query("
-                SELECT id FROM crm_payment_schedule 
-                WHERE purchase_id = $purchase_id AND related_invoice_ids LIKE '%\"$inv_id\"%' LIMIT 1
-            ")->fetch(PDO::FETCH_ASSOC);
+
+            $db->where('purchase_id', $purchase_id);
+            $db->where('related_invoice_ids', '%"' . $inv_id . '"%', 'LIKE');
+            $schedule = $db->getOne('crm_payment_schedule');
 
             if ($schedule) {
-                $pdo->prepare("
-                    UPDATE crm_payment_schedule 
-                    SET status = 1, paid_amount = ?, payment_date = NOW(), updated_by = ?
-                    WHERE id = ?
-                ")->execute([$amount_paid, $user_id, $schedule['id']]);
+                $db->where('id', $schedule->id);
+                $db->update('crm_payment_schedule', [
+                    'status' => 1,
+                    'paid_amount' => $amount_paid,
+                    'payment_date' => date('Y-m-d H:i:s'),
+                    'updated_by' => $wo['user']['id'] ?? null
+                ]);
             }
         }
 
@@ -267,20 +273,20 @@ function recordPayment($client_id, $purchase_id, $user_id) {
             "Payment recorded: $" . number_format($amount_paid, 2) . " via " . $receipt_number,
             json_encode(['previous_paid' => 0]),
             json_encode(['receipt_id' => $receipt_id, 'receipt_number' => $receipt_number, 'amount_paid' => $amount_paid]),
-            'crm_money_receipts', $user_id);
+            'crm_money_receipts', $wo['user']['id'] ?? null);
 
-        $pdo->commit();
+        mysqli_commit($sqlConnect);
 
         echo json_encode([
             'success' => true,
             'message' => 'Payment recorded successfully',
-            'receipt_id' => $receipt_id,
+            'receipt_id' => (int)$receipt_id,
             'receipt_number' => $receipt_number,
             'overpayment_credit' => $remaining_payment
         ]);
 
     } catch (Exception $e) {
-        $pdo->rollBack();
+        mysqli_rollback($sqlConnect);
         throw $e;
     }
 }
@@ -289,24 +295,24 @@ function recordPayment($client_id, $purchase_id, $user_id) {
 // FUNCTION: Get Overpayment Credits
 // ========================================
 function getOverpaymentCredits($client_id, $purchase_id) {
-    global $pdo;
+    global $db;
 
-    $query = "SELECT * FROM crm_overpayment_credits WHERE client_id = ? AND status = 'active'";
-    $params = [$client_id];
+    $db->where('client_id', $client_id);
+    $db->where('status', 'active');
 
     if ($purchase_id > 0) {
-        $query .= " AND purchase_id = ?";
-        $params[] = $purchase_id;
+        $db->where('purchase_id', $purchase_id);
     }
 
-    $query .= " ORDER BY created_at DESC";
+    $db->orderBy('created_at', 'DESC');
+    $credits = $db->get('crm_overpayment_credits');
 
-    $stmt = $pdo->prepare($query);
-    $stmt->execute($params);
-    $credits = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (!$credits) {
+        $credits = [];
+    }
 
     $total_credit = array_reduce($credits, function($sum, $item) {
-        return $sum + floatval($item['remaining_credit']);
+        return $sum + floatval($item->remaining_credit ?? 0);
     }, 0);
 
     echo json_encode([
@@ -320,7 +326,7 @@ function getOverpaymentCredits($client_id, $purchase_id) {
 // FUNCTION: Apply Credit to Payment Schedule
 // ========================================
 function applyCredit($user_id) {
-    global $pdo;
+    global $db, $wo, $sqlConnect;
 
     $credit_id = intval($_POST['credit_id'] ?? 0);
     $schedule_id = intval($_POST['schedule_id'] ?? 0);
@@ -330,51 +336,56 @@ function applyCredit($user_id) {
         throw new Exception('Invalid parameters');
     }
 
-    $pdo->beginTransaction();
+    mysqli_begin_transaction($sqlConnect);
 
     try {
         // Get credit
-        $credit = $pdo->query("SELECT * FROM crm_overpayment_credits WHERE id = $credit_id")->fetch(PDO::FETCH_ASSOC);
+        $db->where('id', $credit_id);
+        $credit = $db->getOne('crm_overpayment_credits');
+
         if (!$credit) throw new Exception('Credit not found');
-        if ($amount_to_apply > $credit['remaining_credit']) throw new Exception('Insufficient credit');
+        if ($amount_to_apply > floatval($credit->remaining_credit)) throw new Exception('Insufficient credit');
 
         // Get schedule
-        $schedule = $pdo->query("SELECT * FROM crm_payment_schedule WHERE id = $schedule_id")->fetch(PDO::FETCH_ASSOC);
+        $db->where('id', $schedule_id);
+        $schedule = $db->getOne('crm_payment_schedule');
+
         if (!$schedule) throw new Exception('Schedule not found');
 
         // Apply credit
-        $new_remaining = floatval($credit['remaining_credit']) - $amount_to_apply;
-        $applied_data = json_decode($credit['applied_to'] ?? '[]', true);
+        $new_remaining = floatval($credit->remaining_credit) - $amount_to_apply;
+        $applied_data = json_decode($credit->applied_to ?? '[]', true);
         $applied_data[] = [
             'schedule_id' => $schedule_id,
             'amount_applied' => $amount_to_apply,
             'applied_date' => date('Y-m-d')
         ];
 
-        $pdo->prepare("
-            UPDATE crm_overpayment_credits 
-            SET remaining_credit = ?, applied_to = ?
-            WHERE id = ?
-        ")->execute([$new_remaining, json_encode($applied_data), $credit_id]);
+        $db->where('id', $credit_id);
+        $db->update('crm_overpayment_credits', [
+            'remaining_credit' => $new_remaining,
+            'applied_to' => json_encode($applied_data)
+        ]);
 
         // Update schedule paid amount
-        $new_paid_amount = floatval($schedule['paid_amount']) + $amount_to_apply;
-        $new_status = $new_paid_amount >= $schedule['installment_amount'] ? 1 : 2;
+        $new_paid_amount = floatval($schedule->paid_amount ?? 0) + $amount_to_apply;
+        $new_status = $new_paid_amount >= floatval($schedule->installment_amount) ? 1 : 2;
 
-        $pdo->prepare("
-            UPDATE crm_payment_schedule 
-            SET paid_amount = ?, overpayment_credit_used = overpayment_credit_used + ?, status = ?, updated_by = ?
-            WHERE id = ?
-        ")->execute([$new_paid_amount, $amount_to_apply, $new_status, $user_id, $schedule_id]);
+        $db->where('id', $schedule_id);
+        $db->update('crm_payment_schedule', [
+            'paid_amount' => $new_paid_amount,
+            'status' => $new_status,
+            'updated_by' => $wo['user']['id'] ?? null
+        ]);
 
         // Log audit trail
-        logAuditTrail($schedule['client_id'], $schedule['purchase_id'], 'payment', 'payment',
-            "Overpayment credit applied: $" . number_format($amount_to_apply, 2) . " to schedule #" . $schedule['installment_number'],
-            json_encode(['previous_paid' => $schedule['paid_amount']]),
+        logAuditTrail($schedule->client_id, $schedule->purchase_id, 'payment', 'payment',
+            "Overpayment credit applied: $" . number_format($amount_to_apply, 2) . " to schedule #" . $schedule->installment_number,
+            json_encode(['previous_paid' => $schedule->paid_amount]),
             json_encode(['new_paid' => $new_paid_amount]),
-            'crm_overpayment_credits,crm_payment_schedule', $user_id);
+            'crm_overpayment_credits,crm_payment_schedule', $wo['user']['id'] ?? null);
 
-        $pdo->commit();
+        mysqli_commit($sqlConnect);
 
         echo json_encode([
             'success' => true,
@@ -383,7 +394,7 @@ function applyCredit($user_id) {
         ]);
 
     } catch (Exception $e) {
-        $pdo->rollBack();
+        mysqli_rollback($sqlConnect);
         throw $e;
     }
 }
@@ -392,19 +403,27 @@ function applyCredit($user_id) {
 // HELPER: Log Audit Trail
 // ========================================
 function logAuditTrail($client_id, $purchase_id, $action_type, $action_category, $description, $before_value, $after_value, $affected_tables, $user_id) {
-    global $pdo;
+    global $db;
 
-    $stmt = $pdo->prepare("
-        INSERT INTO crm_audit_trail 
-        (client_id, purchase_id, action_type, action_category, description, before_value, after_value, 
-         affected_tables, performed_by, ip_address, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')
-    ");
+    try {
+        $audit_data = [
+            'client_id' => $client_id,
+            'purchase_id' => $purchase_id,
+            'action_type' => $action_type,
+            'action_category' => $action_category,
+            'description' => $description,
+            'before_value' => $before_value,
+            'after_value' => $after_value,
+            'affected_tables' => $affected_tables,
+            'performed_by' => $user_id,
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+            'status' => 'completed'
+        ];
 
-    $stmt->execute([
-        $client_id, $purchase_id, $action_type, $action_category, $description,
-        $before_value, $after_value, $affected_tables, $user_id,
-        $_SERVER['REMOTE_ADDR'] ?? null
-    ]);
+        $db->insert('crm_audit_trail', $audit_data);
+    } catch (Exception $e) {
+        // Silently fail if audit logging fails
+        error_log('Audit trail insert failed: ' . $e->getMessage());
+    }
 }
 ?>
