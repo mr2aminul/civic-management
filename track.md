@@ -201,19 +201,33 @@
 ---
 
 ### Step 3.3: Consolidate Audit Trail Endpoints
-**Status:** PENDING
-**Estimated Tokens:** ~8k
+**Status:** ✓ COMPLETED
+**Actual Tokens:** ~4k
 
-**Action Plan:**
-- Keep: `inventory_audit.php` (focused file)
-- Merge helper functions from other files
-- Standardize `logAudit()` / `logAuditTrail()` helper
-- Remove duplicate implementations
+**Actions Taken:**
+- Created: `audit.php` (consolidated single file)
+- Merged functionality from:
+  - `inventory_audit.php` → audit retrieval, manual logging, summary
+  - `advanced.php` → logAudit helper function
+  - `inventory_complete.php` → logAuditAction helper
+  - `inventory_merge_purchase.php` → logAuditTrail helper
+- Standardized endpoint names with backward compatibility
+- Single source of truth for all audit operations
 
-**Functions to Consolidate:**
-- `get_audit_trail` (appears 3 times)
-- `log_audit_action` / `logAudit()` / `logAuditTrail()`
-- `get_audit_summary`
+**Consolidated Endpoints:**
+1. `get_audit_trail` → unified with all filters (purchase, client, category, date range, user)
+2. `log_audit_action` / `log_audit` → merged manual logging endpoints
+3. `get_audit_summary` → category-based summary
+4. `get_recent_audit` → quick recent activity view
+
+**Helper Functions:**
+- `logAuditAction()` → primary standardized function
+- `logAudit()` → backward compatibility alias
+- `logAuditTrail()` → backward compatibility alias
+
+**Result:** All audit operations now in `/xhr/manage_inventory/audit.php`
+
+**Note:** Old files (`inventory_audit.php`, `advanced.php`, `inventory_complete.php`) still contain audit code but will be cleaned in subsequent steps or removed if they become empty.
 
 ---
 
@@ -317,7 +331,7 @@
 | 2 | 2.4 | 8k | ✓ COMPLETED |
 | 3 | 3.1 | 6k | ✓ COMPLETED |
 | 3 | 3.2 | 5k | ✓ COMPLETED |
-| 3 | 3.3 | 8k | PENDING |
+| 3 | 3.3 | 4k | ✓ COMPLETED |
 | 3 | 3.4 | 10k | PENDING |
 | 3 | 3.5 | 8k | PENDING |
 | 4 | 4.1 | 5k | PENDING |
@@ -341,13 +355,13 @@
 
 ## Current Status
 
-**Phase 3 Steps 3.1 and 3.2 COMPLETED!** Invoice and Email endpoints consolidated.
+**Phase 3 Steps 3.1, 3.2, and 3.3 COMPLETED!** Invoice, Email, and Audit Trail endpoints consolidated.
 
-**Next Step:** Step 3.3 - Consolidate Audit Trail Endpoints
+**Next Step:** Step 3.4 - Consolidate Payment Schedule Operations
 
 **Command to proceed:**
 ```
-Complete Step 3.3
+Complete Step 3.4
 ```
 
 ---
