@@ -172,22 +172,31 @@
 ---
 
 ### Step 3.2: Consolidate Email Endpoints
-**Status:** PENDING
-**Estimated Tokens:** ~10k
+**Status:** ✓ COMPLETED
+**Actual Tokens:** ~5k
 
-**Action Plan:**
-- Keep: `inventory_emails.php` (cleaner structure)
-- Merge unique functions from:
-  - `inventory_audit_email.php` → email queue system
-  - `advanced.php` → email sending logic
+**Actions Taken:**
+- Created: `emails.php` (consolidated single file)
+- Merged functionality from:
+  - `inventory_emails.php` → basic email sending and pending emails
+  - `inventory_audit_email.php` → email queue system, template handling
+  - `advanced.php` → direct email sending with logging
   - `inventory_complete.php` → bulk email sending
-- Remove duplicate code
+- Standardized endpoint names with backward compatibility
+- Single source of truth for all email operations
 
-**Functions to Consolidate:**
-- `get_pending_emails` (appears 3 times)
-- `send_email` / `send_email_to_client` / `send_bulk_emails`
-- `get_email_logs`
-- `queue_email`
+**Consolidated Endpoints:**
+1. `get_pending_emails` → unified with money receipt + schedule detection
+2. `queue_email` → queue system for scheduled emails
+3. `get_queued_emails` → retrieve queued emails with filters
+4. `send_email` / `send_email_to_client` → unified direct and queue-based sending
+5. `send_bulk_emails` → batch email processing
+6. `get_email_logs` → email history with filters
+7. `get_email_templates` → list available templates
+
+**Result:** All email operations now in `/xhr/manage_inventory/emails.php`
+
+**Note:** Old files (`inventory_emails.php`, `inventory_audit_email.php`, `advanced.php`) still contain email code but will be cleaned in subsequent steps or removed if they become empty.
 
 ---
 
@@ -306,8 +315,8 @@
 | 2 | 2.2 | 9k | ✓ COMPLETED |
 | 2 | 2.3 | 8k | ✓ COMPLETED |
 | 2 | 2.4 | 8k | ✓ COMPLETED |
-| 3 | 3.1 | 12k | PENDING |
-| 3 | 3.2 | 10k | PENDING |
+| 3 | 3.1 | 6k | ✓ COMPLETED |
+| 3 | 3.2 | 5k | ✓ COMPLETED |
 | 3 | 3.3 | 8k | PENDING |
 | 3 | 3.4 | 10k | PENDING |
 | 3 | 3.5 | 8k | PENDING |
@@ -332,13 +341,13 @@
 
 ## Current Status
 
-**Phase 2 COMPLETED!** All database connection replacements are done.
+**Phase 3 Steps 3.1 and 3.2 COMPLETED!** Invoice and Email endpoints consolidated.
 
-**Next Step:** Step 3.1 - Consolidate Invoice Endpoints
+**Next Step:** Step 3.3 - Consolidate Audit Trail Endpoints
 
 **Command to proceed:**
 ```
-Complete Step 3.1
+Complete Step 3.3
 ```
 
 ---
