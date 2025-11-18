@@ -6,6 +6,7 @@
 - Consolidate redundant code across multiple files
 - Ensure all endpoints work with existing global database connections
 - Must follow the database schema for all endpoints from `database/00_COMPLETE_SCHEMA.sql`
+- Must be remove duplicate files or endpoints, keep the working endpoins version of duplicate endpoints.
 ---
 
 ## PHASE 1: Analysis & Planning (COMPLETED ✓)
