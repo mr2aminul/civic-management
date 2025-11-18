@@ -143,23 +143,31 @@
 ## PHASE 3: Remove Duplicates & Consolidate
 
 ### Step 3.1: Consolidate Invoice Endpoints
-**Status:** PENDING
-**Estimated Tokens:** ~12k
+**Status:** ✓ COMPLETED
+**Actual Tokens:** ~6k
 
-**Action Plan:**
-- Keep: `inventory_invoices.php` (most complete)
-- Merge unique functions from:
-  - `advanced.php` → `create_invoice`, `update_invoice_status`
-  - `inventory_invoice_system.php` → overpayment credit logic
-  - `inventory_complete.php` → invoice payment recording
-- Remove duplicate code from other files
-- Create single source of truth for invoice operations
+**Actions Taken:**
+- Created: `invoices.php` (consolidated single file)
+- Merged functionality from:
+  - `advanced.php` → `create_invoice`, `update_invoice_status`, money receipt generation
+  - `inventory_invoices.php` → schedule sync, installment-based invoices
+  - `inventory_invoice_system.php` → overpayment credit logic, credit application
+  - `inventory_complete.php` → payment recording with overpayment handling
+- Standardized endpoint names with aliases for backward compatibility
+- Single source of truth for all invoice operations
 
-**Functions to Consolidate:**
-- `get_invoices` / `get_invoices_for_purchase` / `get_invoices_list`
-- `create_invoice` / `create_invoice_from_installments`
-- `record_payment` / `record_invoice_payment`
-- `update_invoice_status`
+**Consolidated Endpoints:**
+1. `get_invoices` / `get_invoices_for_purchase` / `get_invoices_list` → unified with filters
+2. `create_invoice` / `create_invoice_from_installments` → merged with type detection
+3. `record_invoice_payment` / `record_payment` → unified with overpayment handling
+4. `update_invoice_status` → single implementation
+5. `generate_money_receipt` / `auto_generate_receipt` → unified
+6. `get_credits` / `get_overpayment_credits` → merged with graceful table handling
+7. `apply_credit` → single implementation with full tracking
+
+**Result:** All invoice operations now in `/xhr/manage_inventory/invoices.php`
+
+**Note:** Old files (`advanced.php`, `inventory_invoices.php`, `inventory_invoice_system.php`) still contain invoice code but will be cleaned in Step 3.1b or removed entirely if they become empty.
 
 ---
 
