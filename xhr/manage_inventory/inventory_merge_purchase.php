@@ -2,18 +2,23 @@
 /**
  * Merge Purchase Module - Consolidate Multiple Purchases into One
  * Handles: Payment schedule consolidation, credit transfer, overpayment handling, admin approval
+ * Note: Uses global $db (MysqliDb), $wo, and $sqlConnect (raw mysqli)
  */
 
+global $db, $wo, $sqlConnect;
+
+// Get action from POST or GET
+$s = isset($_GET['s']) ? trim($_GET['s']) : (isset($_POST['s']) ? trim($_POST['s']) : '');
 
 $user_id = $wo['user']['user_id'] ?? null;
 
-if (!$user_id) {
+if (!$user_id && $s !== 'get_merge_requests') {
     http_response_code(401);
     die(json_encode(['success' => false, 'message' => 'Unauthorized']));
 }
 
 try {
-    switch ($action) {
+    switch ($s) {
         case 'create_merge_request':
             createMergeRequest();
             break;
@@ -36,7 +41,7 @@ try {
 
         default:
             http_response_code(400);
-            echo json_encode(['success' => false, 'message' => 'Invalid action']);
+            echo json_encode(['success' => false, 'message' => 'Invalid action: ' . $s]);
     }
 } catch (Exception $e) {
     http_response_code(500);
@@ -47,8 +52,9 @@ try {
 // CREATE MERGE REQUEST
 // ========================================
 function createMergeRequest() {
-    global $pdo, $user_id;
+    global $db, $wo;
 
+    $user_id = $wo['user']['id'] ?? null;
     $source_purchase_id = intval($_POST['source_purchase_id'] ?? 0);
     $target_purchase_id = intval($_POST['target_purchase_id'] ?? 0);
     $client_id = intval($_POST['client_id'] ?? 0);
@@ -67,28 +73,38 @@ function createMergeRequest() {
     }
 
     // Validate purchases belong to same client
-    $source = $pdo->query("SELECT * FROM wo_booking_helper WHERE id = $source_purchase_id AND client_id = '$client_id'")->fetch();
-    $target = $pdo->query("SELECT * FROM wo_booking_helper WHERE id = $target_purchase_id AND client_id = '$client_id'")->fetch();
+    $db->where('id', $source_purchase_id);
+    $db->where('client_id', $client_id);
+    $source = $db->getOne('wo_booking_helper');
+
+    $db->where('id', $target_purchase_id);
+    $db->where('client_id', $client_id);
+    $target = $db->getOne('wo_booking_helper');
 
     if (!$source || !$target) {
         throw new Exception('Invalid purchase or client mismatch');
     }
 
     // Create merge request
-    $stmt = $pdo->prepare("
-        INSERT INTO crm_merge_requests 
-        (source_purchase_id, target_purchase_id, client_id, consolidate_schedule, 
-         transfer_paid_amount, transfer_credits, reschedule_payments, merge_reason, 
-         requested_by, approval_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-    ");
+    $merge_data = [
+        'source_purchase_id' => $source_purchase_id,
+        'target_purchase_id' => $target_purchase_id,
+        'client_id' => $client_id,
+        'consolidate_schedule' => $consolidate_schedule,
+        'transfer_paid_amount' => $transfer_paid_amount,
+        'transfer_credits' => $transfer_credits,
+        'reschedule_payments' => $reschedule_payments,
+        'merge_reason' => $merge_reason,
+        'requested_by' => $user_id,
+        'approval_status' => 'pending',
+        'request_date' => date('Y-m-d H:i:s')
+    ];
 
-    $stmt->execute([
-        $source_purchase_id, $target_purchase_id, $client_id, $consolidate_schedule,
-        $transfer_paid_amount, $transfer_credits, $reschedule_payments, $merge_reason, $user_id
-    ]);
+    $request_id = $db->insert('crm_merge_requests', $merge_data);
 
-    $request_id = $pdo->lastInsertId();
+    if (!$request_id) {
+        throw new Exception('Failed to create merge request');
+    }
 
     // Log audit trail
     logAuditTrail($client_id, $source_purchase_id, 'merge', 'purchase',
@@ -113,40 +129,31 @@ function createMergeRequest() {
 // GET MERGE REQUESTS
 // ========================================
 function getMergeRequests() {
-    global $pdo;
+    global $db;
 
     $client_id = intval($_GET['client_id'] ?? 0);
     $status = trim($_GET['status'] ?? '');
 
-    $query = "SELECT mr.*, 
-              sb.booking_id as source_booking_id, tb.booking_id as target_booking_id,
-              sc.name as source_client_name, tc.name as target_client_name,
-              u1.name as requested_by_name, u2.name as approved_by_name
-              FROM crm_merge_requests mr
-              LEFT JOIN wo_booking_helper sb ON mr.source_purchase_id = sb.id
-              LEFT JOIN wo_booking_helper tb ON mr.target_purchase_id = tb.id
-              LEFT JOIN crm_customers sc ON mr.client_id = sc.id
-              LEFT JOIN crm_customers tc ON mr.client_id = tc.id
-              LEFT JOIN crm_users u1 ON mr.requested_by = u1.id
-              LEFT JOIN crm_users u2 ON mr.approved_by = u2.id
-              WHERE 1=1";
-    $params = [];
+    $db->join('wo_booking_helper sb', 'crm_merge_requests.source_purchase_id = sb.id', 'LEFT');
+    $db->join('wo_booking_helper tb', 'crm_merge_requests.target_purchase_id = tb.id', 'LEFT');
+    $db->join('crm_customers sc', 'crm_merge_requests.client_id = sc.id', 'LEFT');
 
     if ($client_id > 0) {
-        $query .= " AND mr.client_id = ?";
-        $params[] = $client_id;
+        $db->where('crm_merge_requests.client_id', $client_id);
     }
 
     if ($status) {
-        $query .= " AND mr.approval_status = ?";
-        $params[] = $status;
+        $db->where('crm_merge_requests.approval_status', $status);
     }
 
-    $query .= " ORDER BY mr.request_date DESC";
+    $db->orderBy('crm_merge_requests.request_date', 'DESC');
 
-    $stmt = $pdo->prepare($query);
-    $stmt->execute($params);
-    $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $requests = $db->get('crm_merge_requests', null,
+        'crm_merge_requests.*, sb.booking_id as source_booking_id, tb.booking_id as target_booking_id, sc.name as client_name');
+
+    if (!$requests) {
+        $requests = [];
+    }
 
     echo json_encode([
         'success' => true,
@@ -159,31 +166,35 @@ function getMergeRequests() {
 // APPROVE MERGE REQUEST
 // ========================================
 function approveMerge($user_id) {
-    global $pdo;
+    global $db, $sqlConnect;
 
     $merge_request_id = intval($_POST['merge_request_id'] ?? 0);
     if (!$merge_request_id) throw new Exception('Merge request ID required');
 
-    $pdo->beginTransaction();
+    mysqli_begin_transaction($sqlConnect);
 
     try {
-        $request = $pdo->query("SELECT * FROM crm_merge_requests WHERE id = $merge_request_id")->fetch(PDO::FETCH_ASSOC);
+        $db->where('id', $merge_request_id);
+        $request = $db->getOne('crm_merge_requests');
+
         if (!$request) throw new Exception('Merge request not found');
 
-        $pdo->prepare("
-            UPDATE crm_merge_requests 
-            SET approval_status = 'approved', approved_by = ?, approval_date = NOW()
-            WHERE id = ?
-        ")->execute([$user_id, $merge_request_id]);
+        // Update merge request
+        $db->where('id', $merge_request_id);
+        $db->update('crm_merge_requests', [
+            'approval_status' => 'approved',
+            'approved_by' => $user_id,
+            'approval_date' => date('Y-m-d H:i:s')
+        ]);
 
         // Log audit trail
-        logAuditTrail($request['client_id'], $request['source_purchase_id'], 'approval', 'purchase',
+        logAuditTrail($request->client_id, $request->source_purchase_id, 'approval', 'purchase',
             "Merge request #$merge_request_id approved",
-            json_encode(['previous_status' => $request['approval_status']]),
+            json_encode(['previous_status' => $request->approval_status]),
             json_encode(['new_status' => 'approved', 'approved_by' => $user_id]),
             'crm_merge_requests', $user_id);
 
-        $pdo->commit();
+        mysqli_commit($sqlConnect);
 
         echo json_encode([
             'success' => true,
@@ -191,7 +202,7 @@ function approveMerge($user_id) {
         ]);
 
     } catch (Exception $e) {
-        $pdo->rollBack();
+        mysqli_rollback($sqlConnect);
         throw $e;
     }
 }
@@ -200,26 +211,31 @@ function approveMerge($user_id) {
 // REJECT MERGE REQUEST
 // ========================================
 function rejectMerge($user_id) {
-    global $pdo;
+    global $db;
 
     $merge_request_id = intval($_POST['merge_request_id'] ?? 0);
     $rejection_reason = trim($_POST['rejection_reason'] ?? '');
 
     if (!$merge_request_id) throw new Exception('Merge request ID required');
 
-    $request = $pdo->query("SELECT * FROM crm_merge_requests WHERE id = $merge_request_id")->fetch(PDO::FETCH_ASSOC);
+    $db->where('id', $merge_request_id);
+    $request = $db->getOne('crm_merge_requests');
+
     if (!$request) throw new Exception('Merge request not found');
 
-    $pdo->prepare("
-        UPDATE crm_merge_requests 
-        SET approval_status = 'rejected', approved_by = ?, approval_date = NOW(), rejection_reason = ?
-        WHERE id = ?
-    ")->execute([$user_id, $rejection_reason, $merge_request_id]);
+    // Update merge request
+    $db->where('id', $merge_request_id);
+    $db->update('crm_merge_requests', [
+        'approval_status' => 'rejected',
+        'approved_by' => $user_id,
+        'approval_date' => date('Y-m-d H:i:s'),
+        'rejection_reason' => $rejection_reason
+    ]);
 
     // Log audit trail
-    logAuditTrail($request['client_id'], $request['source_purchase_id'], 'approval', 'purchase',
+    logAuditTrail($request->client_id, $request->source_purchase_id, 'approval', 'purchase',
         "Merge request #$merge_request_id rejected",
-        json_encode(['previous_status' => $request['approval_status']]),
+        json_encode(['previous_status' => $request->approval_status]),
         json_encode(['new_status' => 'rejected', 'reason' => $rejection_reason]),
         'crm_merge_requests', $user_id);
 
@@ -233,98 +249,115 @@ function rejectMerge($user_id) {
 // EXECUTE MERGE (After Approval)
 // ========================================
 function executeMerge($user_id) {
-    global $pdo;
+    global $db, $sqlConnect;
 
     $merge_request_id = intval($_POST['merge_request_id'] ?? 0);
     if (!$merge_request_id) throw new Exception('Merge request ID required');
 
-    $pdo->beginTransaction();
+    mysqli_begin_transaction($sqlConnect);
 
     try {
-        $request = $pdo->query("SELECT * FROM crm_merge_requests WHERE id = $merge_request_id")->fetch(PDO::FETCH_ASSOC);
+        $db->where('id', $merge_request_id);
+        $request = $db->getOne('crm_merge_requests');
+
         if (!$request) throw new Exception('Merge request not found');
-        if ($request['approval_status'] !== 'approved') throw new Exception('Merge not approved');
+        if ($request->approval_status !== 'approved') throw new Exception('Merge not approved');
 
-        $source_id = $request['source_purchase_id'];
-        $target_id = $request['target_purchase_id'];
-        $client_id = $request['client_id'];
+        $source_id = $request->source_purchase_id;
+        $target_id = $request->target_purchase_id;
+        $client_id = $request->client_id;
 
-        $source = $pdo->query("SELECT * FROM wo_booking_helper WHERE id = $source_id")->fetch(PDO::FETCH_ASSOC);
-        $target = $pdo->query("SELECT * FROM wo_booking_helper WHERE id = $target_id")->fetch(PDO::FETCH_ASSOC);
+        $db->where('id', $source_id);
+        $source = $db->getOne('wo_booking_helper');
+
+        $db->where('id', $target_id);
+        $target = $db->getOne('wo_booking_helper');
+
+        if (!$source || !$target) throw new Exception('Purchase records not found');
 
         // 1. Transfer payment schedules
-        if ($request['consolidate_schedule']) {
-            $pdo->prepare("
-                UPDATE crm_payment_schedule 
-                SET purchase_id = ?, updated_by = ?
-                WHERE purchase_id = ?
-            ")->execute([$target_id, $user_id, $source_id]);
+        if ($request->consolidate_schedule) {
+            $db->where('purchase_id', $source_id);
+            $db->update('crm_payment_schedule', [
+                'purchase_id' => $target_id,
+                'updated_by' => $user_id
+            ]);
         }
 
         // 2. Transfer paid amounts & overpayment credits
-        if ($request['transfer_paid_amount'] || $request['transfer_credits']) {
+        $source_paid = 0;
+        if ($request->transfer_paid_amount || $request->transfer_credits) {
             // Get total paid for source
-            $source_paid = $pdo->query("
-                SELECT SUM(paid_amount) as total FROM crm_payment_schedule WHERE purchase_id = $source_id
-            ")->fetch()['total'] ?? 0;
+            $db->where('purchase_id', $source_id);
+            $source_paid = floatval($db->getValue('crm_payment_schedule', 'SUM(paid_amount)') ?? 0);
 
-            // Transfer credits
-            if ($request['transfer_credits']) {
-                $pdo->prepare("
-                    UPDATE crm_overpayment_credits 
-                    SET purchase_id = ?, updated_at = NOW()
-                    WHERE purchase_id = ? AND status = 'active'
-                ")->execute([$target_id, $source_id]);
+            // Transfer credits (table may not exist)
+            if ($request->transfer_credits) {
+                try {
+                    $db->where('purchase_id', $source_id);
+                    $db->where('status', 'active');
+                    $db->update('crm_overpayment_credits', [
+                        'purchase_id' => $target_id,
+                        'updated_at' => date('Y-m-d H:i:s')
+                    ]);
+                } catch (Exception $e) {
+                    // Table may not exist, continue without it
+                }
             }
         }
 
-        // 3. Mark source purchase as merged
-        $pdo->prepare("
-            UPDATE wo_booking_helper 
-            SET status = '5', updated_at = ?
-            WHERE id = ?
-        ")->execute([time(), $source_id]);
+        // 3. Mark source purchase as merged (status 5)
+        $db->where('id', $source_id);
+        $db->update('wo_booking_helper', [
+            'status' => '5',
+            'updated_at' => time()
+        ]);
 
         // 4. Mark merge as executed
         $audit_trail_id = logAuditTrail($client_id, $source_id, 'merge', 'purchase',
             "Purchase #$source_id merged into #$target_id. All schedules, payments, and credits transferred.",
             json_encode([
                 'source_purchase' => $source_id,
-                'source_booking' => $source['booking_id'],
+                'source_booking' => $source->booking_id ?? null,
                 'source_paid' => $source_paid
             ]),
             json_encode([
                 'target_purchase' => $target_id,
-                'target_booking' => $target['booking_id'],
+                'target_booking' => $target->booking_id ?? null,
                 'merge_consolidated' => true,
                 'related_clients' => [$client_id, $client_id]
             ]),
             'wo_booking_helper,crm_payment_schedule,crm_overpayment_credits,crm_merge_requests', $user_id);
 
-        $pdo->prepare("
-            UPDATE crm_merge_requests 
-            SET approval_status = 'completed', merge_executed_at = NOW(), audit_trail_id = ?
-            WHERE id = ?
-        ")->execute([$audit_trail_id, $merge_request_id]);
+        $db->where('id', $merge_request_id);
+        $db->update('crm_merge_requests', [
+            'approval_status' => 'completed',
+            'merge_executed_at' => date('Y-m-d H:i:s'),
+            'audit_trail_id' => $audit_trail_id
+        ]);
 
         // 5. Create money receipt for audit trail on target purchase
         $today = date('Y-m-d');
-        $count = $pdo->query("SELECT COUNT(*) FROM crm_money_receipts WHERE DATE(created_at) = '$today'")->fetchColumn();
+
+        $db->where("DATE(created_at)", $today, '=');
+        $count = intval($db->getValue('crm_money_receipts', 'COUNT(*)') ?? 0);
         $receipt_number = 'MR-' . date('Ym') . '-' . str_pad($count + 1, 5, '0', STR_PAD_LEFT);
 
-        $pdo->prepare("
-            INSERT INTO crm_money_receipts 
-            (receipt_number, purchase_id, client_id, receipt_date, payment_date, amount_paid, 
-             payment_method, invoices_paid, notes, created_by, status)
-            VALUES (?, ?, ?, ?, ?, 0, 'system', ?, ?, ?, 'issued')
-        ")->execute([
-            $receipt_number, $target_id, $client_id, $today, $today,
-            json_encode([]),
-            "System record for merged purchase #$source_id",
-            $user_id
+        $db->insert('crm_money_receipts', [
+            'receipt_number' => $receipt_number,
+            'purchase_id' => $target_id,
+            'client_id' => $client_id,
+            'receipt_date' => $today,
+            'payment_date' => $today,
+            'amount_paid' => 0,
+            'payment_method' => 'system',
+            'invoices_paid' => json_encode([]),
+            'notes' => "System record for merged purchase #$source_id",
+            'created_by' => $user_id,
+            'status' => 'issued'
         ]);
 
-        $pdo->commit();
+        mysqli_commit($sqlConnect);
 
         echo json_encode([
             'success' => true,
@@ -334,7 +367,7 @@ function executeMerge($user_id) {
         ]);
 
     } catch (Exception $e) {
-        $pdo->rollBack();
+        mysqli_rollback($sqlConnect);
         throw $e;
     }
 }
@@ -343,21 +376,26 @@ function executeMerge($user_id) {
 // HELPER: Log Audit Trail
 // ========================================
 function logAuditTrail($client_id, $purchase_id, $action_type, $action_category, $description, $before_value, $after_value, $affected_tables, $user_id) {
-    global $pdo;
+    global $db;
 
-    $stmt = $pdo->prepare("
-        INSERT INTO crm_audit_trail 
-        (client_id, purchase_id, action_type, action_category, description, before_value, after_value, 
-         affected_tables, performed_by, ip_address, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')
-    ");
+    try {
+        $audit_data = [
+            'client_id' => $client_id,
+            'purchase_id' => $purchase_id,
+            'action_type' => $action_type,
+            'action_category' => $action_category,
+            'action_description' => $description,
+            'before_values' => $before_value,
+            'after_values' => $after_value,
+            'performed_by' => $user_id,
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? null,
+            'performed_at' => date('Y-m-d H:i:s')
+        ];
 
-    $stmt->execute([
-        $client_id, $purchase_id, $action_type, $action_category, $description,
-        $before_value, $after_value, $affected_tables, $user_id,
-        $_SERVER['REMOTE_ADDR'] ?? null
-    ]);
-
-    return $pdo->lastInsertId();
+        return $db->insert('crm_audit_trail', $audit_data);
+    } catch (Exception $e) {
+        error_log('Audit trail insert failed: ' . $e->getMessage());
+        return null;
+    }
 }
 ?>

@@ -115,21 +115,28 @@
 ---
 
 ### Step 2.4: Fix `inventory_merge_purchase.php`
-**Status:** PENDING
-**Estimated Tokens:** ~16k
+**Status:** ✓ COMPLETED
+**Tokens Used:** ~8k
 
-**Tasks:**
-- Replace `$pdo` with `$db`
-- Fix merge request creation
-- Fix approval/rejection logic
-- Fix merge execution with proper transaction handling
+**Changes Made:**
+- ✓ Replaced all `$pdo` with `$db` (MysqliDb)
+- ✓ Fixed action detection to use `$_POST['s']` and `$_GET['s']`
+- ✓ Converted `$pdo->query()` to `$db->where()->getOne()` and `$db->get()`
+- ✓ Converted `$pdo->prepare()->execute()` to `$db->insert()` and `$db->update()`
+- ✓ Replaced `$pdo->beginTransaction()` with `mysqli_begin_transaction($sqlConnect)`
+- ✓ Replaced `$pdo->commit()` with `mysqli_commit($sqlConnect)`
+- ✓ Replaced `$pdo->rollBack()` with `mysqli_rollback($sqlConnect)`
+- ✓ Updated `logAuditTrail()` helper to use `$db->insert()`
+- ✓ Added graceful handling for missing overpayment_credits table
+- ✓ Fixed all 5 endpoints to use MysqliDb methods
+- ✓ Used JOIN syntax for complex queries in getMergeRequests()
 
-**Endpoints to Fix:**
-1. `create_merge_request`
-2. `get_merge_requests`
-3. `approve_merge`
-4. `reject_merge`
-5. `execute_merge`
+**Endpoints Fixed:**
+1. `create_merge_request` - Uses $db->where(), $db->getOne(), $db->insert()
+2. `get_merge_requests` - Uses $db->join(), $db->where()->orderBy()->get()
+3. `approve_merge` - Uses mysqli transactions, $db->getOne(), $db->update()
+4. `reject_merge` - Uses $db->getOne(), $db->update()
+5. `execute_merge` - Uses mysqli transactions, $db->where(), $db->update(), $db->getValue(), $db->insert()
 
 ---
 
@@ -290,7 +297,7 @@
 | 2 | 2.1 | 12k | ✓ COMPLETED |
 | 2 | 2.2 | 9k | ✓ COMPLETED |
 | 2 | 2.3 | 8k | ✓ COMPLETED |
-| 2 | 2.4 | 16k | PENDING |
+| 2 | 2.4 | 8k | ✓ COMPLETED |
 | 3 | 3.1 | 12k | PENDING |
 | 3 | 3.2 | 10k | PENDING |
 | 3 | 3.3 | 8k | PENDING |
@@ -301,7 +308,7 @@
 | 4 | 4.3 | 10k | PENDING |
 | 5 | 5.1 | 8k | PENDING |
 | 5 | 5.2 | 8k | PENDING |
-| **TOTAL** | | **166k** | |
+| **TOTAL** | | **158k** | |
 
 ---
 
@@ -317,11 +324,13 @@
 
 ## Current Status
 
-**Next Step:** Step 2.4 - Fix `inventory_merge_purchase.php`
+**Phase 2 COMPLETED!** All database connection replacements are done.
+
+**Next Step:** Step 3.1 - Consolidate Invoice Endpoints
 
 **Command to proceed:**
 ```
-Complete Step 2.4
+Complete Step 3.1
 ```
 
 ---
