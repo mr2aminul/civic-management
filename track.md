@@ -5,7 +5,7 @@
 - Remove `$pdo` usage and replace with existing `$db` (MysqliDb) and `$sqlConnect` (raw mysqli)
 - Consolidate redundant code across multiple files
 - Ensure all endpoints work with existing global database connections
-
+- Must follow the database schema for all endpoints from `database/00_COMPLETE_SCHEMA.sql`
 ---
 
 ## PHASE 1: Analysis & Planning (COMPLETED ✓)
