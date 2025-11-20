@@ -1,0 +1,169 @@
+<?php
+/**
+ * Pending Refunds Tab - Canceled purchases with refund management
+ * Path: manage/pages/clients/tabs/pending_refunds.phtml
+ * Shows all canceled purchases with refund tracking and payment recording
+ */
+?>
+
+<div class="tab-pane" id="tab_pending_refunds" role="tabpanel">
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+      <h6 class="mb-0">
+        <i class="lni lni-money-location me-2"></i>Pending Refunds
+        <span class="badge bg-danger" id="refund_count">0</span>
+      </h6>
+      <button class="btn btn-sm btn-outline-primary" onclick="loadPendingRefunds()">
+        <i class="lni lni-reload me-1"></i>Refresh
+      </button>
+    </div>
+
+    <div class="card-body p-3">
+      <!-- Stats -->
+      <div class="row g-2 mb-3">
+        <div class="col-md-3">
+          <div class="card bg-danger text-white p-2 text-center">
+            <small>Total Refund Due</small>
+            <div class="h6 mb-0">৳<span id="refund_total_due">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-success text-white p-2 text-center">
+            <small>Total Refunded</small>
+            <div class="h6 mb-0">৳<span id="refund_refunded">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-warning text-dark p-2 text-center">
+            <small>Outstanding</small>
+            <div class="h6 mb-0">৳<span id="refund_outstanding">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-secondary text-white p-2 text-center">
+            <small>Total Pending</small>
+            <div class="h6 mb-0"><span id="refund_pending_count">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter -->
+      <div class="row mb-3 g-2">
+        <div class="col-md-2">
+          <select class="form-select form-select-sm" id="refund_filter_status">
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="partial">Partial</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <input type="text" class="form-control form-control-sm" id="refund_filter_search" placeholder="Search client or purchase">
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-sm btn-primary w-100" onclick="loadPendingRefunds()">
+            <i class="lni lni-funnel me-1"></i>Filter
+          </button>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="table-responsive">
+        <table class="table table-hover table-sm" id="refund_table">
+          <thead class="table-light">
+            <tr>
+              <th>Purchase #</th>
+              <th>Client Name</th>
+              <th>Cancellation Date</th>
+              <th class="text-end">Total Paid</th>
+              <th class="text-end">Deduction</th>
+              <th class="text-end">Refund Due</th>
+              <th class="text-end">Refunded</th>
+              <th class="text-end">Outstanding</th>
+              <th>Status</th>
+              <th width="80">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="refund_tbody">
+            <tr><td colspan="10" class="text-center text-muted py-3">Loading refunds...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+window.loadPendingRefunds = function() {
+  const purchaseId = document.getElementById('ui_purchase_id')?.value;
+  if (!purchaseId) return;
+
+  fetch('/xhr/manage_inventory.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      action: 'get_pending_refunds',
+      purchase_id: purchaseId,
+      status: document.getElementById('refund_filter_status').value || '',
+      search: document.getElementById('refund_filter_search').value || ''
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      renderRefunds(data.refunds || []);
+      updateRefundStats(data.summary || {});
+    }
+  })
+  .catch(e => console.error('[v0] Error loading refunds:', e));
+};
+
+function renderRefunds(refunds) {
+  const tbody = document.getElementById('refund_tbody');
+  tbody.innerHTML = '';
+
+  if (refunds.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">No pending refunds</td></tr>';
+    return;
+  }
+
+  refunds.forEach(ref => {
+    const row = document.createElement('tr');
+    const outstanding = parseFloat(ref.refund_due) - parseFloat(ref.refunded_amount);
+    
+    row.innerHTML = `
+      <td><strong>#${ref.purchase_id}</strong></td>
+      <td>${ref.client_name}</td>
+      <td>${ref.cancellation_date}</td>
+      <td class="text-end">৳${parseFloat(ref.total_paid).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
+      <td class="text-end">${ref.deduction_percentage}% (৳${parseFloat(ref.deduction_amount).toLocaleString('en-US', {maximumFractionDigits: 2})})</td>
+      <td class="text-end">৳${parseFloat(ref.refund_due).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
+      <td class="text-end text-success">৳${parseFloat(ref.refunded_amount).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
+      <td class="text-end text-danger">৳${outstanding.toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
+      <td><span class="badge ${ref.status === 'completed' ? 'bg-success' : 'bg-warning'}">${ref.status}</span></td>
+      <td>
+        <button class="btn btn-sm btn-danger" onclick="openRefundModal(${ref.purchase_id})">
+          <i class="lni lni-edit me-1"></i>Manage
+        </button>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+
+  document.getElementById('refund_count').textContent = refunds.length;
+}
+
+function updateRefundStats(summary) {
+  document.getElementById('refund_total_due').textContent = parseFloat(summary.total_refund_due || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
+  document.getElementById('refund_refunded').textContent = parseFloat(summary.total_refunded || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
+  document.getElementById('refund_outstanding').textContent = parseFloat(summary.total_outstanding || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
+  document.getElementById('refund_pending_count').textContent = summary.pending_count || 0;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const tab = document.getElementById('tab_pending_refunds');
+  if (tab) {
+    tab.addEventListener('show.bs.tab', loadPendingRefunds);
+  }
+});
+</script>

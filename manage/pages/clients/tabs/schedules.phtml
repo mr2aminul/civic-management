@@ -1,0 +1,257 @@
+<?php
+// Comprehensive Payment Schedules Tab - Lists all schedules with filtering and actions
+// Path: manage/pages/clients/tabs/schedules.phtml
+?>
+
+<div class="tab-pane" id="tab_schedules" role="tabpanel">
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+      <h6 class="mb-0">Payment Schedules</h6>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-primary" id="btn_filter_schedules" title="Filter schedules">
+          <i class="lni lni-filter me-1"></i>Filter
+        </button>
+        <button class="btn btn-sm btn-primary" id="btn_add_schedule" data-bs-toggle="modal" data-bs-target="#addScheduleModal">
+          <i class="lni lni-plus me-1"></i>Add Schedule
+        </button>
+      </div>
+    </div>
+
+    <div class="card-body p-3">
+      <!-- Filters Panel -->
+      <div id="schedules_filters" class="row mb-3" style="display:none;">
+        <div class="col-md-2">
+          <select class="form-select form-select-sm" id="filter_status">
+            <option value="">All Status</option>
+            <option value="0">Pending</option>
+            <option value="1">Paid</option>
+            <option value="2">Partial</option>
+            <option value="3">Overdue</option>
+            <option value="4">Cancelled</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <select class="form-select form-select-sm" id="filter_type">
+            <option value="">All Types</option>
+            <option value="booking">Booking Money</option>
+            <option value="down">Down Payment</option>
+            <option value="installment">Installment</option>
+            <option value="adjustment">Adjustment</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <input type="date" class="form-control form-control-sm" id="filter_from_date" placeholder="From Date">
+        </div>
+        <div class="col-md-2">
+          <input type="date" class="form-control form-control-sm" id="filter_to_date" placeholder="To Date">
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-sm btn-primary w-100" id="btn_apply_filters">Apply</button>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-sm btn-outline-secondary w-100" id="btn_reset_filters">Reset</button>
+        </div>
+      </div>
+
+      <!-- Summary Cards -->
+      <div class="row g-2 mb-3">
+        <div class="col-md-2">
+          <div class="card bg-primary text-white p-2 text-center">
+            <small class="opacity-75">Total Due</small>
+            <div class="h6 mb-0">৳<span id="summary_total_due">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <div class="card bg-success text-white p-2 text-center">
+            <small class="opacity-75">Total Paid</small>
+            <div class="h6 mb-0">৳<span id="summary_total_paid">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <div class="card bg-warning text-white p-2 text-center">
+            <small class="opacity-75">Pending</small>
+            <span class="badge bg-dark" id="summary_pending_count">0</span>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <div class="card bg-danger text-white p-2 text-center">
+            <small class="opacity-75">Overdue</small>
+            <span class="badge bg-dark" id="summary_overdue_count">0</span>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <div class="card bg-info text-white p-2 text-center">
+            <small class="opacity-75">Overpayment</small>
+            <div class="h6 mb-0">৳<span id="summary_overpayment">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <div class="card bg-secondary text-white p-2 text-center">
+            <small class="opacity-75">Late Fees</small>
+            <div class="h6 mb-0">৳<span id="summary_late_fees">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Schedules Table -->
+      <div class="table-responsive">
+        <table class="table table-sm table-hover" id="schedules_table">
+          <thead class="table-light">
+            <tr>
+              <th width="50">Sr#</th>
+              <th>Particular</th>
+              <th>Type</th>
+              <th>Due Date</th>
+              <th class="text-end">Amount</th>
+              <th class="text-end">Paid</th>
+              <th class="text-end">Overdue Fee</th>
+              <th class="text-end">Late Fee</th>
+              <th>Status</th>
+              <th width="120">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="schedules_tbody">
+            <!-- Loaded via AJAX -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Schedules Tab JavaScript
+document.addEventListener('DOMContentLoaded', function() {
+  const scheduleTab = document.getElementById('tab_schedules');
+  if (!scheduleTab) return;
+
+  // Toggle filter panel
+  document.getElementById('btn_filter_schedules').addEventListener('click', function() {
+    const filterPanel = document.getElementById('schedules_filters');
+    filterPanel.style.display = filterPanel.style.display === 'none' ? 'grid' : 'none';
+  });
+
+  // Load schedules when tab is shown
+  scheduleTab.addEventListener('show.bs.tab', function() {
+    loadSchedules();
+  });
+
+  function loadSchedules(filters = {}) {
+    const purchaseId = document.getElementById('ui_purchase_id')?.value;
+    if (!purchaseId) return;
+
+    fetch('/xhr/manage_inventory.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        action: 'get_schedules_list',
+        purchase_id: purchaseId,
+        status: filters.status || '',
+        type: filters.type || '',
+        from_date: filters.from_date || '',
+        to_date: filters.to_date || ''
+      })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        renderSchedules(data.schedules);
+        updateSchedulesSummary(data.summary);
+      }
+    })
+    .catch(e => console.error('[v0] Error loading schedules:', e));
+  }
+
+  function renderSchedules(schedules) {
+    const tbody = document.getElementById('schedules_tbody');
+    tbody.innerHTML = '';
+
+    schedules.forEach((sch, idx) => {
+      const statusBadge = getStatusBadge(sch.status);
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${idx + 1}</td>
+        <td><strong>${sch.particular}</strong></td>
+        <td><span class="badge bg-secondary">${sch.type}</span></td>
+        <td>${sch.due_date || '-'}</td>
+        <td class="text-end">৳${parseFloat(sch.installment_amount).toLocaleString('bn-BD')}</td>
+        <td class="text-end">৳${parseFloat(sch.paid_amount).toLocaleString('bn-BD')}</td>
+        <td class="text-end text-danger">${sch.overdue_fee_amount > 0 ? '৳' + parseFloat(sch.overdue_fee_amount).toLocaleString('bn-BD') : '-'}</td>
+        <td class="text-end text-warning">${sch.late_fee_amount > 0 ? '৳' + parseFloat(sch.late_fee_amount).toLocaleString('bn-BD') : '-'}</td>
+        <td>${statusBadge}</td>
+        <td>
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-primary" title="View" onclick="viewScheduleDetail(${sch.id})">
+              <i class="lni lni-eye"></i>
+            </button>
+            <button class="btn btn-outline-warning" title="Edit" onclick="editSchedule(${sch.id})">
+              <i class="lni lni-pencil"></i>
+            </button>
+            <button class="btn btn-outline-danger" title="Delete" onclick="deleteSchedule(${sch.id})">
+              <i class="lni lni-trash"></i>
+            </button>
+          </div>
+        </td>
+      `;
+      tbody.appendChild(row);
+    });
+  }
+
+  function updateSchedulesSummary(summary) {
+    document.getElementById('summary_total_due').textContent = parseFloat(summary.total_due).toLocaleString('bn-BD', {maximumFractionDigits: 2});
+    document.getElementById('summary_total_paid').textContent = parseFloat(summary.total_paid).toLocaleString('bn-BD', {maximumFractionDigits: 2});
+    document.getElementById('summary_pending_count').textContent = summary.pending_count;
+    document.getElementById('summary_overdue_count').textContent = summary.overdue_count;
+    document.getElementById('summary_overpayment').textContent = parseFloat(summary.overpayment).toLocaleString('bn-BD', {maximumFractionDigits: 2});
+    document.getElementById('summary_late_fees').textContent = parseFloat(summary.late_fees).toLocaleString('bn-BD', {maximumFractionDigits: 2});
+  }
+
+  function getStatusBadge(status) {
+    const badges = {
+      '0': '<span class="badge bg-warning">Pending</span>',
+      '1': '<span class="badge bg-success">Paid</span>',
+      '2': '<span class="badge bg-info">Partial</span>',
+      '3': '<span class="badge bg-danger">Overdue</span>',
+      '4': '<span class="badge bg-secondary">Cancelled</span>'
+    };
+    return badges[status] || '<span class="badge bg-light">Unknown</span>';
+  }
+
+  // Apply filters
+  document.getElementById('btn_apply_filters').addEventListener('click', function() {
+    const filters = {
+      status: document.getElementById('filter_status').value,
+      type: document.getElementById('filter_type').value,
+      from_date: document.getElementById('filter_from_date').value,
+      to_date: document.getElementById('filter_to_date').value
+    };
+    loadSchedules(filters);
+  });
+
+  // Reset filters
+  document.getElementById('btn_reset_filters').addEventListener('click', function() {
+    document.getElementById('filter_status').value = '';
+    document.getElementById('filter_type').value = '';
+    document.getElementById('filter_from_date').value = '';
+    document.getElementById('filter_to_date').value = '';
+    loadSchedules();
+  });
+});
+
+// Global functions for schedule actions
+function viewScheduleDetail(scheduleId) {
+  console.log('[v0] Viewing schedule:', scheduleId);
+  // Open detail modal here
+}
+
+function editSchedule(scheduleId) {
+  console.log('[v0] Editing schedule:', scheduleId);
+  // Open edit modal
+}
+
+function deleteSchedule(scheduleId) {
+  if (confirm('Are you sure?')) {
+    console.log('[v0] Deleting schedule:', scheduleId);
+  }
+}
+</script>

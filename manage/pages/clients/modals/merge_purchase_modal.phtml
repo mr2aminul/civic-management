@@ -1,0 +1,495 @@
+<?php
+// /manage/pages/clients/modals/merge_purchase_modal.phtml
+// Modal for merging multiple purchases into one with admin approval
+?>
+
+<!-- Merge Purchase Modal -->
+<div class="modal fade" id="mergePurchaseModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-primary text-white border-0">
+        <h5 class="modal-title">
+          <i class="lni lni-merge me-2"></i>Merge Purchases
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-4">
+        <input type="hidden" id="merge_primary_purchase_id" value="">
+
+        <!-- Step Indicator -->
+        <div class="mb-4">
+          <div class="row g-2">
+            <div class="col-auto">
+              <span class="badge bg-primary step-indicator" data-step="1">
+                <i class="lni lni-check me-1"></i>Select Purchases
+              </span>
+            </div>
+            <div class="col-auto">
+              <i class="lni lni-arrow-right"></i>
+            </div>
+            <div class="col-auto">
+              <span class="badge bg-light text-dark step-indicator" data-step="2">
+                <i class="lni lni-settings me-1"></i>Configure
+              </span>
+            </div>
+            <div class="col-auto">
+              <i class="lni lni-arrow-right"></i>
+            </div>
+            <div class="col-auto">
+              <span class="badge bg-light text-dark step-indicator" data-step="3">
+                <i class="lni lni-check-circle me-1"></i>Review
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 1: Select Purchases -->
+        <div class="merge-step" data-step="1">
+          <div class="card border-0 bg-light mb-4">
+            <div class="card-body">
+              <h6 class="fw-semibold mb-3">
+                <i class="lni lni-home me-2"></i>Primary Purchase (Keep)
+              </h6>
+              <div class="row g-3">
+                <div class="col-md-3">
+                  <label class="form-label fw-medium">Project</label>
+                  <input type="text" id="merge_primary_project" class="form-control" readonly>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-medium">Block</label>
+                  <input type="text" id="merge_primary_block" class="form-control" readonly>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-medium">Plot</label>
+                  <input type="text" id="merge_primary_plot" class="form-control" readonly>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-medium">Katha</label>
+                  <input type="text" id="merge_primary_katha" class="form-control" readonly>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-medium">Client</label>
+                  <input type="text" id="merge_primary_client" class="form-control" readonly>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card border-0 bg-light mb-4">
+            <div class="card-body">
+              <h6 class="fw-semibold mb-3">
+                <i class="lni lni-home me-2"></i>Secondary Purchase (Merge Into Primary)
+              </h6>
+              <div class="mb-3">
+                <label class="form-label fw-medium">Search & Select Purchase to Merge *</label>
+                <select class="form-control" id="merge_secondary_purchase_select" style="width:100%">
+                  <option value="">Search purchases to merge...</option>
+                </select>
+                <small class="form-text text-muted">Search by: block, plot, katha, client name, file number</small>
+              </div>
+
+              <div id="merge_secondary_details" style="display:none;">
+                <div class="row g-3">
+                  <div class="col-md-3">
+                    <label class="form-label fw-medium">Project</label>
+                    <input type="text" id="merge_secondary_project" class="form-control" readonly>
+                  </div>
+                  <div class="col-md-2">
+                    <label class="form-label fw-medium">Block</label>
+                    <input type="text" id="merge_secondary_block" class="form-control" readonly>
+                  </div>
+                  <div class="col-md-2">
+                    <label class="form-label fw-medium">Plot</label>
+                    <input type="text" id="merge_secondary_plot" class="form-control" readonly>
+                  </div>
+                  <div class="col-md-2">
+                    <label class="form-label fw-medium">Katha</label>
+                    <input type="text" id="merge_secondary_katha" class="form-control" readonly>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label fw-medium">Client</label>
+                    <input type="text" id="merge_secondary_client" class="form-control" readonly>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-medium">Merge Reason *</label>
+            <textarea class="form-control" id="merge_reason" rows="3" placeholder="Why are these purchases being merged?"></textarea>
+            <small class="form-text text-muted">e.g., Same property, consolidating ownership, simplifying payment management</small>
+          </div>
+
+          <div class="alert alert-info">
+            <i class="lni lni-info-circle me-2"></i>
+            <strong>Note:</strong> All payments from the secondary purchase will be consolidated into the primary purchase. Payment schedules and invoices can be merged in the next step.
+          </div>
+        </div>
+
+        <!-- Step 2: Configure Merge -->
+        <div class="merge-step d-none" data-step="2">
+          <div class="card border-0 mb-4">
+            <div class="card-header bg-light border-0">
+              <h6 class="mb-0 fw-semibold">Merge Configuration</h6>
+            </div>
+            <div class="card-body">
+              <div class="mb-4">
+                <h6 class="fw-semibold mb-3">Payment Handling</h6>
+                <div class="form-check mb-2">
+                  <input class="form-check-input" type="checkbox" id="merge_combine_payments" checked>
+                  <label class="form-check-label" for="merge_combine_payments">
+                    <strong>Combine All Payments</strong>
+                    <div class="small text-muted">Secondary's paid amount (<span id="merge_secondary_paid_display">0</span>) will be applied to primary's payment schedule</div>
+                  </label>
+                </div>
+              </div>
+
+              <div class="mb-4">
+                <h6 class="fw-semibold mb-3">Payment Schedule Handling</h6>
+                <div class="form-check mb-2">
+                  <input class="form-check-input" type="radio" name="scheduleHandling" id="merge_schedule_consolidate" value="consolidate" checked>
+                  <label class="form-check-label" for="merge_schedule_consolidate">
+                    <strong>Consolidate Schedules</strong>
+                    <div class="small text-muted">Merge secondary's remaining installments into primary schedule</div>
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="scheduleHandling" id="merge_schedule_separate" value="separate">
+                  <label class="form-check-label" for="merge_schedule_separate">
+                    <strong>Keep Separate</strong>
+                    <div class="small text-muted">Keep secondary's schedule separate (reference only)</div>
+                  </label>
+                </div>
+              </div>
+
+              <div class="mb-4">
+                <h6 class="fw-semibold mb-3">Invoice Handling</h6>
+                <div class="form-check mb-2">
+                  <input class="form-check-input" type="radio" name="invoiceHandling" id="merge_invoice_consolidate" value="consolidate" checked>
+                  <label class="form-check-label" for="merge_invoice_consolidate">
+                    <strong>Consolidate Invoices</strong>
+                    <div class="small text-muted">Combine both invoices for a unified billing record</div>
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="invoiceHandling" id="merge_invoice_separate" value="separate">
+                  <label class="form-check-label" for="merge_invoice_separate">
+                    <strong>Keep Separate</strong>
+                    <div class="small text-muted">Keep invoices separate for audit trail</div>
+                  </label>
+                </div>
+              </div>
+
+              <div class="alert alert-warning">
+                <i class="lni lni-alert-triangle me-2"></i>
+                <strong>Important:</strong> This merge requires admin approval due to its critical nature. Payment and schedule changes will be tracked in the audit trail.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Review & Approve -->
+        <div class="merge-step d-none" data-step="3">
+          <div class="card border-0 bg-light mb-4">
+            <div class="card-header bg-primary text-white border-0">
+              <h6 class="mb-0">Merge Summary</h6>
+            </div>
+            <div class="card-body">
+              <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                  <h6 class="text-muted small mb-2">PRIMARY PURCHASE</h6>
+                  <div id="merge_review_primary" class="bg-white p-3 rounded border">
+                    <!-- Populated dynamically -->
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <h6 class="text-muted small mb-2">SECONDARY PURCHASE (TO MERGE)</h6>
+                  <div id="merge_review_secondary" class="bg-white p-3 rounded border">
+                    <!-- Populated dynamically -->
+                  </div>
+                </div>
+              </div>
+
+              <div class="alert alert-success">
+                <h6 class="alert-heading">
+                  <i class="lni lni-check-circle me-2"></i>Merge Impact
+                </h6>
+                <div class="small">
+                  <div class="mb-2">
+                    <strong>Combined Paid Amount:</strong>
+                    <span id="merge_review_combined_paid">৳0.00</span>
+                  </div>
+                  <div class="mb-2">
+                    <strong>Payment Schedule:</strong>
+                    <span id="merge_review_schedule_info">Will be consolidated</span>
+                  </div>
+                  <div>
+                    <strong>Status:</strong>
+                    <span class="badge bg-warning">Pending Admin Approval</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="alert alert-danger">
+                <i class="lni lni-alert-triangle me-2"></i>
+                <strong>Warning:</strong> This action is permanent and will be logged for audit purposes. Ensure all details are correct before submitting.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer border-top">
+        <button type="button" class="btn btn-secondary" id="merge_prev_step_btn" style="display:none;">
+          <i class="lni lni-chevron-left me-1"></i>Back
+        </button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="merge_next_step_btn">
+          <i class="lni lni-chevron-right me-1"></i>Next
+        </button>
+        <button type="button" class="btn btn-success" id="merge_submit_btn" style="display:none;">
+          <i class="lni lni-check-circle me-1"></i>Submit for Approval
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  var currentStep = 1;
+  var mergeData = {};
+
+  function notifySuccess(msg){
+    if (typeof pos5_success_noti === 'function') pos5_success_noti(msg);
+    else if (typeof toastr !== 'undefined' && toastr.success) toastr.success(msg);
+    else alert(msg);
+  }
+  function notifyError(msg){
+    if (typeof pos4_error_noti === 'function') pos4_error_noti(msg);
+    else if (typeof toastr !== 'undefined' && toastr.error) toastr.error(msg);
+    else alert(msg);
+  }
+
+  function goToStep(step) {
+    if (step === currentStep) return;
+
+    // Validate current step before moving
+    if (currentStep === 1 && step === 2) {
+      var secondaryId = $('#merge_secondary_purchase_select').val();
+      var reason = $('#merge_reason').val().trim();
+      if (!secondaryId) { notifyError('Please select a secondary purchase'); return; }
+      if (!reason || reason.length < 5) { notifyError('Please enter a merge reason'); return; }
+
+      mergeData.secondary_purchase_id = secondaryId;
+      mergeData.merge_reason = reason;
+    }
+
+    // Hide all steps
+    $('.merge-step').addClass('d-none');
+    $('[data-step="' + step + '"].merge-step').removeClass('d-none');
+
+    // Update step indicator
+    $('.step-indicator').removeClass('bg-primary').addClass('bg-light text-dark');
+    $('[data-step="' + step + '"].step-indicator').addClass('bg-primary').removeClass('bg-light text-dark');
+
+    // Update buttons
+    if (step === 1) {
+      $('#merge_prev_step_btn').hide();
+      $('#merge_next_step_btn').show();
+      $('#merge_submit_btn').hide();
+    } else if (step === 2) {
+      $('#merge_prev_step_btn').show();
+      $('#merge_next_step_btn').show();
+      $('#merge_submit_btn').hide();
+    } else if (step === 3) {
+      $('#merge_prev_step_btn').show();
+      $('#merge_next_step_btn').hide();
+      $('#merge_submit_btn').show();
+      updateReviewStep();
+    }
+
+    currentStep = step;
+  }
+
+  function updateReviewStep() {
+    var primaryInfo = '<strong>Purchase #' + $('#merge_primary_purchase_id').val() + '</strong><br>';
+    primaryInfo += $('#merge_primary_project').val() + ', Block ' + $('#merge_primary_block').val() + '<br>';
+    primaryInfo += 'Plot ' + $('#merge_primary_plot').val() + ' (' + $('#merge_primary_katha').val() + ' katha)';
+    $('#merge_review_primary').html(primaryInfo);
+
+    var secondaryInfo = '<strong>Purchase #' + ($('#mergePurchaseModal').data('secondary-id') || 'N/A') + '</strong><br>';
+    secondaryInfo += $('#merge_secondary_project').val() + ', Block ' + $('#merge_secondary_block').val() + '<br>';
+    secondaryInfo += 'Plot ' + $('#merge_secondary_plot').val() + ' (' + $('#merge_secondary_katha').val() + ' katha)';
+    $('#merge_review_secondary').html(secondaryInfo);
+
+    var primaryPaid = parseFloat($('#mergePurchaseModal').data('primary-paid') || 0);
+    var secondaryPaid = parseFloat($('#mergePurchaseModal').data('secondary-paid') || 0);
+    var combined = primaryPaid + secondaryPaid;
+    $('#merge_review_combined_paid').text('৳' + combined.toLocaleString('en-US', {minimumFractionDigits: 2}));
+  }
+
+  // Init Select2 for secondary purchase
+  function initMergeSecondarySelect() {
+    destroyMergeSecondarySelect();
+    var $sel = $('#merge_secondary_purchase_select');
+    var primaryId = $('#merge_primary_purchase_id').val();
+
+    $sel.select2({
+      dropdownParent: $('#mergePurchaseModal .modal-content'),
+      placeholder: 'Search purchases to merge...',
+      allowClear: true,
+      minimumInputLength: 0,
+      width: '100%',
+      ajax: {
+        url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=search_purchases',
+        type: 'POST',
+        dataType: 'json',
+        delay: 250,
+        cache: true,
+        data: function(params) {
+          return {
+            q: params.term || '',
+            page: params.page || 1,
+            per_page: 30,
+            exclude_purchase_id: primaryId,
+            all_statuses: true
+          };
+        },
+        processResults: function(data, params) {
+          var rows = (data && data.results) ? data.results : (Array.isArray(data) ? data : []);
+          var mapped = rows.map(function(it){
+            var text = (it.block || '') + ' - Plot ' + (it.plot || '') + ' (' + (it.katha || '0') + ' katha)';
+            return { id: it.id || it.purchase_id, text: text, raw: it };
+          });
+          return { results: mapped, pagination: { more: !!(data && data.more) } };
+        }
+      }
+    });
+
+    $sel.off('select2:select.mergeSecondarySelected').on('select2:select.mergeSecondarySelected', function(e) {
+      var item = e.params && e.params.data ? e.params.data : null;
+      if (item && item.raw) {
+        var raw = item.raw;
+        $('#merge_secondary_project').val(raw.project_name || '');
+        $('#merge_secondary_block').val(raw.block || '');
+        $('#merge_secondary_plot').val(raw.plot || '');
+        $('#merge_secondary_katha').val(raw.katha || '');
+        $('#merge_secondary_client').val(raw.client_name || '');
+        $('#merge_secondary_details').show();
+        $('#mergePurchaseModal').data('secondary-id', item.id).data('secondary-paid', raw.total_paid || 0);
+      }
+    });
+
+    $sel.off('select2:close.mergeSecondaryClose').on('select2:close.mergeSecondaryClose', function() {
+      if (!$(this).val()) {
+        $('#merge_secondary_details').hide();
+      }
+    });
+  }
+
+  function destroyMergeSecondarySelect() {
+    try {
+      var $sel = $('#merge_secondary_purchase_select');
+      if ($sel.hasClass('select2-hidden-accessible')) $sel.select2('destroy');
+    } catch(e) {}
+  }
+
+  // Populate modal
+  window.populateMergePurchaseModal = function(data, purchaseId) {
+    if (!data || !purchaseId) return;
+
+    currentStep = 1;
+    mergeData = {};
+
+    $('#merge_primary_purchase_id').val(purchaseId);
+    $('#merge_primary_project').val(data.project_name || '');
+    $('#merge_primary_block').val(data.current_block || '');
+    $('#merge_primary_plot').val(data.current_plot || '');
+    $('#merge_primary_katha').val(data.current_katha || '');
+    $('#merge_primary_client').val(data.current_name || '');
+
+    $('#mergePurchaseModal').data('primary-paid', data.total_paid || 0).data('secondary-paid', 0);
+
+    $('#merge_secondary_purchase_select').val(null).trigger('change');
+    $('#merge_secondary_details').hide();
+    $('#merge_reason').val('');
+    $('#merge_combine_payments').prop('checked', true);
+
+    goToStep(1);
+    initMergeSecondarySelect();
+  };
+
+  // Open modal
+  window.openMergePurchaseModal = function(purchaseId) {
+    if (!purchaseId) { notifyError('Purchase ID missing'); return; }
+
+    $.ajax({
+      url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_transfer_data',
+      type: 'POST',
+      dataType: 'json',
+      data: { purchase_id: purchaseId },
+      success: function(resp) {
+        var data = (typeof resp === 'object') ? resp : (resp ? JSON.parse(resp) : null);
+        if (data && (data.status == 200 || data.status === '200')) {
+          window.populateMergePurchaseModal(data, purchaseId);
+          $('#mergePurchaseModal').modal('show');
+        } else {
+          notifyError(data && data.message ? data.message : 'Failed to load purchase data');
+        }
+      },
+      error: function() { notifyError('Server error'); }
+    });
+  };
+
+  // Step navigation
+  $(document).off('click', '#merge_next_step_btn').on('click', '#merge_next_step_btn', function() {
+    goToStep(currentStep + 1);
+  });
+
+  $(document).off('click', '#merge_prev_step_btn').on('click', '#merge_prev_step_btn', function() {
+    goToStep(currentStep - 1);
+  });
+
+  // Submit merge
+  $(document).off('click', '#merge_submit_btn').on('click', '#merge_submit_btn', function() {
+    var primaryId = $('#merge_primary_purchase_id').val();
+    var secondaryId = $('#merge_secondary_purchase_select').val();
+    var reason = $('#merge_reason').val();
+    var combinePayments = $('#merge_combine_payments').is(':checked') ? 1 : 0;
+    var scheduleHandling = $('input[name="scheduleHandling"]:checked').val();
+    var invoiceHandling = $('input[name="invoiceHandling"]:checked').val();
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=request_purchase_merge', {
+      primary_purchase_id: primaryId,
+      secondary_purchase_id: secondaryId,
+      merge_reason: reason,
+      merge_paid_amount: combinePayments,
+      merge_payment_schedule: (scheduleHandling === 'consolidate' ? 1 : 0),
+      merge_invoices: (invoiceHandling === 'consolidate' ? 1 : 0)
+    }, function(resp) {
+      var data = (typeof resp === 'object') ? resp : (resp ? JSON.parse(resp) : null);
+      if (data && (data.status === 200 || data.status === '200')) {
+        notifySuccess(data.message || 'Merge request submitted for admin approval!');
+        $('#mergePurchaseModal').modal('hide');
+        setTimeout(function() { location.reload(); }, 700);
+      } else {
+        notifyError(data && data.message ? data.message : 'Failed to submit merge request');
+      }
+    }).fail(function(xhr) {
+      notifyError('Server error: ' + (xhr.responseText || 'Unknown'));
+    });
+  });
+
+  // Cleanup on close
+  $('#mergePurchaseModal').on('hidden.bs.modal', function() {
+    destroyMergeSecondarySelect();
+    currentStep = 1;
+    mergeData = {};
+  });
+});
+</script>

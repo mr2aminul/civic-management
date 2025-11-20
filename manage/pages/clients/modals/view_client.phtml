@@ -1,0 +1,1398 @@
+<div class="self_remove_on_close">
+<?php
+/* view_client.phtml - Complete client view with enhanced payment schedule functionality */
+Global $project_mapping;
+global $db, $wo;
+
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// Fetch users
+$get_users = $db->orderBy('position', 'ASC')->where('active', '1')->where('banned', '0')->get(T_USERS);
+
+// Totals - Fixed calculations
+$clientId = $wo['client']['id'];
+
+// Fixed total amount calculation
+$total_amount = 0;
+$total_purchase = 0;
+try {
+    $helpers = $db->rawQuery("
+        SELECT bh.per_katha, b.katha 
+        FROM `" . T_BOOKING_HELPER . "` bh
+        JOIN `" . T_BOOKING . "` b ON b.id = bh.booking_id
+        WHERE bh.client_id = ? AND bh.status != '4'
+    ", [$clientId]);
+    
+    foreach ($helpers as $helper) {
+        $per_katha = (float)($helper->per_katha ?? 0);
+        $katha = (float)($helper->katha ?? 0);
+        $total_amount += ($per_katha * $katha);
+        $total_purchase++;
+    }
+} catch (Exception $e) {
+    $total_amount = 0;
+    $total_purchase = 0;
+}
+
+$total_paid    = (float) $db->where('client_id', $clientId)->getValue(T_INVOICE, 'SUM(paid_amount)') ?: 0;
+$total_due     = $total_amount - $total_paid;
+$total_invoice = (int)   $db->where('client_id', $clientId)->getValue(T_INVOICE, 'COUNT(*)');
+
+$get_nominees = $db->where('customer_id', $clientId)->orderBy('name', 'ASC')->get(T_CRM_NOMINEES);
+?>
+
+<!-- ===== Custom modal styles (drop into page head or here) ===== -->
+<style>
+/* Fix Select2 dropdown positioning issues */
+.select2-container {
+  z-index: 2050 !important;
+}
+
+.select2-dropdown {
+  z-index: 2050 !important;
+  position: fixed !important;
+}
+
+/* Specific fixes for nested modals */
+#viewClient-modal .select2-container {
+  z-index: 2060 !important;
+}
+
+#viewClient-modal .select2-dropdown {
+  z-index: 2060 !important;
+  position: fixed !important;
+}
+
+#updateInstallmentModal .select2-container {
+  z-index: 2070 !important;
+}
+
+#updateInstallmentModal .select2-dropdown {
+  z-index: 2070 !important;
+  position: fixed !important;
+}
+
+#changePlotModal .select2-container {
+  z-index: 2080 !important;
+}
+
+#changePlotModal .select2-dropdown {
+  z-index: 2080 !important;
+  position: absolute !important;
+}
+
+/* Ensure Select2 dropdowns stay within viewport */
+.select2-dropdown {
+  max-height: 300px !important;
+  overflow-y: auto !important;
+}
+
+/* Fix Select2 search field positioning */
+.select2-search--dropdown {
+  padding: 4px !important;
+}
+
+.select2-search--dropdown .select2-search__field {
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Modal backdrop blur and darker tint */
+.modal-backdrop.show {
+  background-color: rgba(18, 24, 31, 0.55); /* slightly darker */
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+/* Enhanced modal styling */
+.modal-xl {
+  max-width: 95vw;
+}
+
+.modal-content {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* Header gradient */
+.bg-gradient-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Card enhancements */
+.card {
+  transition: all 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
+}
+
+/* Table styling */
+.table-hover tbody tr:hover {
+  background-color: rgba(0,123,255,0.05);
+}
+
+/* Print styles */
+@media print {
+  .no-print { display: none !important; }
+  .modal { position: static !important; }
+  .modal-dialog { margin: 0 !important; max-width: none !important; }
+  .modal-content { box-shadow: none !important; border: none !important; }
+  body { background: white !important; }
+  
+  /* Booking form print styles */
+  .print_area {
+    page-break-inside: avoid;
+    margin-bottom: 20px;
+  }
+  
+  .print_area:not(:last-child) {
+    page-break-after: always;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .modal-xl { max-width: 98vw; margin: 10px; }
+  .card-body { padding: 1rem; }
+  .table-responsive { font-size: 0.875rem; }
+}
+
+/* Loading states */
+.btn.loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.btn.loading::after {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 8px;
+  border: 2px solid transparent;
+  border-top: 2px solid currentColor;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Enhanced dropdown styling */
+.dropdown-menu {
+  border: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  border-radius: 8px;
+}
+
+.dropdown-item {
+  padding: 8px 16px;
+  transition: all 0.2s ease;
+}
+
+.dropdown-item:hover {
+  background-color: rgba(0,123,255,0.1);
+  transform: translateX(2px);
+}
+
+/* Status badge styling */
+.badge {
+  font-size: 0.75em;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+/* Transfer history badge styling */
+.badge.bg-warning {
+  background-color: #ffc107 !important;
+  color: #000 !important;
+}
+
+.badge.bg-info.mt-1 {
+  background-color: #17a2b8 !important;
+  color: #fff !important;
+}
+
+.badge i.lni {
+  font-size: 0.9em;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+
+/* Timeline styling for transfer history */
+.timeline {
+  position: relative;
+  padding-left: 20px;
+}
+
+.timeline-item {
+  position: relative;
+}
+
+.timeline-item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 50px;
+  bottom: -20px;
+  width: 2px;
+  background: linear-gradient(to bottom, #e0e0e0 0%, #f5f5f5 100%);
+}
+
+.timeline-item.latest .marker-icon {
+  box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.2);
+  animation: pulse-latest 2s infinite;
+}
+
+@keyframes pulse-latest {
+  0% {
+    box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(40, 167, 69, 0.1);
+  }
+  100% {
+    box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.2);
+  }
+}
+
+.timeline-marker {
+  position: relative;
+  z-index: 2;
+}
+
+.marker-icon {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  transition: all 0.3s ease;
+}
+
+.marker-icon:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+}
+
+.transfer-history-row {
+  background-color: #f8f9fa;
+}
+
+.transfer-history-row .card {
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* View History badge hover effect */
+.toggle-history.badge {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toggle-history.badge:hover {
+  transform: translateX(2px);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+/* Avatar styling */
+.avatar {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+/* Form enhancements */
+.form-control:focus {
+  border-color: #667eea;
+  box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+
+/* Icon styling */
+ion-icon {
+  vertical-align: middle;
+}
+
+/* Utility classes */
+.text-gradient {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.shadow-soft {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
+}
+
+/* Animation classes */
+.fade-in {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+</style>
+
+<div class="modal fade full_screen always" id="viewClient-modal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content border-0 shadow-lg">
+
+      <!-- Header with modern styling -->
+      <div class="modal-header no-print bg-gradient-primary text-white border-0">
+        <div class="d-flex align-items-center gap-3">
+          <div class="avatar rounded-circle bg-white text-primary d-flex align-items-center justify-content-center" style="width:48px;height:48px;font-weight:700;font-size:18px;">
+            <?= strtoupper(substr($wo['client']['name'],0,1)) ?>
+          </div>
+          <div>
+            <h4 class="mb-0 text-white"><?= htmlspecialchars($wo['client']['name']) ?></h4>
+            <div class="text-white-50 small"><?= htmlspecialchars(strtolower($wo['client']['email']) ?? '') ?></div>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+          <button id="printButton" class="btn btn-outline-light btn-sm" title="Print booking form">
+            <i class="lni lni-printer me-1"></i> Print
+          </button>
+          <button type="button" class="btn btn-outline-light btn-sm" data-bs-dismiss="modal" aria-label="Close">
+            <i class="lni lni-close"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="view-container form-toggle">
+        <!-- Summary Cards with modern design -->
+        <section id="client_details" class="no-print mt-4 px-4">
+          <div class="row g-3 mb-4">
+            <?php foreach ([['Plots', number_format($total_purchase), 'cart', 'info'], ['Total', "৳".number_format($total_amount), 'bag-handle-sharp', 'primary'], ['Paid', "৳".number_format($total_paid), 'checkmark-circle', 'success'], ['Due', "৳".number_format($total_due), 'time', 'danger']] as [$title, $value, $icon, $variant]): ?>
+              <div class="col-6 col-md-4 col-lg">
+                <div class="card h-100 border-0 shadow-sm">
+                  <div class="card-body d-flex align-items-center p-3">
+                    <div class="flex-grow-1">
+                      <p class="text-muted mb-1 small fw-medium"><?= htmlspecialchars($title) ?></p>
+                      <h5 class="mb-0 fw-bold"><?= htmlspecialchars($value) ?></h5>
+                    </div>
+                    <div class="fs-2 text-<?= $variant ?>">
+                      <ion-icon name="<?= htmlspecialchars($icon) ?>"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            <?php endforeach; ?>
+          </div>
+
+          <!-- Purchase Table with modern styling -->
+          <div class="card border-0 shadow-sm">
+            <div class="card-header bg-light border-0 py-3">
+              <h6 class="mb-0 fw-semibold text-dark">Purchase Details</h6>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive" style="overflow: visible;">
+                <table class="table table-hover mb-0" id="purchaseTable">
+                  <thead class="table-light">
+                    <tr>
+                      <th class="fw-semibold">Project</th>
+                      <th class="fw-semibold">Block</th>
+                      <th class="fw-semibold">Katha</th>
+                      <th class="fw-semibold">Plot</th>
+                      <th class="fw-semibold">Road</th>
+                      <th class="fw-semibold">File</th>
+                      <th class="fw-semibold">Date</th>
+                      <th class="fw-semibold">Status</th>
+                      <th class="fw-semibold text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php
+                    // Ensure $wo['booking_helper'] exists and is iterable
+                    if (!empty($wo['booking_helper']) && is_array($wo['booking_helper'])):
+                        foreach ($wo['booking_helper'] as $index => $p):
+                            $client  = $p['client'] ?? [];
+                            $booking = $p['booking'] ?? [];
+                    
+                            // --- parse nominee_ids (supports JSON array, CSV, pipe, or bracketed lists) ---
+                            $nominee_ids = [];
+                            $raw_nom_ids = $p['nominee_ids'] ?? ($booking['nominee_ids'] ?? null);
+                            if (!empty($raw_nom_ids)) {
+                                // try JSON
+                                $decoded = json_decode($raw_nom_ids, true);
+                                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                                    $nominee_ids = array_map('intval', $decoded);
+                                } else {
+                                    // normalize string: trim brackets then split by comma or pipe
+                                    $s = trim((string)$raw_nom_ids);
+                                    $s = trim($s, "[] \t\n\r\0\x0B");
+                                    if ($s !== '') {
+                                        $sep = (strpos($s, '|') !== false) ? '|' : ',';
+                                        $parts = array_filter(array_map('trim', explode($sep, $s)), function($v){ return $v !== ''; });
+                                        $nominee_ids = array_map('intval', $parts);
+                                    }
+                                }
+                            }
+                    
+                            // --- fetch nominee rows (only if we have ids) ---
+                            $i_nominee = [];
+                            $ii_nominee = [];
+                            if (!empty($nominee_ids) && isset($db) && method_exists($db, 'where')) {
+                                $rows = $db->where('id', $nominee_ids, 'IN')->get('crm_nominees', null, 'id, name, address, birthday, share_parcent, relation, phone');
+                    
+                                // normalize rows to associative by id
+                                $rows_by_id = [];
+                                foreach ($rows as $r) {
+                                    $row = is_object($r) ? (array)$r : (array)$r;
+                                    $rows_by_id[(int)$row['id']] = $row;
+                                }
+                    
+                                // preserve order from $nominee_ids and take first two
+                                $count = 0;
+                                foreach ($nominee_ids as $nid) {
+                                    $nid = (int)$nid;
+                                    if (!isset($rows_by_id[$nid])) continue;
+                                    if ($count === 0) {
+                                        $i_nominee = $rows_by_id[$nid];
+                                    } elseif ($count === 1) {
+                                        $ii_nominee = $rows_by_id[$nid];
+                                        break; // we only need two
+                                    }
+                                    $count++;
+                                }
+                            }
+                            // ensure arrays
+                            if (!is_array($i_nominee)) $i_nominee = [];
+                            if (!is_array($ii_nominee)) $ii_nominee = [];
+                    
+                            // --- parse installments (supports JSON, serialize, array, CSV) ---
+                            $installments = [];
+                            $rawInst = $p['installment'] ?? ($p['installments'] ?? ($booking['installments'] ?? null));
+                            if (!empty($rawInst) || $rawInst === '0') {
+                                // try JSON
+                                $dec = json_decode($rawInst, true);
+                                if (json_last_error() === JSON_ERROR_NONE && (is_array($dec) || is_object($dec))) {
+                                    $installments = (array)$dec;
+                                } else {
+                                    // try unserialize (legacy)
+                                    $un = @unserialize($rawInst);
+                                    if ($un !== false && (is_array($un) || is_object($un))) {
+                                        $installments = (array)$un;
+                                    } elseif (is_array($rawInst)) {
+                                        $installments = $rawInst;
+                                    } else {
+                                        // fallback: CSV or pipe-separated simple list
+                                        $s = trim((string)$rawInst);
+                                        if ($s !== '') {
+                                            $sep = (strpos($s, '|') !== false) ? '|' : ',';
+                                            $parts = array_map('trim', explode($sep, $s));
+                                            $installments = array_filter($parts, function($v){ return $v !== ''; });
+                                            // re-index
+                                            $installments = array_values($installments);
+                                        }
+                                    }
+                                }
+                            }
+                    
+                            // --- project name / html as before ---
+                            $proj_raw = isset($booking['project']) ? $booking['project'] : '';
+                            $proj_raw = str_replace('-', ' ', $proj_raw);
+                            $proj_raw = ucwords($proj_raw);
+                            $proj_html = htmlspecialchars($proj_raw, ENT_QUOTES);
+                            if ($proj_html === '') $proj_html = '-';
+                            
+                            $project_id = null;
+                            if (!empty($project_mapping) && !empty($booking['project']) && isset($project_mapping[$booking['project']])) {
+                                $project_id = $project_mapping[$booking['project']];
+                            }
+
+                            // --- fetch transfer history for this purchase ---
+                            $transfer_history = [];
+                            $latest_transfer = null;
+                            try {
+                                $transfers = $db->where('original_purchase_id', (int)$p['id'])
+                                               ->orderBy('transfer_date', 'DESC')
+                                               ->get('crm_purchase_transfer_history');
+                                if (!empty($transfers)) {
+                                    $transfer_history = $transfers;
+                                    $latest_transfer = $transfers[0];
+                                }
+                            } catch (Exception $e) {
+                                $transfer_history = [];
+                                $latest_transfer = null;
+                            }
+
+                            // --- pass everything into the template ---
+                            echo Wo_LoadManagePage('clients/booking_form_template', [
+                                'p' => $p,
+                                'index' => $index,
+                                'client' => $client,
+                                'booking' => $booking,
+                                'proj_html' => $proj_html,
+                                'i_nominee' => $i_nominee,
+                                'ii_nominee' => $ii_nominee,
+                                'installments' => $installments
+                            ]);
+                    ?>
+
+
+
+                    <!-- Purchase Row -->
+                    <tr id="purchaseRow_<?= (int)$p['id'] ?>">
+                      <td><?= $proj_html ?></td>
+                      <td><?= ($booking['project'] == 'hill-town') ? htmlspecialchars(ucwords($booking['block'])) : 'N/A' ?></td>
+                      <td><?= htmlspecialchars($booking['katha']) ?></td>
+                      <td><?= htmlspecialchars($booking['plot']) ?></td>
+                      <td><?= htmlspecialchars($booking['road']) ?></td>
+                      <td><?= htmlspecialchars($p['file_num']) ?></td>
+                      <td><?= htmlspecialchars(date('d M Y', $p['time'])) ?></td>
+                        <td>
+                          <?php
+                            // status may be present on $p or $booking — check both
+                            $status = (string)( $p['status'] ?? ($booking['status'] ?? '') );
+                            // cancel date may be a timestamp or a string; check both sources
+                            $raw_cancel = $p['cancel_date'] ?? ($booking['cancel_date'] ?? '');
+                        
+                            // helper to format cancel date (handles timestamp or parseable string)
+                            $formatted_cancel = '';
+                            if ($raw_cancel !== '' && $raw_cancel !== null) {
+                                if (is_numeric($raw_cancel)) {
+                                    $ts = (int)$raw_cancel;
+                                    // skip zero/invalid timestamps
+                                    if ($ts > 0) $formatted_cancel = date('d M Y', $ts);
+                                } else {
+                                    $ts2 = strtotime($raw_cancel);
+                                    if ($ts2 !== false && $ts2 > 0) $formatted_cancel = date('d M Y', $ts2);
+                                }
+                            }
+                        
+                            if ($status === '1') {
+                                echo '<span class="badge bg-info"> Available </span>';
+                            } elseif ($status === '2') {
+                                echo '<span class="badge bg-success"> Sold </span>';
+                            } elseif ($status === '3') {
+                                echo '<span class="badge bg-success"> Complete </span>';
+                            } elseif ($status === '4') {
+                                echo '<span class="badge bg-danger"> Canceled </span>';
+                                if ($formatted_cancel !== '') {
+                                    echo '<br><small class="text-muted">Cancelled on: ' . htmlspecialchars($formatted_cancel) . '</small>';
+                                }
+                            } else {
+                                echo '<span class="badge bg-info"> Available </span>';
+                            }
+
+                            // --- display transfer history badge if exists ---
+                            if (!empty($latest_transfer)):
+                                $transfer_type = $latest_transfer->transfer_type ?? '';
+                                $transfer_date = $latest_transfer->transfer_date ?? '';
+                                $formatted_transfer_date = '';
+                                if ($transfer_date) {
+                                    $ts = strtotime($transfer_date);
+                                    if ($ts !== false && $ts > 0) $formatted_transfer_date = date('d M Y', $ts);
+                                }
+
+                                if ($transfer_type === 'name_transfer') {
+                                    $new_client_name = htmlspecialchars($latest_transfer->new_client_name ?? 'New Owner');
+                                    echo '<br><span class="badge bg-warning mt-1" title="Ownership transferred">';
+                                    echo '<i class="lni lni-user"></i> Transferred to: ' . $new_client_name;
+                                    echo '</span>';
+                                    if ($formatted_transfer_date) {
+                                        echo '<br><small class="text-muted">Transfer date: ' . $formatted_transfer_date . '</small>';
+                                    }
+                                  } else if ($transfer_type === 'plot_transfer') {
+                                    $new_plot = htmlspecialchars($latest_transfer->new_plot ?? '');
+                                    $new_block = htmlspecialchars($latest_transfer->new_block ?? '');
+                                    echo '<br><span class="badge bg-info mt-1" title="Plot changed">';
+                                    echo '<i class="lni lni-map"></i> Changed to: Block ' . $new_block . ', Plot ' . $new_plot;
+                                    echo '</span>';
+                                    if ($formatted_transfer_date) {
+                                        echo '<br><small class="text-muted">Transfer date: ' . $formatted_transfer_date . '</small>';
+                                    }
+                                  }
+
+                                // Add view history link
+                                $history_count = count($transfer_history);
+                                echo '<br><a href="javascript:;" class="badge bg-secondary mt-1 text-decoration-none toggle-history" data-id="' . (int)$p['id'] . '" title="View complete transfer history">';
+                                echo '<i class="lni lni-eye"></i> View History (' . $history_count . ')';
+                                echo '</a>';
+                            endif;
+
+                            // Check for pending changes and display badge
+                            try {
+                              $pending_count = $db->where('purchase_id', (int)$p['id'])
+                                                 ->where('status', 'pending')
+                                                 ->getValue('crm_pending_changes', 'COUNT(*)') ?: 0;
+
+                              if ($pending_count > 0) {
+                                echo '<br><a href="javascript:;" class="badge bg-warning mt-1 text-decoration-none pending-change-badge" data-purchase-id="' . (int)$p['id'] . '" title="View pending changes">';
+                                echo '<i class="lni lni-hourglass"></i> ' . $pending_count . ' Pending Change' . ($pending_count > 1 ? 's' : '');
+                                echo '</a>';
+                              }
+                            } catch (Exception $e) {
+                              // Silently fail if table doesn't exist yet
+                            }
+                          ?>
+                        </td>
+
+                      <td class="text-center">
+                        <!-- Enhanced Dropdown Actions -->
+                        <div class="dropdown">
+                          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" 
+                                  id="dropdownMenuButton<?= (int)$p['id'] ?>" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="lni lni-more-alt"></i> More
+                          </button>
+                          <ul class="dropdown-menu dropdown-menu-end shadow-sm" aria-labelledby="dropdownMenuButton<?= (int)$p['id'] ?>">
+                            <li>
+                              <a class="dropdown-item print-booking-form" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
+                                <i class="lni lni-printer me-2 text-primary"></i> Print Booking Form
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item manage-schedule" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
+                                <i class="lni lni-calendar me-2 text-primary"></i> Manage Payment Schedule
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item print_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
+                                <i class="lni lni-calendar me-2 text-primary"></i> Print Payment Schedule
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="name">
+                                <i class="lni lni-shuffle me-2 text-warning"></i> Transfer Ownership
+                              </a>
+                            </li>
+                            <li>
+                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="plot">
+                                <i class="lni lni-shuffle me-2 text-warning"></i> Change Plot
+                              </a>
+                            </li>
+                            
+                            <li>
+                              <a class="dropdown-item manage-refund" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
+                                <i class="lni lni-money-location me-2 text-danger"></i> Manage Refund
+                              </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="cancel">
+                                <i class="lni lni-close me-2 text-danger"></i> Cancel Purchase
+                              </a>
+                            </li>
+                          </ul>
+                        </div>
+                      </td>
+                    </tr>
+
+                    <!-- Collapsible Transfer History Details Row -->
+                    <?php if (!empty($transfer_history) && count($transfer_history) > 0): ?>
+                    <tr class="transfer-history-row" id="transferHistoryRow_<?= (int)$p['id'] ?>" style="display: none;">
+                      <td colspan="9" class="p-0">
+                        <div class="card border-0 m-2 shadow-sm">
+                          <div class="card-header bg-light border-0 d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0 fw-semibold">
+                              <i class="lni lni-history me-2 text-primary"></i>Transfer History
+                            </h6>
+                            <button class="btn btn-sm btn-outline-secondary toggle-history" data-id="<?= (int)$p['id'] ?>">
+                              <i class="lni lni-chevron-up"></i> Hide
+                            </button>
+                          </div>
+                          <div class="card-body">
+                            <div class="timeline">
+                              <?php foreach ($transfer_history as $t_idx => $transfer):
+                                $t_type = $transfer->transfer_type ?? '';
+                                $t_date = $transfer->transfer_date ?? '';
+                                $formatted_t_date = '';
+                                if ($t_date) {
+                                  $ts = strtotime($t_date);
+                                  if ($ts !== false && $ts > 0) $formatted_t_date = date('d M Y H:i', $ts);
+                                }
+
+                                $is_first = ($t_idx === 0);
+                              ?>
+                              <div class="timeline-item <?= $is_first ? 'latest' : '' ?> mb-4">
+                                <div class="d-flex gap-3">
+                                  <div class="timeline-marker">
+                                    <?php if ($t_type === 'name_transfer'): ?>
+                                      <div class="marker-icon bg-warning text-white rounded-circle d-flex align-items-center justify-content-center" style="width:40px;height:40px;">
+                                        <i class="lni lni-user fs-5"></i>
+                                      </div>
+                                    <?php elseif ($t_type === 'plot_transfer'): ?>
+                                      <div class="marker-icon bg-info text-white rounded-circle d-flex align-items-center justify-content-center" style="width:40px;height:40px;">
+                                        <i class="lni lni-map fs-5"></i>
+                                      </div>
+                                    <?php elseif ($t_type === 'cancel_plot'): ?>
+                                      <div class="marker-icon bg-danger text-white rounded-circle d-flex align-items-center justify-content-center" style="width:40px;height:40px;">
+                                        <i class="lni lni-close fs-5"></i>
+                                      </div>
+                                    <?php endif; ?>
+                                  </div>
+
+                                  <div class="flex-grow-1">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                      <div>
+                                        <h6 class="mb-1 fw-bold">
+                                          <?php if ($t_type === 'name_transfer'): ?>
+                                            Ownership Transfer
+                                          <?php elseif ($t_type === 'plot_transfer'): ?>
+                                            Plot Change
+                                          <?php elseif ($t_type === 'cancel_plot'): ?>
+                                            Plot Cancellation
+                                          <?php endif; ?>
+                                          <?= $is_first ? '<span class="badge bg-success ms-2">Latest</span>' : '' ?>
+                                        </h6>
+                                        <small class="text-muted">
+                                          <i class="lni lni-calendar me-1"></i><?= htmlspecialchars($formatted_t_date) ?>
+                                        </small>
+                                      </div>
+                                    </div>
+
+                                    <?php if ($t_type === 'name_transfer'): ?>
+                                      <!-- Name Transfer Details -->
+                                      <div class="card border-0 bg-light p-3">
+                                        <div class="row g-3">
+                                          <div class="col-md-6">
+                                            <strong class="text-muted small d-block mb-1">Previous Owner</strong>
+                                            <div class="fw-medium"><?= htmlspecialchars($transfer->previous_client_name ?? 'N/A') ?></div>
+                                          </div>
+                                          <div class="col-md-6">
+                                            <strong class="text-muted small d-block mb-1">New Owner</strong>
+                                            <div class="fw-medium text-success"><?= htmlspecialchars($transfer->new_client_name ?? 'N/A') ?></div>
+                                          </div>
+                                          <?php if (!empty($transfer->reason)): ?>
+                                          <div class="col-12">
+                                            <strong class="text-muted small d-block mb-1">Reason</strong>
+                                            <div class="fw-medium"><?= htmlspecialchars($transfer->reason) ?></div>
+                                          </div>
+                                          <?php endif; ?>
+                                          <?php if (!empty($transfer->transfer_fee_amount) && $transfer->transfer_fee_amount > 0): ?>
+                                          <div class="col-12">
+                                            <strong class="text-muted small d-block mb-1">Transfer Fee</strong>
+                                            <div class="fw-medium">৳<?= number_format($transfer->transfer_fee_amount, 2) ?></div>
+                                          </div>
+                                          <?php endif; ?>
+                                        </div>
+                                      </div>
+
+                                    <?php elseif ($t_type === 'plot_transfer'): ?>
+                                      <!-- Plot Transfer Details -->
+                                      <div class="card border-0 bg-light p-3">
+                                        <div class="row g-3">
+                                          <div class="col-md-6">
+                                            <strong class="text-muted small d-block mb-2">Previous Plot</strong>
+                                            <div class="d-flex flex-column gap-1">
+                                              <div><span class="text-muted">Project:</span> <strong><?= htmlspecialchars($transfer->previous_project ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Block:</span> <strong><?= htmlspecialchars($transfer->previous_block ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Plot:</span> <strong><?= htmlspecialchars($transfer->previous_plot ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Road:</span> <strong><?= htmlspecialchars($transfer->previous_road ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Katha:</span> <strong><?= htmlspecialchars($transfer->previous_katha ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Rate:</span> <strong>৳<?= number_format($transfer->previous_per_katha ?? 0, 2) ?>/katha</strong></div>
+                                            </div>
+                                          </div>
+                                          <div class="col-md-6">
+                                            <strong class="text-muted small d-block mb-2">New Plot</strong>
+                                            <div class="d-flex flex-column gap-1">
+                                              <div><span class="text-muted">Project:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_project ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Block:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_block ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Plot:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_plot ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Road:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_road ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Katha:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_katha ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Rate:</span> <strong class="text-success">৳<?= number_format($transfer->new_per_katha ?? 0, 2) ?>/katha</strong></div>
+                                            </div>
+                                          </div>
+                                          <?php if (!empty($transfer->reason)): ?>
+                                          <div class="col-12 mt-2">
+                                            <strong class="text-muted small d-block mb-1">Reason</strong>
+                                            <div class="fw-medium"><?= htmlspecialchars($transfer->reason) ?></div>
+                                          </div>
+                                          <?php endif; ?>
+                                          <?php if (!empty($transfer->transfer_fee_amount) && $transfer->transfer_fee_amount > 0): ?>
+                                          <div class="col-12">
+                                            <strong class="text-muted small d-block mb-1">Transfer Fee</strong>
+                                            <div class="fw-medium">৳<?= number_format($transfer->transfer_fee_amount, 2) ?></div>
+                                          </div>
+                                          <?php endif; ?>
+                                        </div>
+                                      </div>
+
+                                    <?php elseif ($t_type === 'cancel_plot'): ?>
+                                      <!-- Cancellation Details -->
+                                      <div class="card border-0 bg-light p-3">
+                                        <div class="row g-3">
+                                          <div class="col-12">
+                                            <strong class="text-muted small d-block mb-2">Cancelled Plot</strong>
+                                            <div class="d-flex flex-column gap-1">
+                                              <div><span class="text-muted">Project:</span> <strong><?= htmlspecialchars($transfer->previous_project ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Block:</span> <strong><?= htmlspecialchars($transfer->previous_block ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Plot:</span> <strong><?= htmlspecialchars($transfer->previous_plot ?? 'N/A') ?></strong></div>
+                                              <div><span class="text-muted">Katha:</span> <strong><?= htmlspecialchars($transfer->previous_katha ?? 'N/A') ?></strong></div>
+                                            </div>
+                                          </div>
+                                          <?php if (!empty($transfer->reason)): ?>
+                                          <div class="col-12">
+                                            <strong class="text-muted small d-block mb-1">Cancellation Reason</strong>
+                                            <div class="fw-medium text-danger"><?= htmlspecialchars($transfer->reason) ?></div>
+                                          </div>
+                                          <?php endif; ?>
+                                          <?php if (!empty($transfer->transfer_fee_amount) && $transfer->transfer_fee_amount > 0): ?>
+                                          <div class="col-12">
+                                            <strong class="text-muted small d-block mb-1">Cancellation Fee</strong>
+                                            <div class="fw-medium">৳<?= number_format($transfer->transfer_fee_amount, 2) ?></div>
+                                          </div>
+                                          <?php endif; ?>
+                                        </div>
+                                      </div>
+                                    <?php endif; ?>
+
+                                    <?php if (!empty($transfer->notes)): ?>
+                                    <div class="mt-2">
+                                      <small class="text-muted">
+                                        <i class="lni lni-text-format me-1"></i>
+                                        <strong>Notes:</strong> <?= htmlspecialchars($transfer->notes) ?>
+                                      </small>
+                                    </div>
+                                    <?php endif; ?>
+                                  </div>
+                                </div>
+                              </div>
+                              <?php endforeach; ?>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    <?php endif; ?>
+
+                    <?php endforeach; ?>
+                    <?php endif; ?>
+                  </tbody>
+                </table>
+              </div>
+
+              <?= Wo_LoadManagePage('clients/add_purchase_form', ['get_nominees' => $get_nominees]) ?>
+
+            </div>
+          </div>
+
+          <!-- Client Details Card -->
+          <div class="card mt-4 border-0 shadow-sm">
+            <div class="card-header bg-light border-0 py-3">
+              <h6 class="mb-0 fw-semibold text-dark">Client Information</h6>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex align-items-center mb-3">
+                    <ion-icon name="person-circle" class="text-primary fs-5 me-2"></ion-icon>
+                    <div>
+                      <small class="text-muted">Name</small>
+                      <div class="fw-medium"><?= htmlspecialchars($wo['client']['name']) ?></div>
+                    </div>
+                  </div>
+                  
+                  <div class="d-flex align-items-center mb-3">
+                    <ion-icon name="location" class="text-primary fs-5 me-2"></ion-icon>
+                    <div>
+                      <small class="text-muted">Address</small>
+                      <div class="fw-medium"><?= htmlspecialchars($wo['client']['address']) ?></div>
+                    </div>
+                  </div>
+                  
+                  <div class="d-flex align-items-center mb-3">
+                    <ion-icon name="call" class="text-primary fs-5 me-2"></ion-icon>
+                    <div>
+                      <small class="text-muted">Phone</small>
+                      <div class="fw-medium"><?= htmlspecialchars($wo['client']['phone']) ?></div>
+                    </div>
+                  </div>
+
+                  <?php if (!empty($wo['additional']['reference'])): ?>
+                    <div class="d-flex align-items-center mb-3">
+                      <ion-icon name="link" class="text-primary fs-5 me-2"></ion-icon>
+                      <div>
+                        <small class="text-muted">Reference</small>
+                        <div class="fw-medium"><?= htmlspecialchars(Wo_UserData($wo['additional']['reference'])['name']) ?></div>
+                      </div>
+                    </div>
+                  <?php endif; ?>
+                </div>
+
+                <div class="col-md-6">
+                  <?php if ($wo['additional']): ?>
+                    <h6 class="fw-semibold mb-3">Additional Details</h6>
+                    <div class="table-responsive">
+                      <table class="table table-sm table-borderless mb-0">
+                        <tbody>
+                          <?php foreach ([
+                            'spouse_name'=>'Spouse Name','fathers_name'=>'Father\'s Name','permanent_addr'=>'Permanent Address',
+                            'email'=>'Email','nationality'=>'Nationality','birthday'=>'Birthday','religion'=>'Religion',
+                            'nid'=>'National ID','passport'=>'Passport'
+                          ] as $key=>$label): if (!empty($wo['additional'][$key])):
+                            $val = htmlspecialchars($wo['additional'][$key]);
+                          ?>
+                            <tr>
+                              <td class="text-muted small" style="width:40%"><?= $label ?></td>
+                              <td class="fw-medium"><?= $val ?></td>
+                            </tr>
+                          <?php endif; endforeach; ?>
+                        </tbody>
+                      </table>
+                    </div>
+                  <?php endif; ?>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-3 border-top">
+                <button class="btn btn-outline-primary show-booking-form">
+                  <i class="lni lni-print me-1"></i> Print Booking Form
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Analytics Cards Section -->
+        <section id="client_analytics" class="no-print mt-4 px-4 mb-4">
+          <h5 class="fw-bold mb-3">Client Analytics & Key Metrics</h5>
+          
+          <div class="row g-3">
+            <!-- Total Investment -->
+            <div class="col-md-3 col-sm-6">
+              <div class="card h-100 border-0 shadow-sm analytics-card">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <p class="text-muted mb-1 small fw-medium">Total Investment</p>
+                      <h4 class="mb-0 fw-bold text-primary">৳<?php echo number_format($total_amount, 0); ?></h4>
+                      <small class="text-success">
+                        <i class="lni lni-trending-up"></i> 
+                        <?php echo count($wo['booking_helper'] ?? []); ?> plots
+                      </small>
+                    </div>
+                    <div class="fs-3 text-primary opacity-50">
+                      <ion-icon name="bag-handle-sharp"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Total Paid -->
+            <div class="col-md-3 col-sm-6">
+              <div class="card h-100 border-0 shadow-sm analytics-card">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <p class="text-muted mb-1 small fw-medium">Total Paid</p>
+                      <h4 class="mb-0 fw-bold text-success">৳<?php echo number_format($total_paid, 0); ?></h4>
+                      <small class="text-info">
+                        <span class="badge bg-success"><?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%</span> Completed
+                      </small>
+                    </div>
+                    <div class="fs-3 text-success opacity-50">
+                      <ion-icon name="checkmark-circle"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Remaining Due -->
+            <div class="col-md-3 col-sm-6">
+              <div class="card h-100 border-0 shadow-sm analytics-card">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <p class="text-muted mb-1 small fw-medium">Remaining Due</p>
+                      <h4 class="mb-0 fw-bold text-warning">৳<?php echo number_format($total_due, 0); ?></h4>
+                      <small class="text-muted">
+                        <?php echo round(($total_due / ($total_amount ?: 1)) * 100, 1); ?>% Remaining
+                      </small>
+                    </div>
+                    <div class="fs-3 text-warning opacity-50">
+                      <ion-icon name="time"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Invoice Count -->
+            <div class="col-md-3 col-sm-6">
+              <div class="card h-100 border-0 shadow-sm analytics-card">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                      <p class="text-muted mb-1 small fw-medium">Invoices</p>
+                      <h4 class="mb-0 fw-bold text-info"><?php echo $total_invoice; ?></h4>
+                      <small class="text-muted">Total Transactions</small>
+                    </div>
+                    <div class="fs-3 text-info opacity-50">
+                      <ion-icon name="document"></ion-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Progress Chart -->
+          <div class="card border-0 shadow-sm mt-3">
+            <div class="card-body">
+              <h6 class="fw-bold mb-3">Payment Progress</h6>
+              <div class="progress" style="height: 30px; border-radius: 8px;">
+                <div class="progress-bar bg-success" role="progressbar" style="width: <?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%">
+                  <small class="text-white fw-bold">Paid: <?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%</small>
+                </div>
+              </div>
+              <div class="row mt-3 text-center small">
+                <div class="col">
+                  <strong>৳<?php echo number_format($total_paid, 0); ?></strong><br><small class="text-muted">Paid Amount</small>
+                </div>
+                <div class="col">
+                  <strong>৳<?php echo number_format($total_amount, 0); ?></strong><br><small class="text-muted">Total Amount</small>
+                </div>
+                <div class="col">
+                  <strong>৳<?php echo number_format($total_due, 0); ?></strong><br><small class="text-muted">Remaining Due</small>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Activity -->
+          <div class="card border-0 shadow-sm mt-3">
+            <div class="card-header bg-light border-0 py-3">
+              <h6 class="mb-0 fw-bold">Recent Activity</h6>
+            </div>
+            <div class="card-body">
+              <div class="activity-timeline">
+                <?php
+                  $audit_logs = $db->where('module', 'payment_schedule')->where('record_id', $clientId)->orderBy('created_at', 'DESC')->get('crm_audit_log', 5) ?: [];
+                  
+                  if (empty($audit_logs)) {
+                    echo '<p class="text-muted mb-0">No recent activity</p>';
+                  } else {
+                    foreach ($audit_logs as $log) {
+                      echo '<div class="d-flex gap-3 mb-2 pb-2 border-bottom">';
+                      echo '<div class="text-muted small">' . date('M d, Y H:i', strtotime($log->created_at)) . '</div>';
+                      echo '<div><strong>' . ucfirst($log->action) . '</strong> - ' . $log->notes . '</div>';
+                      echo '</div>';
+                    }
+                  }
+                ?>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+      
+
+    </div>
+  </div>
+</div>
+      <!-- Load all modals -->
+      <?= Wo_LoadManagePage('clients/modals/payment_schedule_modal') ?>
+      <?= Wo_LoadManagePage('clients/modals/transfer_modal') ?>
+      <?= Wo_LoadManagePage('clients/modals/refund_modal') ?>
+      <?= Wo_LoadManagePage('clients/modals/pending_change_detail') ?>
+      <!-- Added missing merge_purchase_modal loading -->
+      <?= Wo_LoadManagePage('clients/modals/merge_purchase_modal') ?>
+<!-- Core JavaScript for View Client -->
+<script>
+jQuery(function($){
+  'use strict';
+
+  /* ========== Preview XLSX (AJAX) ========== */
+  function previewXlsx(purchaseId){
+    if (!purchaseId){ alert('Purchase ID missing'); return; }
+    // Prepare payload and call save_schedule_xlsx with preview flag (server should support preview:1)
+    var $btn = $('#ui_preview_xlsx');
+    $btn.prop('disabled', true).html('<i class="spinner-border spinner-border-sm me-1"></i>Preparing...');
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=installment_excel_modal', { purchase_id: purchaseId })
+      .done(function(resp){
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          $('body').append(data.html);
+          $('#installmentExcelModal').modal('show');
+        } else alert('Failed to open modal');
+      })
+    .fail(function(){ alert('Server error while preparing preview'); })
+    .always(function(){ $btn.prop('disabled', false).html('<i class="lni lni-eye me-1"></i>Preview XLSX'); });
+  }
+  
+  // Core utilities
+  function moneyVal(v){
+    if (v === undefined || v === null) return 0;
+    var s = String(v).replace(/,/g,'').trim();
+    if (s === '') return 0;
+    var n = Number(s);
+    return isNaN(n) ? 0 : n;
+  }
+
+  function fmtMoney(v){
+    if (v === undefined || v === null) v = 0;
+    return Number(Math.round(v * 100) / 100).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2
+    });
+  }
+
+  // Initialize modal components when modal opens
+  $('#viewClient-modal').on('shown.bs.modal', function(){
+    // Initialize all components
+    if (typeof initViewClientComponents === 'function') {
+      initViewClientComponents();
+    }
+
+    // Initialize transfer history toggle
+    initTransferHistoryToggle();
+  });
+
+  // Transfer History Toggle Function
+  function initTransferHistoryToggle() {
+    $(document).off('click.transferHistory', '.toggle-history').on('click.transferHistory', '.toggle-history', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+
+      var purchaseId = $(this).data('id');
+      if (!purchaseId) return;
+
+      var $historyRow = $('#transferHistoryRow_' + purchaseId);
+      var $btn = $(this);
+
+      if ($historyRow.is(':visible')) {
+        // Hide history
+        $historyRow.fadeOut(200);
+        $btn.find('i').removeClass('lni-chevron-up').addClass('lni-chevron-down');
+        if ($btn.hasClass('badge')) {
+          $btn.html('<i class="lni lni-eye"></i> View History (' + $btn.text().match(/\d+/)[0] + ')');
+        } else {
+          $btn.html('<i class="lni lni-chevron-down"></i> Show');
+        }
+      } else {
+        // Show history
+        $historyRow.fadeIn(300);
+        $btn.find('i').removeClass('lni-chevron-down').addClass('lni-chevron-up');
+        if ($btn.hasClass('badge')) {
+          $btn.html('<i class="lni lni-eye-slash"></i> Hide History (' + $btn.text().match(/\d+/)[0] + ')');
+        } else {
+          $btn.html('<i class="lni lni-chevron-up"></i> Hide');
+        }
+
+        // Smooth scroll to history row
+        setTimeout(function() {
+          $('html, body').animate({
+            scrollTop: $historyRow.offset().top - 100
+          }, 300);
+        }, 100);
+      }
+    });
+  }
+
+  // Cleanup when modal closes - self remove all bindings
+  $('#viewClient-modal').on('hidden.bs.modal', function(){
+    // Destroy all Select2 instances
+    $('#viewClient-modal').find('.select2-hidden-accessible').each(function(){
+      try {
+        $(this).select2('destroy');
+      } catch(e) {}
+    });
+    
+    // Remove all event handlers bound to window
+    $(window).off('.viewClient');
+    $(document).off('.viewClient');
+    
+    // Clear any intervals or timeouts
+    if (window.viewClientIntervals) {
+      window.viewClientIntervals.forEach(function(id) {
+        clearInterval(id);
+      });
+      window.viewClientIntervals = [];
+    }
+    
+    if (window.viewClientTimeouts) {
+      window.viewClientTimeouts.forEach(function(id) {
+        clearTimeout(id);
+      });
+      window.viewClientTimeouts = [];
+    }
+    
+    // Clean up global functions
+    delete window.transferPurchase;
+    delete window.generatePurchaseReport;
+    delete window.exportPurchaseData;
+    delete window.suspendPurchase;
+    delete window.initViewClientComponents;
+    delete window.openPaymentSchedule;
+    delete window.changePlot;
+    delete window.printPaymentSchedule;
+    delete window.togglePayment;
+    
+    //Clean up the code
+    $('.self_remove_on_close').remove();
+  });
+
+
+  // Wire #printButton to print ALL booking forms in this modal
+  $('#printButton').off('click').on('click', function(){
+    var ids = [];
+    $('#viewClient-modal .print_area').each(function(){
+      var id = $(this).attr('data-purchase-id');
+      if (id) ids.push(id);
+    });
+    if (!ids.length) {
+      alert('No booking forms available to print.');
+      return;
+    }
+    printBookingFormsByIds(ids);
+  });
+
+  // Wire #printButton to print ALL booking forms in this modal
+  $('.print_installment').off('click').on('click', function(){
+      var id = $(this).attr('data-id');
+        previewXlsx(id);
+  });
+
+  // Wire individual print button(s)
+  $(document).off('click', '.print-booking-form').on('click', '.print-booking-form', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    if (!id) { alert('Booking id missing'); return; }
+    printBookingFormsByIds([id]);
+  });
+
+  // Global functions for dropdown actions
+  window.generatePurchaseReport = function(purchaseId) {
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=generate_purchase_report', {
+      purchase_id: purchaseId
+    })
+    .done(function(response){
+      var data = typeof response === 'string' ? JSON.parse(response) : response;
+      if (data && data.status === 200 && data.download_url) {
+        window.open(data.download_url, '_blank');
+      } else {
+        alert(data.message || 'Failed to generate report');
+      }
+    })
+    .fail(function(){
+      alert('Server error while generating report');
+    });
+  };
+
+  window.exportPurchaseData = function(purchaseId) {
+    var format = prompt('Export format:\n1. Excel\n2. PDF\n3. CSV', '1');
+    if (!format) return;
+    
+    var formatMap = {'1': 'excel', '2': 'pdf', '3': 'csv'};
+    var exportFormat = formatMap[format] || 'excel';
+    
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=export_purchase_data', {
+      purchase_id: purchaseId,
+      export_type: exportFormat
+    })
+    .done(function(response){
+      var data = typeof response === 'string' ? JSON.parse(response) : response;
+      if (data && data.status === 200 && data.download_url) {
+        var link = document.createElement('a');
+        link.href = data.download_url;
+        link.download = data.filename || 'purchase_data.' + exportFormat;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        alert(data.message || 'Failed to export data');
+      }
+    })
+    .fail(function(){
+      alert('Server error while exporting data');
+    });
+  };
+
+  $(document).off('click', '.manage-schedule').on('click', '.manage-schedule', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    if (!id) { alert('Purchase id missing'); return; }
+    window.openPaymentSchedule(id);
+  });
+
+  $(document).off('click', '.transfer-plot').on('click', '.transfer-plot', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    var tab = $(this).data('tab');
+    if (!id) { alert('Purchase id missing'); return; }
+    if (!tab) { tab = 'name_transfer'; }
+    window.openTransferModal(id, tab);
+  });
+
+  $(document).off('click', '.manage-refund').on('click', '.manage-refund', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    if (!id) { alert('Purchase id missing'); return; }
+    window.openRefundModal(id);
+  });
+
+  // Handle pending change badge click
+  $(document).off('click', '.pending-change-badge').on('click', '.pending-change-badge', function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    var purchaseId = $(this).data('purchase-id');
+    if (!purchaseId) return;
+
+    // Load pending changes for this purchase
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_changes', {
+      purchase_id: purchaseId,
+      status: 'pending'
+    })
+    .done(function(resp){
+      var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+      if (data && data.status === 200 && data.changes && data.changes.length > 0) {
+        // If only one pending change, open detail modal directly
+        if (data.changes.length === 1) {
+          var isAdmin = <?php echo (Wo_IsAdmin() || Wo_IsModerator() || check_permission('manage-clients')) ? 'true' : 'false'; ?>;
+          if (typeof window.openPendingChangeDetail === 'function') {
+            window.openPendingChangeDetail(data.changes[0].id, isAdmin);
+          } else {
+            alert('Pending change detail modal not loaded');
+          }
+        } else {
+          // Multiple pending changes - show list
+          var msg = 'This purchase has ' + data.changes.length + ' pending changes:\n\n';
+          data.changes.forEach(function(c, i){
+            var typeLabel = c.change_type.replace('_', ' ').toUpperCase();
+            msg += (i + 1) + '. ' + typeLabel + ' (Requested: ' + c.request_date + ')\n';
+          });
+          msg += '\nView details in the Pending Changes tab.';
+          alert(msg);
+        }
+      } else {
+        alert('No pending changes found for this purchase');
+      }
+    })
+    .fail(function(){
+      alert('Failed to load pending changes');
+    });
+  });
+
+});
+</script>
+
+</div>

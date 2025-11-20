@@ -1,0 +1,295 @@
+<?php
+/**
+ * Add Purchase Form Modal
+ * Allows adding new purchases to clients with complete validation and conflict checking
+ */
+?>
+<!-- Add/Register Purchase Modal -->
+<div class="modal fade" id="addPurchaseModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header border-bottom">
+                <h5 class="modal-title">
+                    <i class="lni lni-plus-circle"></i> Register New Purchase
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="addPurchaseForm" method="POST">
+                <div class="modal-body">
+                    <!-- Project Selection -->
+                    <div class="mb-3">
+                        <label for="purchaseProject" class="form-label">Project <span class="text-danger">*</span></label>
+                        <select class="form-select" id="purchaseProject" name="project_id" required onchange="loadPlots()">
+                            <option value="">-- Select Project --</option>
+                            <?php
+                                $projects = $db->orderBy('name', 'ASC')->get('wo_projects');
+                                foreach ($projects as $project) {
+                                    echo '<option value="' . htmlspecialchars($project->slug ?? $project->id) . '">' . htmlspecialchars($project->name) . '</option>';
+                                }
+                            ?>
+                        </select>
+                    </div>
+
+                    <!-- Purchase/Plot Selection with Search -->
+                    <div class="mb-3">
+                        <label for="purchaseBooking" class="form-label">Select Plot/Property <span class="text-danger">*</span></label>
+                        <select class="form-select" id="purchaseBooking" name="purchase_id" required onchange="loadPurchaseDetails()"></select>
+                        <small class="form-text text-muted">Search by plot number, block, katha, road, or file number</small>
+                        <div id="purchaseConflictAlert" class="alert alert-warning mt-2" style="display: none;"></div>
+                    </div>
+
+                    <!-- Client Selection -->
+                    <div class="mb-3">
+                        <label for="purchaseClient" class="form-label">Client <span class="text-danger">*</span></label>
+                        <select class="form-select" id="purchaseClient" name="client_id" required>
+                            <option value="">-- Select Client --</option>
+                        </select>
+                        <small class="form-text text-muted">Type to search for existing clients</small>
+                    </div>
+
+                    <!-- Price Information -->
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="purchasePerKatha" class="form-label">Price Per Katha <span class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <span class="input-group-text">৳</span>
+                                <input type="number" class="form-control" id="purchasePerKatha" name="per_katha" step="0.01" required onchange="calculateTotalPrice()">
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Total Katha</label>
+                            <input type="text" class="form-control" id="purchaseTotalKatha" readonly>
+                        </div>
+                    </div>
+
+                    <!-- Down Payment & Booking Money -->
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="purchaseDownPayment" class="form-label">Down Payment <span class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <span class="input-group-text">৳</span>
+                                <input type="number" class="form-control" id="purchaseDownPayment" name="down_payment" step="0.01" value="0" required onchange="calculateTotalPrice()">
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="purchaseBookingMoney" class="form-label">Booking Money</label>
+                            <div class="input-group">
+                                <span class="input-group-text">৳</span>
+                                <input type="number" class="form-control" id="purchaseBookingMoney" name="booking_money" step="0.01" value="0" onchange="calculateTotalPrice()">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Total Price Summary -->
+                    <div class="card bg-light mb-3">
+                        <div class="card-body">
+                            <div class="row text-center">
+                                <div class="col-md-4">
+                                    <small class="text-muted">Total Price</small>
+                                    <p class="mb-0" id="purchaseTotalPrice" style="font-size: 1.2rem; font-weight: bold;">৳0.00</p>
+                                </div>
+                                <div class="col-md-4">
+                                    <small class="text-muted">Total Advance</small>
+                                    <p class="mb-0" id="purchaseTotalAdvance" style="font-size: 1.2rem; font-weight: bold;">৳0.00</p>
+                                </div>
+                                <div class="col-md-4">
+                                    <small class="text-muted">Remaining</small>
+                                    <p class="mb-0" id="purchaseRemaining" style="font-size: 1.2rem; font-weight: bold;">৳0.00</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- File Number -->
+                    <div class="mb-3">
+                        <label for="purchaseFileNum" class="form-label">File Number <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="purchaseFileNum" name="file_num" required placeholder="e.g., MH-001-2024">
+                    </div>
+
+                    <!-- Nominees Selection -->
+                    <div class="mb-3">
+                        <label for="purchaseNominees" class="form-label">Nominee(s)</label>
+                        <select class="form-select" id="purchaseNominees" name="nominee_ids" multiple size="3">
+                            <option value="">-- Select Nominees (Optional) --</option>
+                        </select>
+                        <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple nominees</small>
+                    </div>
+
+                    <!-- Force Override Option -->
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="purchaseForce" name="force" value="1">
+                        <label class="form-check-label" for="purchaseForce">
+                            Force override if plot conflicts detected
+                        </label>
+                        <small class="form-text text-danger d-block">⚠️ Use only if you're sure previous booking was cancelled</small>
+                    </div>
+                </div>
+
+                <div class="modal-footer border-top">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="purchaseSubmitBtn">Register Purchase</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+$(document).ready(function() {
+    // Initialize Select2 for purchase/booking selection
+    $('#purchaseBooking').select2({
+        placeholder: 'Search plots...',
+        allowClear: true,
+        ajax: {
+            url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=search_purchases',
+            dataType: 'json',
+            delay: 300,
+            data: function(params) {
+                return {
+                    q: params.term,
+                    project_id: $('#purchaseProject').val(),
+                    page: params.page || 1,
+                    per_page: 30
+                };
+            },
+            processResults: function(data) {
+                return {
+                    results: data.results || [],
+                    pagination: { more: data.more || false }
+                };
+            }
+        },
+        templateResult: function(item) {
+            if (!item.id) return item.text;
+            let badge = '<span class="badge bg-' + (item.available ? 'success' : 'danger') + '">' + item.status_label + '</span>';
+            return $('<span>' + item.text + ' ' + badge + '</span>');
+        }
+    });
+
+    // Initialize Select2 for client selection
+    $('#purchaseClient').select2({
+        placeholder: 'Search clients...',
+        allowClear: true,
+        ajax: {
+            url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_all_clients',
+            dataType: 'json',
+            delay: 300,
+            data: function(params) {
+                return { q: params.term };
+            },
+            processResults: function(data) {
+                return { results: data || [] };
+            }
+        }
+    });
+
+    // Initialize Select2 for nominees
+    $('#purchaseNominees').select2({
+        placeholder: 'Select nominees...',
+        allowClear: true
+    });
+});
+
+function loadPlots() {
+    const projectId = $('#purchaseProject').val();
+    if (!projectId) {
+        $('#purchaseBooking').html('<option value="">Select project first</option>').trigger('change');
+        return;
+    }
+    // Select2 will handle loading via AJAX
+}
+
+function loadPurchaseDetails() {
+    const purchaseId = $('#purchaseBooking').val();
+    if (!purchaseId) return;
+
+    // Get purchase details to populate katha
+    $.ajax({
+        url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_purchase_by_id',
+        type: 'GET',
+        data: { id: purchaseId },
+        dataType: 'json',
+        success: function(resp) {
+            if (resp.status === 200 && resp.item) {
+                const item = resp.item;
+                $('#purchaseTotalKatha').val(item.katha || 0);
+                calculateTotalPrice();
+                
+                // Show conflict warning if not available
+                if (!item.available) {
+                    $('#purchaseConflictAlert').html(
+                        '<strong>⚠️ Warning:</strong> This plot may have active bookings. ' +
+                        'Check "Force override" to proceed.'
+                    ).show();
+                } else {
+                    $('#purchaseConflictAlert').hide();
+                }
+            }
+        }
+    });
+}
+
+function calculateTotalPrice() {
+    const perKatha = parseFloat($('#purchasePerKatha').val()) || 0;
+    const totalKatha = parseFloat($('#purchaseTotalKatha').val()) || 0;
+    const downPayment = parseFloat($('#purchaseDownPayment').val()) || 0;
+    const bookingMoney = parseFloat($('#purchaseBookingMoney').val()) || 0;
+
+    const totalPrice = perKatha * totalKatha;
+    const totalAdvance = downPayment + bookingMoney;
+    const remaining = totalPrice - totalAdvance;
+
+    $('#purchaseTotalPrice').text('৳' + totalPrice.toLocaleString('en-BD', { minimumFractionDigits: 2 }));
+    $('#purchaseTotalAdvance').text('৳' + totalAdvance.toLocaleString('en-BD', { minimumFractionDigits: 2 }));
+    $('#purchaseRemaining').text('৳' + Math.max(0, remaining).toLocaleString('en-BD', { minimumFractionDigits: 2 }));
+
+    // Validate advance doesn't exceed total
+    if (totalAdvance > totalPrice && totalPrice > 0) {
+        $('#purchaseRemaining').css('color', 'red');
+        $('#purchaseSubmitBtn').prop('disabled', true);
+    } else {
+        $('#purchaseRemaining').css('color', 'inherit');
+        $('#purchaseSubmitBtn').prop('disabled', false);
+    }
+}
+
+$('#addPurchaseForm').on('submit', function(e) {
+    e.preventDefault();
+
+    const formData = {
+        client_id: $('#purchaseClient').val(),
+        project_id: $('#purchaseProject').val(),
+        purchase_id: $('#purchaseBooking').val(),
+        per_katha: $('#purchasePerKatha').val(),
+        down_payment: $('#purchaseDownPayment').val(),
+        booking_money: $('#purchaseBookingMoney').val(),
+        file_num: $('#purchaseFileNum').val(),
+        nominee_ids: $('#purchaseNominees').val() ? JSON.stringify($('#purchaseNominees').val()) : '[]',
+        force: $('#purchaseForce').is(':checked') ? '1' : '0'
+    };
+
+    $.ajax({
+        url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=register_purchase',
+        type: 'POST',
+        data: formData,
+        dataType: 'json',
+        success: function(resp) {
+            if (resp.status === 200) {
+                pos5_success_noti(resp.message);
+                $('#addPurchaseModal').modal('hide');
+                this.form.reset();
+                // Refresh the parent data table
+                if (typeof DataTableRefresh === 'function') {
+                    DataTableRefresh();
+                }
+            } else {
+                pos4_error_noti(resp.message || 'Error registering purchase');
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('AJAX error:', error);
+            pos4_error_noti('Error: ' + error);
+        }
+    });
+});
+</script>

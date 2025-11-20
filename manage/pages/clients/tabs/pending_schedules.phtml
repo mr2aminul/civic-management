@@ -1,0 +1,168 @@
+<?php
+/**
+ * Pending Schedules Tab - Payment schedules awaiting payment
+ * Path: manage/pages/clients/tabs/pending_schedules.phtml
+ * Shows all active purchases with unpaid current month installments
+ */
+?>
+
+<div class="tab-pane" id="tab_pending_schedules" role="tabpanel">
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+      <h6 class="mb-0">
+        <i class="lni lni-time me-2"></i>Pending Payment Schedules
+        <span class="badge bg-warning" id="pending_schedules_count">0</span>
+      </h6>
+      <button class="btn btn-sm btn-outline-primary" onclick="loadPendingSchedules()">
+        <i class="lni lni-reload me-1"></i>Refresh
+      </button>
+    </div>
+
+    <div class="card-body p-3">
+      <!-- Stats -->
+      <div class="row g-2 mb-3">
+        <div class="col-md-3">
+          <div class="card bg-warning text-dark p-2 text-center">
+            <small>Total Due</small>
+            <div class="h6 mb-0">৳<span id="sch_total_due">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-danger text-white p-2 text-center">
+            <small>Overdue</small>
+            <div class="h6 mb-0">৳<span id="sch_overdue">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-info text-white p-2 text-center">
+            <small>Upcoming</small>
+            <div class="h6 mb-0">৳<span id="sch_upcoming">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-secondary text-white p-2 text-center">
+            <small>Total Schedules</small>
+            <div class="h6 mb-0"><span id="sch_count">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter -->
+      <div class="row mb-3 g-2">
+        <div class="col-md-2">
+          <select class="form-select form-select-sm" id="sch_filter_status">
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="overdue">Overdue</option>
+            <option value="partial">Partial</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <input type="text" class="form-control form-control-sm" id="sch_filter_search" placeholder="Search client or purchase">
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-sm btn-primary w-100" onclick="loadPendingSchedules()">
+            <i class="lni lni-funnel me-1"></i>Filter
+          </button>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="table-responsive">
+        <table class="table table-hover table-sm" id="pending_schedules_table">
+          <thead class="table-light">
+            <tr>
+              <th>Purchase #</th>
+              <th>Client Name</th>
+              <th>Installment #</th>
+              <th class="text-end">Amount</th>
+              <th class="text-end">Paid</th>
+              <th class="text-end">Due</th>
+              <th>Due Date</th>
+              <th>Status</th>
+              <th width="80">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="pending_schedules_tbody">
+            <tr><td colspan="9" class="text-center text-muted py-3">Loading schedules...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+window.loadPendingSchedules = function() {
+  const purchaseId = document.getElementById('ui_purchase_id')?.value;
+  if (!purchaseId) return;
+
+  fetch('/xhr/manage_inventory.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      action: 'get_pending_schedules',
+      purchase_id: purchaseId,
+      status: document.getElementById('sch_filter_status').value || '',
+      search: document.getElementById('sch_filter_search').value || ''
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      renderPendingSchedules(data.schedules || []);
+      updateScheduleStats(data.summary || {});
+    }
+  })
+  .catch(e => console.error('[v0] Error loading schedules:', e));
+};
+
+function renderPendingSchedules(schedules) {
+  const tbody = document.getElementById('pending_schedules_tbody');
+  tbody.innerHTML = '';
+
+  if (schedules.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">No pending schedules</td></tr>';
+    return;
+  }
+
+  schedules.forEach(sch => {
+    const row = document.createElement('tr');
+    const dueAmount = parseFloat(sch.installment_amount) - parseFloat(sch.paid_amount);
+    const statusClass = sch.status === 'overdue' ? 'text-danger' : 'text-warning';
+    
+    row.innerHTML = `
+      <td><strong>#${sch.purchase_id}</strong></td>
+      <td>${sch.client_name}</td>
+      <td>${sch.installment_number}</td>
+      <td class="text-end">৳${parseFloat(sch.installment_amount).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
+      <td class="text-end text-success">৳${parseFloat(sch.paid_amount).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
+      <td class="text-end ${statusClass}">৳${dueAmount.toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
+      <td>${sch.due_date}</td>
+      <td><span class="badge bg-warning">${sch.status}</span></td>
+      <td>
+        <button class="btn btn-sm btn-primary" onclick="openPaymentScheduleModal(${sch.purchase_id})">
+          <i class="lni lni-edit me-1"></i>Manage
+        </button>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+
+  document.getElementById('pending_schedules_count').textContent = schedules.length;
+}
+
+function updateScheduleStats(summary) {
+  document.getElementById('sch_total_due').textContent = parseFloat(summary.total_due || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
+  document.getElementById('sch_overdue').textContent = parseFloat(summary.overdue_amount || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
+  document.getElementById('sch_upcoming').textContent = parseFloat(summary.upcoming_amount || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
+  document.getElementById('sch_count').textContent = summary.total_count || 0;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const tab = document.getElementById('tab_pending_schedules');
+  if (tab) {
+    tab.addEventListener('show.bs.tab', loadPendingSchedules);
+  }
+});
+</script>

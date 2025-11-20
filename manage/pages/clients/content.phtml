@@ -1,0 +1,38 @@
+
+
+<?php
+    if (check_permission('clients') || check_permission('manage-clients') || Wo_IsAdmin() || Wo_IsModerator()) {
+        echo Wo_LoadManagePage('clients/style');
+
+        $is_builder = $_GET['builder'];
+        if (isset($is_builder) && ($is_builder == 'moon-hill' || $is_builder == 'hill-town')) {
+          echo Wo_LoadManagePage('clients/builder');
+          exit();
+        }
+        
+        $tab = isset($_GET['tab']) ? trim($_GET['tab']) : (isset($_POST['tab']) ? trim($_POST['tab']) : 'default');
+        
+        // always render the menu
+        echo Wo_LoadManagePage('clients/tabs-menu');
+        
+        $allowed_tabs = [
+            'client_list',           // Main client list page
+            'pending_actions',       // Pending actions awaiting admin approval
+            'pending_changes',       // Pending changes awaiting admin approval
+            'invoices',              // Invoice management with overpayment handling
+            'pending_emails',        // Email queue - pending and sent emails
+            'pending_schedules',     // Payment schedules with unpaid installments
+            'pending_refunds',       // Canceled purchases with refund tracking
+            'audit_trail',           // Complete audit log of all actions
+            'employee_sales_report'  // Employee sales metrics and reports
+        ];
+        
+        // If tab is allowed, load the page from clients/tabs/<tab>.phtml
+        if (in_array($tab, $allowed_tabs, true)) {
+            echo Wo_LoadManagePage('clients/tabs/' . $tab);
+        } else {
+            echo Wo_LoadManagePage('clients/tabs/client_list');
+        }
+    
+    } else { echo Wo_LoadManagePage('permission-required/content'); }
+?>

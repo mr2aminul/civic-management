@@ -1,0 +1,218 @@
+<?php
+/**
+ * Employee Sales Report Tab - Sales metrics by employee/reference user
+ * Path: manage/pages/clients/tabs/employee_sales_report.phtml
+ * Shows key metrics per employee: total sales, active sales, canceled, payment collection
+ */
+?>
+
+<div class="tab-pane" id="tab_employee_sales_report" role="tabpanel">
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-light">
+      <div class="d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">
+          <i class="lni lni-bar-chart me-2"></i>Employee Sales Report
+        </h6>
+        <button class="btn btn-sm btn-outline-primary" onclick="loadEmployeeSalesReport()">
+          <i class="lni lni-reload me-1"></i>Refresh
+        </button>
+      </div>
+    </div>
+
+    <div class="card-body p-3">
+      <!-- Filters -->
+      <div class="row mb-3 g-2">
+        <div class="col-md-2">
+          <input type="date" id="sales_report_from" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-2">
+          <input type="date" id="sales_report_to" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-4">
+          <select id="sales_report_employee" class="form-select form-select-sm">
+            <option value="">All Employees</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-sm btn-primary w-100" onclick="applyEmployeeSalesFilters()">
+            <i class="lni lni-funnel me-1"></i>Filter
+          </button>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetEmployeeSalesFilters()">
+            <i class="lni lni-close"></i>Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- Summary Stats -->
+      <div class="row g-2 mb-3">
+        <div class="col-md-3">
+          <div class="card bg-primary text-white p-2 text-center">
+            <small>Total Sales Amount</small>
+            <div class="h6 mb-0">৳<span id="sales_total_amount">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-success text-white p-2 text-center">
+            <small>Total Collected</small>
+            <div class="h6 mb-0">৳<span id="sales_total_collected">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-warning text-dark p-2 text-center">
+            <small>Avg Per Employee</small>
+            <div class="h6 mb-0">৳<span id="sales_avg_per_employee">0</span></div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-secondary text-white p-2 text-center">
+            <small>Total Employees</small>
+            <div class="h6 mb-0"><span id="sales_total_employees">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Loading State -->
+      <div id="employeeSalesLoading" class="text-center py-5" style="display:none;">
+        <div class="spinner-border text-primary" role="status">
+          <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="text-muted mt-2">Loading employee sales report...</p>
+      </div>
+
+      <!-- Sales Cards Grid -->
+      <div id="employeeSalesCards" class="row g-3">
+        <!-- Cards populated via AJAX -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+window.loadEmployeeSalesReport = function(filters) {
+  filters = filters || {};
+  const clientId = document.getElementById('ui_client_id')?.value;
+  if (!clientId) return;
+
+  document.getElementById('employeeSalesLoading').style.display = 'block';
+  document.getElementById('employeeSalesCards').innerHTML = '';
+
+  fetch('/xhr/manage_inventory.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      action: 'get_employee_sales_report',
+      from_date: filters.from_date || document.getElementById('sales_report_from').value || '',
+      to_date: filters.to_date || document.getElementById('sales_report_to').value || '',
+      employee_id: filters.employee_id || document.getElementById('sales_report_employee').value || ''
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById('employeeSalesLoading').style.display = 'none';
+    
+    if (data.success && data.employees && data.employees.length > 0) {
+      renderEmployeeSalesCards(data.employees);
+      updateSalesReportStats(data.summary || {});
+    } else {
+      document.getElementById('employeeSalesCards').innerHTML = '<div class="col-12"><p class="text-center text-muted">No sales data available</p></div>';
+    }
+  })
+  .catch(e => {
+    document.getElementById('employeeSalesLoading').style.display = 'none';
+    console.error('[v0] Error loading sales report:', e);
+  });
+};
+
+function renderEmployeeSalesCards(employees) {
+  const container = document.getElementById('employeeSalesCards');
+  container.innerHTML = '';
+
+  employees.forEach(emp => {
+    const totalSale = parseFloat(emp.total_sale_amount || 0);
+    const activeSale = parseInt(emp.active_sales_count || 0);
+    const canceledSale = parseInt(emp.canceled_sales_count || 0);
+    const paidSale = parseInt(emp.paid_sales_count || 0);
+    const collectionRate = emp.collection_rate ? parseFloat(emp.collection_rate).toFixed(1) : '0';
+
+    const card = document.createElement('div');
+    card.className = 'col-md-6 col-lg-4';
+    card.innerHTML = `
+      <div class="card h-100 border-0 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h6 class="fw-bold mb-1">${emp.employee_name || 'Unknown'}</h6>
+              <small class="text-muted">${emp.employee_email || emp.employee_phone || '-'}</small>
+            </div>
+            <span class="badge bg-primary">${activeSale} Active</span>
+          </div>
+
+          <div class="row g-2">
+            <div class="col-6">
+              <div class="small text-muted">Total Sales</div>
+              <div class="h5 mb-0">৳${totalSale.toLocaleString('en-US', {maximumFractionDigits: 0})}</div>
+            </div>
+            <div class="col-6">
+              <div class="small text-muted">Collection Rate</div>
+              <div class="h5 mb-0 text-info">${collectionRate}%</div>
+            </div>
+            <div class="col-6">
+              <div class="small text-muted">Paid Sales</div>
+              <div class="h5 mb-0 text-success">${paidSale}</div>
+            </div>
+            <div class="col-6">
+              <div class="small text-muted">Canceled</div>
+              <div class="h5 mb-0 text-danger">${canceledSale}</div>
+            </div>
+          </div>
+
+          <div class="mt-3 pt-3 border-top">
+            <div class="d-grid">
+              <button class="btn btn-sm btn-outline-primary" onclick="viewEmployeeSalesDetail('${emp.employee_id}')">
+                <i class="lni lni-eye me-1"></i>View Details
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function updateSalesReportStats(summary) {
+  document.getElementById('sales_total_amount').textContent = parseFloat(summary.total_sales_amount || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
+  document.getElementById('sales_total_collected').textContent = parseFloat(summary.total_collected || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
+  document.getElementById('sales_avg_per_employee').textContent = parseFloat(summary.avg_per_employee || 0).toLocaleString('en-US', {maximumFractionDigits: 0});
+  document.getElementById('sales_total_employees').textContent = summary.total_employees || 0;
+}
+
+window.applyEmployeeSalesFilters = function() {
+  const filters = {
+    from_date: document.getElementById('sales_report_from').value,
+    to_date: document.getElementById('sales_report_to').value,
+    employee_id: document.getElementById('sales_report_employee').value
+  };
+  loadEmployeeSalesReport(filters);
+};
+
+window.resetEmployeeSalesFilters = function() {
+  document.getElementById('sales_report_from').value = '';
+  document.getElementById('sales_report_to').value = '';
+  document.getElementById('sales_report_employee').value = '';
+  loadEmployeeSalesReport();
+};
+
+function viewEmployeeSalesDetail(employeeId) {
+  console.log('[v0] View employee sales detail:', employeeId);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const tab = document.getElementById('tab_employee_sales_report');
+  if (tab) {
+    tab.addEventListener('show.bs.tab', loadEmployeeSalesReport);
+  }
+});
+</script>

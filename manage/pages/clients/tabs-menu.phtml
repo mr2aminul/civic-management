@@ -1,0 +1,84 @@
+<?php global $tab; ?>
+<style>
+    .crm-tab-menu {
+        margin-bottom: 20px;
+        padding: 0 5px;
+        white-space: nowrap;
+        overflow-x: auto;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .crm-tab-menu a {
+        display: inline-block;
+        padding: 8px 16px;
+        border: 1px solid #dee2e6;
+        border-radius: 20px;
+        background: #f8f9fa;
+        color: #333;
+        text-decoration: none;
+        font-size: 14px;
+        white-space: nowrap;
+        transition: all 0.2s ease;
+    }
+    .crm-tab-menu a:hover {
+        background: #e9ecef;
+        border-color: #0d6efd;
+    }
+    .crm-tab-menu a.active {
+        background: #0d6efd;
+        color: #fff;
+        border-color: #0d6efd;
+    }
+</style>
+
+<!-- Regenerated tabs menu with all required tabs -->
+<div class="crm-tab-menu p-0">
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients'); ?>"
+       class="<?php echo (!isset($tab) || $tab == 'default') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-list me-1"></i>Client List
+    </a>
+
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=pending_actions'); ?>"
+       class="<?php echo ($tab == 'pending_actions') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-clipboard me-1"></i>Pending Actions
+    </a>
+
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=pending_changes'); ?>"
+       class="<?php echo ($tab == 'pending_changes') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-hourglass me-1"></i>Pending Changes
+    </a>
+
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=invoices'); ?>"
+       class="<?php echo ($tab == 'invoices') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-receipt me-1"></i>Invoices
+    </a>
+
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=pending_emails'); ?>"
+       class="<?php echo ($tab == 'pending_emails') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-email me-1"></i>Pending Emails
+    </a>
+
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=schedules'); ?>"
+       class="<?php echo ($tab == 'schedules') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-time me-1"></i>Schedules
+    </a>
+
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=audit_trail'); ?>"
+       class="<?php echo ($tab == 'audit_trail') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-history me-1"></i>Audit Trail
+    </a>
+
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=employee_sales_report'); ?>"
+       class="<?php echo ($tab == 'employee_sales_report') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-bar-chart me-1"></i>Employee Sales
+    </a>
+</div>

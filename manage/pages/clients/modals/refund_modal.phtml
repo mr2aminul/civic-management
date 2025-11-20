@@ -1,0 +1,231 @@
+<!-- Complete rewrite to properly display refund data and allow creation -->
+<!-- Refund Management Modal -->
+<div class="modal fade" id="refundModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-danger text-white border-0">
+        <h5 class="modal-title">
+          <i class="lni lni-money-location me-2"></i>Refund Management
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-4">
+        <!-- Refund Summary -->
+        <div class="row g-3 mb-4" id="refundSummaryCards">
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Total Paid</small>
+                <h5 class="mb-0" id="refundTotalPaid">৳0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Deduction</small>
+                <h5 class="mb-0" id="refundDeduction">৳0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Refundable Amount</small>
+                <h5 class="mb-0" id="refundAmount">৳0</h5>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <small class="text-muted">Balance Due</small>
+                <h5 class="mb-0" id="refundBalance">৳0</h5>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Refund Transactions Table -->
+        <div class="table-responsive mb-4" id="refundTableWrapper" style="display: none;">
+          <table class="table table-hover table-sm" id="refundTable">
+            <thead class="table-light">
+              <tr>
+                <th>Transaction Date</th>
+                <th>Amount (৳)</th>
+                <th>Payment Method</th>
+                <th>Receipt No</th>
+                <th>Remarks</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="refundTableBody">
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Add Refund Transaction (Flexible) -->
+        <div class="card border-0 bg-light p-3">
+          <h6 class="mb-3"><i class="lni lni-money-location me-1"></i>Add Refund Transaction</h6>
+          <div class="row g-2 mb-3">
+            <div class="col-md-2">
+              <label class="form-label">Date *</label>
+              <input type="date" class="form-control" id="refundTransactionDate">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Amount (৳) *</label>
+              <input type="number" class="form-control" id="refundTransactionAmount" placeholder="Custom amount" step="0.01" min="0">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Method</label>
+              <select class="form-select" id="refundPaymentMethod">
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Cash">Cash</option>
+                <option value="Cheque">Cheque</option>
+                <option value="bKash">bKash</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Receipt No</label>
+              <input type="text" class="form-control" id="refundReceiptNo" placeholder="Reference">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Remarks</label>
+              <input type="text" class="form-control" id="refundRemarks" placeholder="Notes">
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+              <button type="button" class="btn btn-success w-100" id="addRefundTransactionBtn">
+                <i class="lni lni-plus me-1"></i>Add
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer border-top">
+        <small class="text-muted">Refunds are tracked as individual transactions with custom amounts and dates. No installment structure required.</small>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  window.openRefundModal = function(purchaseId) {
+    if (!purchaseId) { alert('Purchase ID missing'); return; }
+
+    $('#refundModal').data('purchaseId', purchaseId);
+    $('#refundTransactionDate').val(new Date().toISOString().split('T')[0]);
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=get_refund_status',
+      { purchase_id: purchaseId },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        populateRefundModal(data, purchaseId);
+        $('#refundModal').modal('show');
+      }
+    );
+  };
+
+  function populateRefundModal(data, purchaseId) {
+    var tbody = $('#refundTableBody');
+    tbody.empty();
+
+    if (data.status === 200 && data.refund_transactions && data.refund_transactions.length > 0) {
+      $('#noRefundMessage').hide();
+      $('#refundTableWrapper').show();
+
+      var summary = data.summary || {};
+      var totalPaid = parseFloat(summary.total_paid_amount || 0);
+      var totalDeduction = parseFloat(summary.deduction_amount || 0);
+      var refundable = parseFloat(summary.refundable_amount || 0);
+      var totalRefunded = parseFloat(summary.total_refunded || 0);
+      var remaining = refundable - totalRefunded;
+
+      $('#refundTotalPaid').text('৳' + totalPaid.toLocaleString('en-US', {minimumFractionDigits: 2}));
+      $('#refundDeduction').text('৳' + totalDeduction.toLocaleString('en-US', {minimumFractionDigits: 2}));
+      $('#refundAmount').text('৳' + refundable.toLocaleString('en-US', {minimumFractionDigits: 2}));
+      $('#refundBalance').text('৳' + remaining.toLocaleString('en-US', {minimumFractionDigits: 2}));
+
+      $.each(data.refund_transactions, function(idx, trans) {
+        var statusBadge = trans.status === 1 ? '<span class="badge bg-success">Completed</span>' : 
+                          trans.status === 3 ? '<span class="badge bg-secondary">Cancelled</span>' :
+                          '<span class="badge bg-warning">Pending</span>';
+        
+        var transDate = trans.transaction_date ? new Date(trans.transaction_date).toLocaleDateString() : '-';
+        var transAmount = parseFloat(trans.transaction_amount || 0);
+
+        var row = '<tr>' +
+          '<td>' + transDate + '</td>' +
+          '<td class="fw-bold">৳' + transAmount.toLocaleString('en-US', {minimumFractionDigits: 2}) + '</td>' +
+          '<td>' + (trans.payment_method || '-') + '</td>' +
+          '<td><small>' + (trans.money_receipt_no || '-') + '</small></td>' +
+          '<td><small>' + (trans.remarks || '-') + '</small></td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td><button class="btn btn-sm btn-outline-danger" onclick="cancelRefundTransaction(' + trans.id + ', ' + purchaseId + ')">Cancel</button></td>' +
+          '</tr>';
+        
+        tbody.append(row);
+      });
+    } else {
+      $('#noRefundMessage').show();
+      $('#refundTableWrapper').hide();
+
+      $('#refundTotalPaid').text('৳0');
+      $('#refundDeduction').text('৳0');
+      $('#refundAmount').text('৳0');
+      $('#refundBalance').text('৳0');
+    }
+  }
+
+  $(document).off('click', '#addRefundTransactionBtn').on('click', '#addRefundTransactionBtn', function() {
+    var purchaseId = $('#refundModal').data('purchaseId');
+    var transDate = $('#refundTransactionDate').val();
+    var transAmount = parseFloat($('#refundTransactionAmount').val()) || 0;
+    var method = $('#refundPaymentMethod').val();
+    var receipt = $('#refundReceiptNo').val();
+    var remarks = $('#refundRemarks').val();
+
+    if (!transDate || !transAmount) {
+      alert('Please enter transaction date and amount');
+      return;
+    }
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=add_refund_transaction',
+      { purchase_id: purchaseId, amount: transAmount, transaction_date: transDate, payment_method: method, receipt_no: receipt, remarks: remarks },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Refund transaction recorded!');
+          $('#refundTransactionAmount').val('');
+          $('#refundReceiptNo').val('');
+          $('#refundRemarks').val('');
+          window.openRefundModal(purchaseId);
+        } else {
+          alert(data.message || 'Failed to record refund');
+        }
+      }
+    );
+  });
+
+  window.cancelRefundTransaction = function(transactionId, purchaseId) {
+    if (!confirm('Cancel this refund transaction?')) return;
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=cancel_refund_transaction',
+      { transaction_id: transactionId, reason: 'Cancelled by user' },
+      function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          window.openRefundModal(purchaseId);
+        }
+      }
+    );
+  };
+});
+</script>

@@ -1,0 +1,164 @@
+<?php 
+/**
+ * Client List Tab - Main client list page
+ * Path: manage/pages/clients/tabs/client_list.phtml
+ * Shows all clients with their projects, plots, and basic info
+ */
+?>
+
+<div class="tab-pane" id="tab_client_list" role="tabpanel">
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+      <h6 class="mb-0">
+        <i class="lni lni-list me-2"></i>All Clients
+        <span class="badge bg-primary" id="client_total_count">0</span>
+      </h6>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-primary" id="btn_client_filter">
+          <i class="lni lni-filter me-1"></i>Filter
+        </button>
+        <?php if (check_permission('manage-clients') || Wo_IsAdmin()) { ?>
+        <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createClientModal">
+          <i class="lni lni-plus me-1"></i>Add Client
+        </button>
+        <?php } ?>
+      </div>
+    </div>
+
+    <div class="card-body p-3">
+      <!-- Filter Panel -->
+      <div id="client_filter_panel" class="row mb-3" style="display:none;">
+        <div class="col-md-3">
+          <input type="text" class="form-control form-control-sm" id="client_filter_name" placeholder="Client name">
+        </div>
+        <div class="col-md-2">
+          <select class="form-select form-select-sm" id="client_filter_project">
+            <option value="">All Projects</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <select class="form-select form-select-sm" id="client_filter_status">
+            <option value="">All Status</option>
+            <option value="1">Available</option>
+            <option value="2">Sold</option>
+            <option value="3">Complete</option>
+            <option value="4">Cancelled</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-sm btn-primary w-100" id="btn_client_apply_filter">Apply</button>
+        </div>
+        <div class="col-md-1">
+          <button class="btn btn-sm btn-outline-secondary w-100" id="btn_client_reset_filter">
+            <i class="lni lni-close"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Clients Table -->
+      <div class="table-responsive">
+        <table class="table table-hover table-sm" id="clients_list_table">
+          <thead class="table-light">
+            <tr>
+              <th width="50">#ID</th>
+              <th>Client Name</th>
+              <th>Phone</th>
+              <th>NID</th>
+              <th>Projects</th>
+              <th>Plots</th>
+              <th>Total Due</th>
+              <th width="100">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="clients_list_tbody">
+            <tr><td colspan="8" class="text-center text-muted py-4">Loading clients...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const tab = document.getElementById('tab_client_list');
+  if (!tab) return;
+
+  tab.addEventListener('show.bs.tab', function() {
+    loadClientsList();
+  });
+
+  document.getElementById('btn_client_filter').addEventListener('click', function() {
+    const panel = document.getElementById('client_filter_panel');
+    panel.style.display = panel.style.display === 'none' ? 'grid' : 'none';
+  });
+
+  document.getElementById('btn_client_apply_filter').addEventListener('click', function() {
+    loadClientsList({
+      name: document.getElementById('client_filter_name').value,
+      project: document.getElementById('client_filter_project').value,
+      status: document.getElementById('client_filter_status').value
+    });
+  });
+
+  document.getElementById('btn_client_reset_filter').addEventListener('click', function() {
+    document.getElementById('client_filter_name').value = '';
+    document.getElementById('client_filter_project').value = '';
+    document.getElementById('client_filter_status').value = '';
+    loadClientsList();
+  });
+
+  function loadClientsList(filters = {}) {
+    fetch('/xhr/manage_clients.php?f=manage_clients&s=search_clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        q: filters.name || '',
+        project_id: filters.project || '',
+        bh_status: filters.status || 'all'
+      })
+    })
+    .then(r => r.json())
+    .then(data => {
+      renderClientsList(data);
+    })
+    .catch(e => console.error('[v0] Error loading clients:', e));
+  }
+
+  function renderClientsList(clients) {
+    const tbody = document.getElementById('clients_list_tbody');
+    tbody.innerHTML = '';
+    
+    if (!clients || clients.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No clients found</td></tr>';
+      return;
+    }
+
+    document.getElementById('client_total_count').textContent = clients.length;
+
+    clients.forEach(client => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td><strong>${client.id}</strong></td>
+        <td>${client.name}</td>
+        <td>${client.phone}</td>
+        <td>${client.nid || '-'}</td>
+        <td>${client.projects || '-'}</td>
+        <td>${client.plots || '0'}</td>
+        <td class="text-danger">৳${(client.total_due || 0).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
+        <td>
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-info" onclick="viewClient(${client.id})" title="View">
+              <i class="lni lni-eye"></i>
+            </button>
+            <button class="btn btn-outline-warning" onclick="editClient(${client.id})" title="Edit">
+              <i class="lni lni-pencil"></i>
+            </button>
+          </div>
+        </td>
+      `;
+      tbody.appendChild(row);
+    });
+  }
+});
+</script>

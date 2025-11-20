@@ -1,0 +1,542 @@
+<!-- Pending Change Detail Modal -->
+<div class="modal fade" id="pendingChangeDetailModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-light border-0">
+        <h5 class="modal-title">
+          <i class="lni lni-file-document me-2"></i>
+          <span id="detailChangeTypeLabel">Change Detail</span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-4">
+        <!-- Loading State -->
+        <div id="detailLoading" class="text-center py-5" style="display:none;">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+          <p class="text-muted mt-2">Loading change details...</p>
+        </div>
+
+        <!-- Error State -->
+        <div id="detailError" class="alert alert-danger" style="display:none;">
+          <i class="lni lni-warning me-2"></i>
+          <span id="detailErrorMessage">Failed to load change details</span>
+        </div>
+
+        <!-- Detail Content -->
+        <div id="detailContent" style="display:none;">
+          <!-- Change Header -->
+          <div class="card border-0 bg-light mb-4">
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-3">
+                  <label class="form-label small text-muted">Change Type</label>
+                  <div class="fw-semibold" id="detailChangeType"></div>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small text-muted">Status</label>
+                  <div id="detailStatusBadge"></div>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small text-muted">Purchase ID</label>
+                  <div class="fw-semibold" id="detailPurchaseId"></div>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small text-muted">Client</label>
+                  <div class="fw-semibold" id="detailClientName"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Request Information -->
+          <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0">
+              <h6 class="mb-0 fw-semibold">
+                <i class="lni lni-user me-2"></i>Request Information
+              </h6>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label small text-muted">Requested By</label>
+                  <div class="fw-semibold" id="detailRequestedBy"></div>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small text-muted">Request Date</label>
+                  <div class="fw-semibold" id="detailRequestDate"></div>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small text-muted">Expires At</label>
+                  <div class="fw-semibold" id="detailExpiresAt"></div>
+                </div>
+              </div>
+              <div class="row g-3 mt-2" id="detailRequestReasonRow" style="display:none;">
+                <div class="col-12">
+                  <label class="form-label small text-muted">Reason</label>
+                  <div class="alert alert-info mb-0" id="detailRequestReason"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Review Information (if reviewed) -->
+          <div class="card border-0 shadow-sm mb-4" id="detailReviewCard" style="display:none;">
+            <div class="card-header bg-white border-0">
+              <h6 class="mb-0 fw-semibold">
+                <i class="lni lni-clipboard-check me-2"></i>Review Information
+              </h6>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label small text-muted">Reviewed By</label>
+                  <div class="fw-semibold" id="detailReviewedBy"></div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small text-muted">Review Date</label>
+                  <div class="fw-semibold" id="detailReviewDate"></div>
+                </div>
+              </div>
+              <div class="row g-3 mt-2" id="detailReviewNotesRow" style="display:none;">
+                <div class="col-12">
+                  <label class="form-label small text-muted">Review Notes</label>
+                  <div class="alert alert-secondary mb-0" id="detailReviewNotes"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Change Preview (Before/After Comparison) -->
+          <div class="card border-0 shadow-sm mb-4" id="detailPreviewCard">
+            <div class="card-header bg-white border-0">
+              <h6 class="mb-0 fw-semibold">
+                <i class="lni lni-compare me-2"></i>Change Preview
+              </h6>
+            </div>
+            <div class="card-body" id="detailPreviewContent">
+              <!-- Dynamic preview content will be inserted here -->
+            </div>
+          </div>
+
+          <!-- Change Data (Raw JSON for debugging) -->
+          <div class="card border-0 shadow-sm" id="detailDataCard">
+            <div class="card-header bg-white border-0">
+              <h6 class="mb-0 fw-semibold">
+                <i class="lni lni-code me-2"></i>Change Parameters
+              </h6>
+            </div>
+            <div class="card-body">
+              <pre class="bg-light p-3 rounded small mb-0" id="detailChangeData" style="max-height: 300px; overflow-y: auto;"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer border-top" id="detailActions">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <div id="detailAdminActions" style="display:none;">
+          <button type="button" class="btn btn-success" id="detailApproveBtn">
+            <i class="lni lni-checkmark-circle me-1"></i>Approve
+          </button>
+          <button type="button" class="btn btn-danger" id="detailDenyBtn">
+            <i class="lni lni-close me-1"></i>Deny
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+#pendingChangeDetailModal .card {
+  transition: all 0.2s ease;
+}
+
+#pendingChangeDetailModal .preview-comparison-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+#pendingChangeDetailModal .preview-column {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 1.5rem;
+  border: 2px solid #e9ecef;
+}
+
+#pendingChangeDetailModal .preview-column h6 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: #6c757d;
+  margin-bottom: 1rem;
+  letter-spacing: 0.5px;
+}
+
+#pendingChangeDetailModal .preview-column.current {
+  border-color: #0d6efd;
+}
+
+#pendingChangeDetailModal .preview-column.proposed {
+  border-color: #198754;
+}
+
+#pendingChangeDetailModal .preview-arrow {
+  font-size: 2rem;
+  color: #0d6efd;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#pendingChangeDetailModal .preview-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #e9ecef;
+}
+
+#pendingChangeDetailModal .preview-item:last-child {
+  border-bottom: none;
+}
+
+#pendingChangeDetailModal .preview-label {
+  font-size: 0.875rem;
+  color: #6c757d;
+  font-weight: 500;
+}
+
+#pendingChangeDetailModal .preview-value {
+  font-size: 0.875rem;
+  color: #212529;
+  font-weight: 600;
+}
+
+#pendingChangeDetailModal .preview-value.highlight {
+  color: #198754;
+  background: #d1e7dd;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+#pendingChangeDetailModal .status-badge {
+  padding: 0.35rem 0.85rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+#pendingChangeDetailModal .status-pending { background: #ffc107; color: #000; }
+#pendingChangeDetailModal .status-approved { background: #28a745; color: #fff; }
+#pendingChangeDetailModal .status-denied { background: #dc3545; color: #fff; }
+#pendingChangeDetailModal .status-expired { background: #6c757d; color: #fff; }
+
+#pendingChangeDetailModal pre {
+  font-family: 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+</style>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  // Global function to open pending change detail modal
+  window.openPendingChangeDetail = function(changeId, isAdmin) {
+    if (!changeId) {
+      alert('Change ID is required');
+      return;
+    }
+
+    $('#pendingChangeDetailModal').data('change-id', changeId);
+    $('#pendingChangeDetailModal').data('is-admin', isAdmin || false);
+
+    // Reset modal
+    $('#detailLoading').show();
+    $('#detailError').hide();
+    $('#detailContent').hide();
+    $('#detailAdminActions').hide();
+
+    // Fetch change details
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_change_detail', {
+      pending_change_id: changeId
+    })
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+
+        $('#detailLoading').hide();
+
+        if (data.status === 200 && data.change) {
+          populateDetailModal(data.change, isAdmin);
+          $('#detailContent').show();
+        } else {
+          $('#detailErrorMessage').text(data.message || 'Failed to load change details');
+          $('#detailError').show();
+        }
+      })
+      .fail(function() {
+        $('#detailLoading').hide();
+        $('#detailErrorMessage').text('Server error while loading change details');
+        $('#detailError').show();
+      });
+
+    $('#pendingChangeDetailModal').modal('show');
+  };
+
+  function populateDetailModal(change, isAdmin) {
+    // Header
+    var changeTypeLabel = getChangeTypeLabel(change.change_type);
+    $('#detailChangeTypeLabel').text(changeTypeLabel + ' - Detail');
+    $('#detailChangeType').text(changeTypeLabel);
+
+    // Status badge
+    var statusClass = 'status-' + change.status;
+    var statusLabel = change.status.charAt(0).toUpperCase() + change.status.slice(1);
+    $('#detailStatusBadge').html('<span class="status-badge ' + statusClass + '">' + statusLabel + '</span>');
+
+    // Basic info
+    $('#detailPurchaseId').text(change.purchase_id || 'N/A');
+    $('#detailClientName').text(change.client_name || 'N/A');
+
+    // Request info
+    $('#detailRequestedBy').text(change.requested_by_name || 'Unknown');
+    $('#detailRequestDate').text(formatDateTime(change.request_date));
+    $('#detailExpiresAt').text(change.expires_at ? formatDateTime(change.expires_at) : 'No expiration');
+
+    if (change.request_reason) {
+      $('#detailRequestReason').text(change.request_reason);
+      $('#detailRequestReasonRow').show();
+    } else {
+      $('#detailRequestReasonRow').hide();
+    }
+
+    // Review info (if reviewed)
+    if (change.status === 'approved' || change.status === 'denied') {
+      $('#detailReviewedBy').text(change.reviewed_by_name || 'Unknown');
+      $('#detailReviewDate').text(formatDateTime(change.review_date));
+
+      if (change.review_notes) {
+        $('#detailReviewNotes').text(change.review_notes);
+        $('#detailReviewNotesRow').show();
+      } else {
+        $('#detailReviewNotesRow').hide();
+      }
+
+      $('#detailReviewCard').show();
+    } else {
+      $('#detailReviewCard').hide();
+    }
+
+    // Preview (before/after comparison)
+    buildPreviewContent(change);
+
+    // Raw change data
+    var changeData = change.change_data_json || {};
+    $('#detailChangeData').text(JSON.stringify(changeData, null, 2));
+
+    // Admin actions (only for pending changes)
+    if (isAdmin && change.status === 'pending') {
+      $('#detailAdminActions').show();
+    } else {
+      $('#detailAdminActions').hide();
+    }
+  }
+
+  function buildPreviewContent(change) {
+    var $container = $('#detailPreviewContent');
+    $container.empty();
+
+    var preview = change.preview_data_json || {};
+    var changeType = change.change_type;
+
+    if (changeType === 'reschedule' && preview.before && preview.after) {
+      var html = '<div class="preview-comparison-grid">';
+
+      // Current column
+      html += '<div class="preview-column current">';
+      html += '<h6>Current Schedule</h6>';
+      html += '<div class="preview-item">';
+      html += '<span class="preview-label">Monthly Amount:</span>';
+      html += '<span class="preview-value">' + (preview.before.monthly_amount || 'N/A') + '</span>';
+      html += '</div>';
+      html += '<div class="preview-item">';
+      html += '<span class="preview-label">Remaining Balance:</span>';
+      html += '<span class="preview-value">' + (preview.before.remaining_balance || 'N/A') + '</span>';
+      html += '</div>';
+      html += '<div class="preview-item">';
+      html += '<span class="preview-label">Unpaid Rows:</span>';
+      html += '<span class="preview-value">' + (preview.before.unpaid_rows || 'N/A') + '</span>';
+      html += '</div>';
+      html += '<div class="preview-item">';
+      html += '<span class="preview-label">Last Paid Date:</span>';
+      html += '<span class="preview-value">' + (preview.before.last_paid_date || 'N/A') + '</span>';
+      html += '</div>';
+      html += '</div>';
+
+      // Arrow
+      html += '<div class="preview-arrow">';
+      html += '<i class="lni lni-arrow-right"></i>';
+      html += '</div>';
+
+      // Proposed column
+      html += '<div class="preview-column proposed">';
+      html += '<h6>Proposed Schedule</h6>';
+      html += '<div class="preview-item">';
+      html += '<span class="preview-label">Monthly Amount:</span>';
+      html += '<span class="preview-value highlight">' + (preview.after.monthly_amount || 'N/A') + '</span>';
+      html += '</div>';
+      html += '<div class="preview-item">';
+      html += '<span class="preview-label">Remaining Balance:</span>';
+      html += '<span class="preview-value">' + (preview.after.remaining_balance || 'N/A') + '</span>';
+      html += '</div>';
+      html += '<div class="preview-item">';
+      html += '<span class="preview-label">New Installments:</span>';
+      html += '<span class="preview-value highlight">' + (preview.after.new_installment_count || 'N/A') + '</span>';
+      html += '</div>';
+      html += '<div class="preview-item">';
+      html += '<span class="preview-label">Adjustment Mode:</span>';
+      html += '<span class="preview-value highlight">' + (preview.after.adjustment_mode || 'N/A') + '</span>';
+      html += '</div>';
+      html += '</div>';
+
+      html += '</div>';
+      $container.html(html);
+
+    } else if (changeType === 'transfer') {
+      var html = '<div class="alert alert-info">';
+      html += '<strong>Transfer Details:</strong> Full transfer information available in change parameters below.';
+      html += '</div>';
+      $container.html(html);
+
+    } else if (changeType === 'cancel') {
+      var html = '<div class="alert alert-danger">';
+      html += '<i class="lni lni-warning me-2"></i>';
+      html += '<strong>Plot Cancellation:</strong> This will permanently cancel the plot booking.';
+      html += '</div>';
+      $container.html(html);
+
+    } else {
+      $container.html('<p class="text-muted">Preview not available for this change type.</p>');
+    }
+  }
+
+  function formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    try {
+      var date = new Date(dateStr);
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch(e) {
+      return dateStr;
+    }
+  }
+
+  function getChangeTypeLabel(type) {
+    var labels = {
+      'reschedule': 'Payment Reschedule',
+      'transfer': 'Ownership/Plot Transfer',
+      'cancel': 'Plot Cancellation',
+      'rate_change': 'Rate Change'
+    };
+    return labels[type] || type;
+  }
+
+  // Approve button handler
+  $(document).off('click', '#detailApproveBtn').on('click', '#detailApproveBtn', function() {
+    var changeId = $('#pendingChangeDetailModal').data('change-id');
+    if (!changeId) return;
+
+    var notes = prompt('Optional approval notes:');
+    if (notes === null) return;
+
+    var $btn = $(this);
+    $btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Approving...');
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=approve_pending_change', {
+      pending_change_id: changeId,
+      notes: notes || ''
+    })
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Change approved and executed successfully!');
+          $('#pendingChangeDetailModal').modal('hide');
+
+          // Reload parent list if available
+          if (typeof window.refreshPendingActions === 'function') {
+            window.refreshPendingActions();
+          }
+          if (typeof window.refreshPendingChanges === 'function') {
+            window.refreshPendingChanges();
+          }
+        } else {
+          alert(data.message || 'Failed to approve change');
+        }
+      })
+      .fail(function() {
+        alert('Server error while approving change');
+      })
+      .always(function() {
+        $btn.prop('disabled', false).html('<i class="lni lni-checkmark-circle me-1"></i>Approve');
+      });
+  });
+
+  // Deny button handler
+  $(document).off('click', '#detailDenyBtn').on('click', '#detailDenyBtn', function() {
+    var changeId = $('#pendingChangeDetailModal').data('change-id');
+    if (!changeId) return;
+
+    var reason = prompt('Please provide a reason for denial (required):');
+    if (!reason || reason.trim() === '') {
+      alert('Denial reason is required');
+      return;
+    }
+
+    var $btn = $(this);
+    $btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Denying...');
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=deny_pending_change', {
+      pending_change_id: changeId,
+      reason: reason
+    })
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Change denied successfully');
+          $('#pendingChangeDetailModal').modal('hide');
+
+          // Reload parent list if available
+          if (typeof window.refreshPendingActions === 'function') {
+            window.refreshPendingActions();
+          }
+          if (typeof window.refreshPendingChanges === 'function') {
+            window.refreshPendingChanges();
+          }
+        } else {
+          alert(data.message || 'Failed to deny change');
+        }
+      })
+      .fail(function() {
+        alert('Server error while denying change');
+      })
+      .always(function() {
+        $btn.prop('disabled', false).html('<i class="lni lni-close me-1"></i>Deny');
+      });
+  });
+});
+</script>

@@ -1,0 +1,172 @@
+<?php
+// Pending Changes Tab - List of all pending client requests
+global $db, $wo;
+?>
+
+<div class="tab-pane" id="tab_pending_changes" role="tabpanel">
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+      <h6 class="mb-0">
+        <i class="lni lni-hourglass me-2"></i>Pending Changes
+        <span class="badge bg-warning" id="pending_changes_count">0</span>
+      </h6>
+      <button class="btn btn-sm btn-outline-primary" onclick="loadPendingChanges()">
+        <i class="lni lni-reload me-1"></i>Refresh
+      </button>
+    </div>
+
+    <div class="card-body p-3">
+      <!-- Filters -->
+      <div class="row mb-3 g-2">
+        <div class="col-md-3">
+          <select id="pending_changes_filter_type" class="form-select form-select-sm">
+            <option value="">All Types</option>
+            <option value="reschedule">Reschedule</option>
+            <option value="transfer">Transfer</option>
+            <option value="cancel">Cancellation</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select id="pending_changes_filter_status" class="form-select form-select-sm">
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="denied">Denied</option>
+            <option value="">All Status</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <input type="text" id="pending_changes_filter_search" class="form-control form-control-sm" placeholder="Search purchase # or client">
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-sm btn-primary w-100" onclick="loadPendingChanges()">
+            <i class="lni lni-funnel me-1"></i>Filter
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading State -->
+      <div id="pendingChangesLoading" class="text-center py-5" style="display:none;">
+        <div class="spinner-border text-primary" role="status">
+          <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="text-muted mt-2">Loading pending changes...</p>
+      </div>
+
+      <!-- Empty State -->
+      <div id="pendingChangesEmpty" class="text-center py-5" style="display:none;">
+        <i class="lni lni-checkmark-circle fs-1 text-success mb-3 d-block"></i>
+        <h5 class="text-muted">No Pending Changes</h5>
+        <p class="text-muted">All change requests have been processed</p>
+      </div>
+
+      <!-- Changes Table -->
+      <div id="pendingChangesContent" style="display:none;">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm" id="pending_changes_table">
+            <thead class="table-light">
+              <tr>
+                <th>Purchase #</th>
+                <th>Client Name</th>
+                <th>Change Type</th>
+                <th>Requested By</th>
+                <th>Requested Date</th>
+                <th>Reason</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="pending_changes_tbody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  window.loadPendingChanges = function() {
+    var filters = {
+      change_type: $('#pending_changes_filter_type').val(),
+      status: $('#pending_changes_filter_status').val(),
+      search: $('#pending_changes_filter_search').val()
+    };
+
+    $('#pendingChangesLoading').show();
+    $('#pendingChangesContent').hide();
+    $('#pendingChangesEmpty').hide();
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_changes', filters)
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+
+        $('#pendingChangesLoading').hide();
+
+        if (data.status === 200 && data.changes && data.changes.length > 0) {
+          renderPendingChanges(data.changes);
+          $('#pending_changes_count').text(data.changes.length);
+          $('#pendingChangesContent').show();
+        } else {
+          $('#pending_changes_count').text('0');
+          $('#pendingChangesEmpty').show();
+        }
+      })
+      .fail(function() {
+        $('#pendingChangesLoading').hide();
+        $('#pendingChangesEmpty').show();
+      });
+  };
+
+  function renderPendingChanges(changes) {
+    var tbody = $('#pending_changes_tbody').empty();
+
+    changes.forEach(function(change) {
+      var typeLabel = getChangeTypeLabel(change.change_type);
+      var statusBadge = getStatusBadge(change.status);
+      var requestDate = change.request_date ? new Date(change.request_date).toLocaleDateString() : '-';
+
+      var row = $('<tr></tr>');
+      row.html(
+        '<td><strong>#' + change.purchase_id + '</strong></td>' +
+        '<td>' + change.client_name + '</td>' +
+        '<td><span class="badge bg-info">' + typeLabel + '</span></td>' +
+        '<td>' + change.requested_by_name + '</td>' +
+        '<td>' + requestDate + '</td>' +
+        '<td><small>' + (change.request_reason || '-') + '</small></td>' +
+        '<td>' + statusBadge + '</td>' +
+        '<td><button class="btn btn-sm btn-primary" onclick="openPendingChangeDetail(' + change.id + ', true)"><i class="lni lni-eye me-1"></i>View</button></td>'
+      );
+      tbody.append(row);
+    });
+  }
+
+  function getChangeTypeLabel(type) {
+    var labels = {
+      'reschedule': 'Payment Reschedule',
+      'transfer': 'Ownership Transfer',
+      'cancel': 'Plot Cancellation'
+    };
+    return labels[type] || type;
+  }
+
+  function getStatusBadge(status) {
+    var badges = {
+      'pending': '<span class="badge bg-warning">Pending</span>',
+      'approved': '<span class="badge bg-success">Approved</span>',
+      'denied': '<span class="badge bg-danger">Denied</span>'
+    };
+    return badges[status] || '<span class="badge bg-secondary">Unknown</span>';
+  }
+
+  // Load on tab show
+  var changesTab = document.getElementById('tab_pending_changes');
+  if (changesTab) {
+    changesTab.addEventListener('show.bs.tab', function() {
+      loadPendingChanges();
+    });
+  }
+});
+</script>

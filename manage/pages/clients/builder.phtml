@@ -1,0 +1,857 @@
+<?php
+$builder = $_GET['builder'] ?? '';
+
+if ($builder == 'moon-hill') {
+    $project_id = '1';
+    $project_name = 'Moon Hill';
+} elseif ($builder == 'hill-town') {
+    $project_id = '2';
+    $project_name = 'Hill Town';
+} else {
+    $project_name = 'project_name';
+    echo "Invalid or missing builder slug.";
+    exit;
+}
+
+$project = GetProjectById($project_id);
+if (!is_array($project)) {
+    echo "Invalid project ID.";
+    exit;
+}
+
+$positions = [];
+$res = $db->where('project_id', (int)$project_id)->get('field_positions');
+
+foreach ($res as $row) {
+    $positions[] = [
+        'name' => $row->field_name,
+        'style' => json_decode($row->style_json, true)
+    ];
+}
+
+$fields = [
+    //General Information
+  'project_name',
+  'project_location',
+  'client_id',
+  'booking_date',
+  'applicant_name',
+  'fathers_name',
+  'mothers_name',
+  'spouse_name',
+  'profession',
+  'nationality',
+  'date_of_birth',
+  'nid',
+  'email',
+  'tin_no',
+  'passport',
+  'mobile_i',
+  'mobile_ii',
+  'present_addr',
+  'permanent_addr',
+  'co_app_check_yes', //co-applicant checkbox yes
+  'co_app_check_no', //co-applicant checkbox no
+  
+  //Nominee Information
+  'i_nominee_name',
+  'i_nominee_relation',
+  'i_nominee_share',
+  'i_nominee_phone',
+  'ii_nominee_name',
+  'ii_nominee_relation',
+  'ii_nominee_share',
+  'ii_nominee_phone',
+  
+  //Choose Plot
+  'plot',
+  'block',
+  'road',
+  'facing',
+  'katha',
+  'rate',
+  'rate_in_words',
+  'total_value',
+  'total_value_in_words',
+  
+  // Mode of Payment
+  'is_full_payment', //mode of payment: full payment's checkbox
+  'is_installment_payment', //mode of payment: installment payment's checkbox
+  'number_of_installments', //mode of payment: How many number of installment
+  'booking_money',
+  'booking_money_in_words',
+  'bm_payment_method', //Cheque/Pay Order/Cash
+  'bm_payment_date', //bm means booking money
+  'down_payment',
+  'down_payment_in_words',
+  'down_payment_date',
+  'per_installments_tk',
+  'installment_date_from',
+  'instruction',
+];
+
+// -----------------------
+// Helpers (guarded)
+// -----------------------
+if (!function_exists('booking_normalize_phone')) {
+    function booking_normalize_phone($raw) {
+        if ($raw === null || $raw === '') return '';
+        // keep digits only
+        $digits = preg_replace('/\D+/', '', (string)$raw);
+        if ($digits === '') return '';
+
+        // remove leading '88' if present
+        if (strpos($digits, '88') === 0) {
+            $digits = substr($digits, 2);
+        }
+
+        // if it now starts without leading 0 and length looks like 10, prefix a '0'
+        if (strlen($digits) === 10 && $digits[0] !== '0') {
+            $digits = '0' . $digits;
+        }
+
+        return $digits;
+    }
+}
+
+if (!function_exists('format_date_with_spans')) {
+    function format_date_with_spans($date_input, $gap_px = 4) {
+        if (empty($date_input)) return '';
+        // if numeric timestamp
+        if (is_numeric($date_input)) {
+            $ts = (int)$date_input;
+        } else {
+            $ts = strtotime($date_input);
+        }
+        if ($ts === false || $ts <= 0) return '';
+
+        $d = date('d', $ts);
+        $m = date('m', $ts);
+        $y = date('Y', $ts);
+
+        $span = '<span style="width: ' . (int)$gap_px . 'px;position: relative;display: inline-flex;"></span>';
+        return $d . $span . $m . $span . $y;
+    }
+}
+
+// Helper function to get display value per field
+function getFieldDisplayValue($field, $project_name) {
+    switch ($field) {
+        // General Information
+        case 'project_name':
+            return $project_name;
+        case 'project_location':
+            return 'Purbachal';
+        case 'client_id':
+            return 'CIVIC-2025001';
+        case 'booking_date':
+            // return formatted with spans
+            return format_date_with_spans('25-09-2025');
+        case 'applicant_name':
+            return 'Md. Mehedi Hasan';
+        case 'fathers_name':
+            return 'Mr. XXXXXXXXXXXXX';
+        case 'mothers_name':
+            return 'Mrs. XXXXXXXXXXXXXX';
+        case 'spouse_name':
+            return 'Mrs. XXXXXXXXXXXXXX';
+        case 'profession':
+            return 'Businessman';
+        case 'nationality':
+            return 'Bangladeshi';
+        case 'date_of_birth':
+            return format_date_with_spans('01-10-2025');
+        case 'nid':
+            return '19901234567890123'; // 17-digit NID
+        case 'email':
+            return 'XXXXXXXX@example.com';
+        case 'tin_no':
+            return '1234567890';
+        case 'passport':
+            return 'BX1234567';
+        case 'mobile_i':
+            return booking_normalize_phone('01711223344');
+        case 'mobile_ii':
+            return booking_normalize_phone('01899887766');
+        case 'present_addr':
+            return 'House-12, Road-5, Dhanmondi, Dhaka';
+        case 'permanent_addr':
+            return 'Village: Shibpur, Post: Narsingdi, Dhaka';
+        case 'co_app_check_yes':
+            return '✓'; // checked (rendered as plain text)
+        case 'co_app_check_no':
+            return '✓'; // unchecked (empty)
+
+        // Nominee Information
+        case 'i_nominee_name':
+            return 'Md. XXXXXXXXXXXXXX';
+        case 'i_nominee_relation':
+            return 'Brother';
+        case 'i_nominee_share':
+            return '60%';
+        case 'i_nominee_phone':
+            return booking_normalize_phone('01633445566');
+        case 'ii_nominee_name':
+            return 'Mrs. XXXXXXXXXXXXXX';
+        case 'ii_nominee_relation':
+            return 'Mother';
+        case 'ii_nominee_share':
+            return '40%';
+        case 'ii_nominee_phone':
+            return booking_normalize_phone('01911224455');
+
+        // Choose Plot
+        case 'plot':
+            return 'Plot-15';
+        case 'block':
+            return 'Block-C';
+        case 'road':
+            return 'Road-7';
+        case 'facing':
+            return 'South-East';
+        case 'katha':
+            return '3.25';
+        case 'rate':
+            return '12,50,000';
+        case 'rate_in_words':
+            return 'Twelve Lac Fifty Thousand Taka Only';
+        case 'total_value':
+            return '40,62,500';
+        case 'total_value_in_words':
+            return 'Forty Lac Sixty-Two Thousand Five Hundred Taka Only';
+
+        // Mode of Payment
+        case 'is_full_payment':
+            return '✓';
+        case 'is_installment_payment':
+            return '✓';
+        case 'number_of_installments':
+            return '60';
+        case 'booking_money':
+            return '5,00,000';
+        case 'booking_money_in_words':
+            return 'Five Lac Taka Only';
+        case 'bm_payment_method':
+            return 'Cheque';
+        case 'bm_payment_date':
+            return format_date_with_spans('26-09-2025');
+        case 'down_payment':
+            return '10,00,000';
+        case 'down_payment_in_words':
+            return 'Ten Lac Taka Only';
+        case 'down_payment_date':
+            return format_date_with_spans('30-09-2025');
+        case 'per_installments_tk':
+            return '2,55,208';
+        case 'installment_date_from':
+            return '01-11-2025';
+        case 'instruction':
+            return 'Please pay installments within the first week of each month.';
+
+        default:
+            return $field;
+    }
+}
+?>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Print Template Builder - <?= htmlspecialchars($project['name'] ?? $project['slug']) ?></title>
+
+<style>
+:root{
+    --toolbar-height: 56px;    /* fallback; JS will overwrite with measured height */
+    --controls-height: 56px;   /* fallback; JS will overwrite with measured height */
+    --page-padding: 12px;
+}
+
+/* Print page size = Legal, no margins so background aligns exactly */
+@page {
+    size: Legal; /* Legal is 8.5in x 14in */
+    margin: 0;
+}
+
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+/* Container for scrolling/centering on screen
+   use padding-top / padding-bottom to account for fixed toolbars */
+.builder-container {
+    overflow: auto;
+    border: 1px solid #888;
+    display: flex;
+    justify-content: center;
+    background: #efefef;
+    padding: var(--page-padding);
+    padding-top: calc(var(--toolbar-height) + var(--page-padding));
+    padding-bottom: calc(var(--controls-height) + var(--page-padding));
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+
+/* fixed toolbar at the top so it never scrolls away */
+.toolbar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 95.8%;
+    z-index: 15;
+    background: #ffffff;
+    display: flex;
+    justify-content: center;
+    padding: 8px 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    box-sizing: border-box;
+    flex-wrap: wrap;
+}
+
+/* keep internal layout same but remove margin as toolbar is fixed */
+.toolbar .drag-button {
+    margin: 3px 4px;
+    padding: 2px 7px;
+    border: 1px solid #ccc;
+    background: #fff;
+    cursor: grab;
+    border-radius: 4px;
+}
+.toolbar button.save-btn {
+    padding: 2px 8px;
+    margin: 3px 4px;
+    margin-left: 8px;
+    border-radius: 6px;
+    border: 1px solid #007BFF;
+    background: #007BFF;
+    color: #fff;
+    cursor: pointer;
+}
+
+/* styleControls fixed at bottom */
+#styleControls {
+    display: none;
+    justify-content: center;
+    gap: 10px;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: white;
+    z-index: 199;
+    padding: 8px 12px;
+    box-sizing: border-box;
+    border-top: 1px solid rgba(0,0,0,0.06);
+}
+
+/* small inputs */
+#styleControls input, #styleControls select {
+    padding: 4px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 100%;
+}
+#styleControls label { font-size: 13px; color: #222; }
+
+/* Builder area uses exact legal size and a background image placed top center */
+.builder-area {
+    position: relative;
+    width: 8.5in;   /* exact legal width */
+    height: 14in;   /* exact legal height */
+    background-size: cover;
+    background-position: top center;
+    background-repeat: no-repeat;
+    background-image: url('/manage/pages/clients/<?= htmlspecialchars($project['slug']) ?>.jpg?version=<?= htmlspecialchars($wo['config']['version'] ?? time()) ?>');
+    border: 2px dashed #999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    overflow: hidden;
+    margin: 8px 0;
+}
+
+/* fields sit above the background */
+.field {
+    position: absolute;
+    background: rgba(255,255,255,0.2);
+    border: 1px solid #666;
+    min-width: 40px;
+    min-height: 20px;
+    box-sizing: border-box;
+    overflow: hidden;
+    cursor: move;
+    user-select: none;
+    line-height: 1;
+    font-weight: bold;
+    z-index: 10;
+    white-space: normal;
+}
+
+/* selected style */
+.field.selected {
+    outline: 2px solid #007BFF;
+    box-shadow: 0 0 0 2px rgba(0,123,255,0.12);
+}
+
+/* resize handles */
+.resize-handle {
+    position: absolute;
+    width: 6px;
+    height: 100%;
+    right: 0;
+    top: 0;
+    background: rgba(0,123,255,0.9);
+    cursor: ew-resize;
+    opacity: 0.9;
+    z-index: 20;
+}
+
+.resize-handle-left {
+    position: absolute;
+    width: 6px;
+    height: 100%;
+    left: 0;
+    top: 0;
+    background: rgba(0,123,255,0.9);
+    cursor: ew-resize;
+    user-select: none;
+    z-index: 20;
+}
+
+/* make sure builder-area never gets overlapped visually - limit its max-height in viewport */
+@media (max-height: 900px) {
+    .builder-area {
+        max-height: calc(100vh - var(--toolbar-height) - var(--controls-height) - 48px);
+    }
+}
+
+/* small helper so date span gaps render consistently in builder */
+.date-gap { display:inline-flex; width:4px; }
+</style>
+
+</head>
+<body>
+
+
+<div class="toolbar">
+    <?php foreach ($fields as $f): ?>
+        <button draggable="true" class="drag-button"
+                ondragstart="event.dataTransfer.setData('text/plain', '<?= htmlspecialchars($f) ?>');"
+                onclick="addField('<?= htmlspecialchars($f) ?>')">
+            <?= htmlspecialchars($f) ?>
+        </button>
+    <?php endforeach; ?>
+    <button class="save-btn" onclick="save()">💾 Save</button>
+</div>
+<div class="builder-container">
+    <div id="builderArea" class="builder-area"
+         ondragover="event.preventDefault();"
+         ondrop="handleDrop(event)">
+        <?php
+        // fields in DB/positions: render each, but if display value contains our date-span HTML we must NOT escape it
+        $raw_html_fields = ['booking_date','date_of_birth','bm_payment_date','down_payment_date','date','installment_date_from'];
+        foreach ($positions as $entry): ?>
+            <?php
+            $style = $entry['style'] ?? [];
+            $field = $entry['name'];
+            $top = $style['top'] ?? '100px';
+            $left = $style['left'] ?? '100px';
+            $width = $style['width'] ?? 'auto';
+            $fontSize = $style['fontSize'] ?? '15px';
+            $letterSpacing = $style['letterSpacing'] ?? '0px';
+            $textAlign = $style['textAlign'] ?? 'center';
+            $displayValue = getFieldDisplayValue($field, $project_name);
+
+            // Normalize width to a valid CSS value
+            if ($width === 'auto' || $width === '') $widthStyle = '';
+            else $widthStyle = 'width:' . htmlspecialchars($width) . ';';
+            ?>
+            <div class="field" data-name="<?= htmlspecialchars($field) ?>"
+                 style="top:<?= htmlspecialchars($top) ?>; left:<?= htmlspecialchars($left) ?>; <?= $widthStyle ?> font-size:<?= htmlspecialchars($fontSize) ?>; text-align:<?= htmlspecialchars($textAlign) ?>; letter-spacing:<?= htmlspecialchars($letterSpacing) ?>; white-space: normal; line-height: 1.4;">
+                <?php if (in_array($field, $raw_html_fields, true)): ?>
+                    <?= $displayValue ?>
+                <?php else: ?>
+                    <?= htmlspecialchars($displayValue) ?>
+                <?php endif; ?>
+                <div class="resize-handle-left"></div>
+                <div class="resize-handle"></div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</div>
+
+<div id="styleControls">
+    <label>Font Size: <input type="number" id="fontSizeInput" value="16" style="width:80px;"></label>
+    <label>Letter Spacing: <input type="number" id="letterSpacingInput" value="0.00" step="0.01" style="width:80px;"></label>
+    <label style=" display: flex; align-items: center; gap: 15px; ">Align:
+        <select id="textAlignInput">
+            <option value="left">Left</option>
+            <option value="center">Center</option>
+            <option value="right">Right</option>
+        </select>
+    </label>
+</div>
+
+<script>
+const builderArea = document.getElementById('builderArea');
+const fontSizeInput = document.getElementById('fontSizeInput');
+const letterSpacingInput = document.getElementById('letterSpacingInput');
+const textAlignInput = document.getElementById('textAlignInput');
+
+let selected = null;
+
+// Mapping for display values per field (fallback used by client-side addField)
+const displayValues = {
+    'date': '00<span class="date-gap"></span>00<span class="date-gap"></span>0000',
+    'client_id': '1234567890123'
+};
+
+function getDisplayValue(fieldName) {
+    return displayValues[fieldName] || fieldName;
+}
+
+function addField(name) {
+    if (document.querySelector('[data-name="' + CSS.escape(name) + '"]')) {
+        // prevent duplicates by default
+        return;
+    }
+    const div = document.createElement("div");
+    div.className = "field";
+    div.setAttribute("data-name", name);
+    div.style.top = "100px";
+    div.style.left = "100px";
+    div.style.width = "150px";
+    div.style.fontSize = "15px";
+    div.style.textAlign = "center";
+    div.style.lineHeight = "1.4";
+    div.style.whiteSpace = "normal";
+    div.style.letterSpacing = "0px";
+
+    // if the field is a date-like key, use date placeholder with gaps
+    const dateLike = ['booking_date','date_of_birth','bm_payment_date','down_payment_date','installment_date_from','date'];
+    let content = escapeHtml(getDisplayValue(name));
+    if (dateLike.indexOf(name) !== -1) {
+        // insert HTML gap spans (these are safe and intended)
+        content = '00<span class="date-gap"></span>00<span class="date-gap"></span>0000';
+        div.innerHTML = content + '<div class="resize-handle-left"></div><div class="resize-handle"></div>';
+    } else {
+        div.innerHTML = escapeHtml(getDisplayValue(name)) + '<div class="resize-handle-left"></div><div class="resize-handle"></div>';
+    }
+
+    builderArea.appendChild(div);
+    makeDraggable(div);
+    selectField(div);
+}
+
+function handleDrop(event) {
+    event.preventDefault();
+    const field = event.dataTransfer.getData("text/plain");
+    if (!field) return;
+    // Calculate position relative to builderArea
+    const rect = builderArea.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    const div = document.createElement('div');
+    div.className = 'field';
+    div.setAttribute('data-name', field);
+    div.style.top = y + 'px';
+    div.style.left = x + 'px';
+    div.style.width = '150px';
+    div.style.fontSize = '15px';
+    div.style.textAlign = 'center';
+    div.style.letterSpacing = '0px';
+
+    // same date check as addField
+    const dateLike = ['booking_date','date_of_birth','bm_payment_date','down_payment_date','installment_date_from','date'];
+    if (dateLike.indexOf(field) !== -1) {
+        div.innerHTML = '00<span class="date-gap"></span>00<span class="date-gap"></span>0000' + '<div class="resize-handle-left"></div><div class="resize-handle"></div>';
+    } else {
+        div.innerHTML = escapeHtml(getDisplayValue(field)) + '<div class="resize-handle-left"></div><div class="resize-handle"></div>';
+    }
+
+    builderArea.appendChild(div);
+    makeDraggable(div);
+    selectField(div);
+}
+
+function makeDraggable(el) {
+    const resizeHandleLeft = el.querySelector(".resize-handle-left");
+    const resizeHandleRight = el.querySelector(".resize-handle");
+
+    el.addEventListener("mousedown", function(e) {
+        // ignore mousedown when interacting with resize handles
+        if (e.target === resizeHandleLeft || e.target === resizeHandleRight) return;
+
+        e.preventDefault();
+        selectField(el);
+
+        const containerRect = builderArea.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const shiftX = e.clientX - elRect.left;
+        const shiftY = e.clientY - elRect.top;
+
+        function moveAt(e) {
+            let newLeft = e.clientX - containerRect.left - shiftX;
+            let newTop = e.clientY - containerRect.top - shiftY;
+
+            // Clamp within builderArea bounds
+            const maxLeft = builderArea.clientWidth - el.offsetWidth;
+            const maxTop = builderArea.clientHeight - el.offsetHeight;
+            if (newLeft < 0) newLeft = 0;
+            if (newTop < 0) newTop = 0;
+            if (newLeft > maxLeft) newLeft = maxLeft;
+            if (newTop > maxTop) newTop = maxTop;
+
+            el.style.left = newLeft + 'px';
+            el.style.top = newTop + 'px';
+        }
+
+        function onMouseMove(e) { moveAt(e); }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', function up() {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', up);
+        }, { once: true });
+    });
+
+    // Right resize handle - resize width by dragging right edge
+    resizeHandleRight.addEventListener("mousedown", function(e) {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startW = el.offsetWidth;
+
+        function onMouseMove(e) {
+            let newW = startW + (e.clientX - startX);
+            if (newW < 40) newW = 40;
+            // clamp so it doesn't overflow builder
+            const maxW = builderArea.clientWidth - el.offsetLeft;
+            if (newW > maxW) newW = maxW;
+            el.style.width = newW + 'px';
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', function up() {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', up);
+        }, { once: true });
+    });
+
+    // Left resize handle - resize width and move left edge
+    resizeHandleLeft.addEventListener("mousedown", function(e) {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startLeft = parseInt(el.style.left) || el.offsetLeft || 0;
+        const startWidth = el.offsetWidth;
+
+        function onMouseMove(e) {
+            let diff = e.clientX - startX;
+            let newLeft = startLeft + diff;
+            let newWidth = startWidth - diff;
+
+            // Clamp values
+            if (newLeft < 0) {
+                newWidth += newLeft; // reduce width by overflow amount
+                newLeft = 0;
+            }
+            if (newWidth < 40) {
+                newWidth = 40;
+                newLeft = startLeft + (startWidth - newWidth);
+            }
+            // ensure not exceed builderArea width
+            if (newLeft + newWidth > builderArea.clientWidth) {
+                newWidth = builderArea.clientWidth - newLeft;
+            }
+
+            el.style.left = newLeft + 'px';
+            el.style.width = newWidth + 'px';
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', function up() {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', up);
+        }, { once: true });
+    });
+
+    el.ondragstart = () => false;
+
+    // clicking a field selects it
+    el.addEventListener('click', function(e) {
+        selectField(el);
+        e.stopPropagation();
+    });
+}
+
+// helper to escape HTML when creating innerHTML content from text
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+function selectField(el) {
+    document.querySelectorAll(".field").forEach(f => f.classList.remove("selected"));
+    el.classList.add("selected");
+    selected = el;
+
+    document.getElementById("styleControls").style.display = "flex";
+    // parseFontSize and letterSpacing defensively
+    fontSizeInput.value = parseInt(selected.style.fontSize || window.getComputedStyle(selected).fontSize || 16, 10);
+    
+    // Use parseFloat so decimals are preserved. computeStyle may return "0.5px" — parseFloat handles that.
+    let ls = selected.style.letterSpacing || window.getComputedStyle(selected).letterSpacing || '0';
+    letterSpacingInput.value = isNaN(parseFloat(ls)) ? '0' : parseFloat(ls);
+    
+    // keep text align
+    textAlignInput.value = selected.style.textAlign || window.getComputedStyle(selected).textAlign || "center";
+}
+
+fontSizeInput.addEventListener("input", () => {
+    if (selected) selected.style.fontSize = fontSizeInput.value + "px";
+});
+letterSpacingInput.addEventListener("input", () => {
+    if (selected) selected.style.letterSpacing = letterSpacingInput.value + "px";
+});
+textAlignInput.addEventListener("change", () => {
+    if (selected) selected.style.textAlign = textAlignInput.value;
+});
+
+// make existing fields draggable
+document.querySelectorAll(".field").forEach(makeDraggable);
+
+// Save function: collect fields and send to server
+function save() {
+    let items = [];
+    document.querySelectorAll(".field").forEach(el => {
+        // normalize numeric values; ensure px unit
+        const styleTop = el.style.top || window.getComputedStyle(el).top || '0px';
+        const styleLeft = el.style.left || window.getComputedStyle(el).left || '0px';
+        const styleWidth = el.style.width || window.getComputedStyle(el).width || '';
+        const styleFontSize = el.style.fontSize || window.getComputedStyle(el).fontSize || '';
+        const styleLetterSpacing = el.style.letterSpacing || window.getComputedStyle(el).letterSpacing || '';
+        const styleTextAlign = el.style.textAlign || window.getComputedStyle(el).textAlign || '';
+
+        items.push({
+            name: el.dataset.name,
+            style: {
+                top: toPx(styleTop),
+                left: toPx(styleLeft),
+                width: styleWidth ? toCssValue(styleWidth) : '',
+                height: el.style.height ? toCssValue(el.style.height) : '',
+                fontSize: styleFontSize ? toCssValue(styleFontSize) : '',
+                letterSpacing: styleLetterSpacing ? toCssValue(styleLetterSpacing) : '',
+                textAlign: styleTextAlign || ''
+            }
+        });
+    });
+
+    const payload = {
+        project_id: <?= (int)$project_id ?>,
+        fields: items
+    };
+
+    // Wo_Ajax_Requests_File is referenced in original; keep same integration
+    fetch(Wo_Ajax_Requests_File() + '?f=builder', {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    })
+    .then(res => res.json().catch(() => ({})))
+    .then(data => {
+        alert(data.message || "Saved successfully");
+    })
+    .catch(err => {
+        alert("Save error: " + (err.message || err));
+    });
+}
+
+// helper to convert values like "100px" or "10em" -> ensure px strings or preserve other units
+function toPx(val) {
+    if (!val) return '0px';
+    if (typeof val === 'number') return val + 'px';
+    // already contains 'px' or other css unit
+    if (val.toString().match(/^[\d.]+$/)) return val + 'px';
+    return val.toString();
+}
+function toCssValue(val) {
+    if (!val) return '';
+    if (typeof val === 'number') return val + 'px';
+    return val.toString();
+}
+
+// Keyboard controls for selected field
+document.addEventListener('keydown', (e) => {
+    if (!selected) return;
+
+    const step = e.shiftKey ? 10 : 1;
+
+    switch (e.key) {
+        case 'ArrowLeft':
+            e.preventDefault();
+            selected.style.left = (parseInt(selected.style.left || selected.offsetLeft || 0) - step) + 'px';
+            break;
+        case 'ArrowRight':
+            e.preventDefault();
+            selected.style.left = (parseInt(selected.style.left || selected.offsetLeft || 0) + step) + 'px';
+            break;
+        case 'ArrowUp':
+            e.preventDefault();
+            selected.style.top = (parseInt(selected.style.top || selected.offsetTop || 0) - step) + 'px';
+            break;
+        case 'ArrowDown':
+            e.preventDefault();
+            selected.style.top = (parseInt(selected.style.top || selected.offsetTop || 0) + step) + 'px';
+            break;
+        case 'Delete':
+            e.preventDefault();
+            selected.remove();
+            selected = null;
+            document.getElementById("styleControls").style.display = "none";
+            break;
+        case 'd':
+        case 'D':
+            if (e.ctrlKey) {
+                e.preventDefault();
+                const clone = selected.cloneNode(true);
+                // ensure unique selection and handlers
+                let left = (parseInt(selected.style.left || selected.offsetLeft || 0) + 20);
+                let top = (parseInt(selected.style.top || selected.offsetTop || 0) + 20);
+                clone.style.left = left + 'px';
+                clone.style.top = top + 'px';
+                builderArea.appendChild(clone);
+                makeDraggable(clone);
+                selectField(clone);
+            }
+            break;
+        case 's':
+        case 'S':
+            if (e.ctrlKey) {
+                e.preventDefault();
+                save();
+            }
+            break;
+    }
+});
+
+// Deselect when clicking the background
+builderArea.addEventListener('click', function(e) {
+    if (e.target === builderArea) {
+        document.querySelectorAll(".field").forEach(f => f.classList.remove("selected"));
+        selected = null;
+        document.getElementById("styleControls").style.display = "none";
+    }
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,638 @@
+<!-- Payment Reschedule Modal -->
+<div class="modal fade" id="rescheduleModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-primary text-white border-0">
+        <h5 class="modal-title">
+          <i class="lni lni-calendar me-2"></i>Reschedule Payment Plan
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-4">
+        <input type="hidden" id="reschedule_purchase_id" value="">
+
+        <!-- Current Schedule Summary -->
+        <div class="card border-0 bg-light mb-4">
+          <div class="card-body">
+            <h6 class="fw-semibold mb-3">
+              <i class="lni lni-bar-chart me-2"></i>Current Schedule Summary
+            </h6>
+            <div class="row g-3">
+              <div class="col-md-3">
+                <label class="form-label small text-muted">Total Amount</label>
+                <div class="fw-bold fs-5" id="reschedule_total_amount">৳0</div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small text-muted">Total Paid</label>
+                <div class="fw-bold fs-5 text-success" id="reschedule_total_paid">৳0</div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small text-muted">Remaining Balance</label>
+                <div class="fw-bold fs-5 text-danger" id="reschedule_remaining">৳0</div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small text-muted">Last Paid Date</label>
+                <div class="fw-bold" id="reschedule_last_paid_date">-</div>
+              </div>
+            </div>
+            <div class="row g-3 mt-2">
+              <div class="col-md-3">
+                <label class="form-label small text-muted">Current Monthly</label>
+                <div class="fw-bold" id="reschedule_current_monthly">৳0</div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small text-muted">Unpaid Installments</label>
+                <div class="fw-bold" id="reschedule_unpaid_count">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reschedule Form -->
+        <div class="card border-0 shadow-sm">
+          <div class="card-body">
+            <h6 class="fw-semibold mb-3">
+              <i class="lni lni-cog me-2"></i>Reschedule Parameters
+            </h6>
+
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label fw-medium">
+                  New Monthly Installment Amount (৳) *
+                </label>
+                <input type="number" class="form-control" id="reschedule_monthly_amount" placeholder="Enter new monthly amount" step="0.01" min="0">
+                <small class="form-text text-muted">
+                  Amount to pay each month going forward
+                </small>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label fw-medium">
+                  Adjustment Mode *
+                </label>
+                <select class="form-select" id="reschedule_adjustment_mode">
+                  <option value="last_installment" selected>Adjust Last Installment</option>
+                  <option value="yearly_adjustment">Yearly Adjustment</option>
+                </select>
+                <small class="form-text text-muted">
+                  How to handle remaining balance differences
+                </small>
+              </div>
+            </div>
+
+            <div class="row g-3 mt-2">
+              <div class="col-md-12">
+                <label class="form-label fw-medium">
+                  Reason for Reschedule
+                </label>
+                <textarea class="form-control" id="reschedule_reason" rows="3" placeholder="Optional: Explain why this reschedule is needed"></textarea>
+              </div>
+            </div>
+
+            <!-- Adjustment Mode Explanation -->
+            <div class="alert alert-info mt-3">
+              <div class="d-flex">
+                <i class="lni lni-information fs-4 me-2"></i>
+                <div>
+                  <strong>Adjustment Modes:</strong>
+                  <ul class="mb-0 mt-2">
+                    <li><strong>Last Installment:</strong> Any remaining balance will be added to the final installment</li>
+                    <li><strong>Yearly Adjustment:</strong> Remaining balance will be distributed as yearly adjustment installments</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview Section (hidden initially) -->
+        <div id="reschedule_preview_section" class="mt-4" style="display:none;">
+          <div class="card border-0 shadow-sm">
+            <div class="card-header bg-light border-0">
+              <h6 class="mb-0 fw-semibold">
+                <i class="lni lni-eye me-2"></i>Preview Changes
+              </h6>
+            </div>
+            <div class="card-body">
+              <!-- Before/After Comparison -->
+              <div class="row g-4">
+                <div class="col-md-6">
+                  <div class="preview-column current">
+                    <h6 class="preview-header">Current Schedule</h6>
+                    <div class="preview-item">
+                      <span class="preview-label">Monthly Amount:</span>
+                      <span class="preview-value" id="preview_current_monthly">৳0</span>
+                    </div>
+                    <div class="preview-item">
+                      <span class="preview-label">Remaining Balance:</span>
+                      <span class="preview-value" id="preview_current_remaining">৳0</span>
+                    </div>
+                    <div class="preview-item">
+                      <span class="preview-label">Unpaid Rows:</span>
+                      <span class="preview-value" id="preview_current_rows">0</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="preview-column proposed">
+                    <h6 class="preview-header">Proposed Schedule</h6>
+                    <div class="preview-item">
+                      <span class="preview-label">Monthly Amount:</span>
+                      <span class="preview-value highlight" id="preview_new_monthly">৳0</span>
+                    </div>
+                    <div class="preview-item">
+                      <span class="preview-label">Remaining Balance:</span>
+                      <span class="preview-value" id="preview_new_remaining">৳0</span>
+                    </div>
+                    <div class="preview-item">
+                      <span class="preview-label">New Installments:</span>
+                      <span class="preview-value highlight" id="preview_new_rows">0</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Preview Details -->
+              <div id="reschedule_preview_details" class="mt-3">
+                <!-- Populated by JavaScript -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Approval Notice -->
+        <div id="reschedule_approval_notice" class="alert alert-warning mt-4" style="display:none;">
+          <i class="lni lni-shield-check me-2"></i>
+          <strong>Admin Approval Required:</strong> This reschedule requires admin approval before it takes effect. You will be notified once reviewed.
+        </div>
+      </div>
+
+      <div class="modal-footer border-top">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-outline-primary" id="reschedule_preview_btn">
+          <i class="lni lni-eye me-1"></i>Preview Changes
+        </button>
+        <button type="button" class="btn btn-primary" id="reschedule_submit_btn" style="display:none;">
+          <i class="lni lni-check-circle me-1"></i>Submit Reschedule
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+#rescheduleModal .preview-column {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 1.25rem;
+  border: 2px solid #e9ecef;
+  height: 100%;
+}
+
+#rescheduleModal .preview-column.current {
+  border-color: #6c757d;
+}
+
+#rescheduleModal .preview-column.proposed {
+  border-color: #0d6efd;
+  background: #f0f5ff;
+}
+
+#rescheduleModal .preview-header {
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: #495057;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #dee2e6;
+}
+
+#rescheduleModal .preview-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #e9ecef;
+}
+
+#rescheduleModal .preview-item:last-child {
+  border-bottom: none;
+}
+
+#rescheduleModal .preview-label {
+  font-size: 0.875rem;
+  color: #6c757d;
+  font-weight: 500;
+}
+
+#rescheduleModal .preview-value {
+  font-size: 0.875rem;
+  color: #212529;
+  font-weight: 600;
+}
+
+#rescheduleModal .preview-value.highlight {
+  color: #0d6efd;
+  background: #e7f1ff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+#rescheduleModal .schedule-preview-table {
+  font-size: 0.875rem;
+}
+
+#rescheduleModal .schedule-preview-table th {
+  background: #f8f9fa;
+  font-weight: 600;
+  padding: 0.5rem;
+  border-bottom: 2px solid #dee2e6;
+}
+
+#rescheduleModal .schedule-preview-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid #e9ecef;
+}
+
+#rescheduleModal .schedule-preview-table .row-new {
+  background: #e7f1ff;
+}
+
+#rescheduleModal .schedule-preview-table .row-modified {
+  background: #fff3cd;
+}
+</style>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  // Global function to open reschedule modal
+  window.openRescheduleModal = function(purchaseId) {
+    if (!purchaseId) {
+      alert('Purchase ID is required');
+      return;
+    }
+
+    // Reset modal state
+    $('#reschedule_purchase_id').val(purchaseId);
+    $('#reschedule_monthly_amount').val('');
+    $('#reschedule_adjustment_mode').val('last_installment');
+    $('#reschedule_reason').val('');
+    $('#reschedule_preview_section').hide();
+    $('#reschedule_submit_btn').hide();
+    $('#reschedule_approval_notice').hide();
+
+    // Load current schedule data
+    loadCurrentScheduleData(purchaseId);
+
+    // Show modal
+    $('#rescheduleModal').modal('show');
+  };
+
+  function loadCurrentScheduleData(purchaseId) {
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_reschedule_context', {
+      purchase_id: purchaseId
+    })
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+
+        if (data.status === 200 && data.context) {
+          populateCurrentSchedule(data.context);
+        } else {
+          alert(data.message || 'Failed to load schedule data');
+        }
+      })
+      .fail(function() {
+        alert('Server error while loading schedule data');
+      });
+  }
+
+  function populateCurrentSchedule(context) {
+    $('#reschedule_total_amount').text(formatCurrency(context.total_amount || 0));
+    $('#reschedule_total_paid').text(formatCurrency(context.total_paid || 0));
+    $('#reschedule_remaining').text(formatCurrency(context.remaining_balance || 0));
+    $('#reschedule_last_paid_date').text(context.last_paid_date || '-');
+    $('#reschedule_current_monthly').text(formatCurrency(context.current_monthly_amount || 0));
+    $('#reschedule_unpaid_count').text(context.unpaid_rows || 0);
+
+    // Store context for later use
+    $('#rescheduleModal').data('schedule-context', context);
+  }
+
+  function formatCurrency(amount) {
+    var num = parseFloat(amount) || 0;
+    return '৳' + num.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2
+    });
+  }
+
+  function populatePreviewSection(preview) {
+    if (!preview) return;
+
+    // Populate before/after comparison
+    var before = preview.before || {};
+    var after = preview.after || {};
+
+    // Current schedule values
+    $('#preview_current_monthly').text(formatCurrency(before.monthly_amount || 0));
+    $('#preview_current_remaining').text(formatCurrency(before.remaining_balance || 0));
+    $('#preview_current_rows').text(before.unpaid_rows || 0);
+
+    // Proposed schedule values
+    $('#preview_new_monthly').text(formatCurrency(after.monthly_amount || 0));
+    $('#preview_new_remaining').text(formatCurrency(after.remaining_balance || 0));
+    $('#preview_new_rows').text(after.new_installment_count || 0);
+
+    // Populate preview details table
+    var $detailsContainer = $('#reschedule_preview_details');
+    $detailsContainer.empty();
+
+    // Add summary info
+    var summaryHtml = '<div class="alert alert-info mb-3">';
+    summaryHtml += '<div class="row g-2">';
+    summaryHtml += '<div class="col-md-4"><strong>Last Paid Date:</strong> ' + (before.last_paid_date || '-') + '</div>';
+    summaryHtml += '<div class="col-md-4"><strong>Adjustment Mode:</strong> ' + (after.adjustment_mode || 'last_installment').replace('_', ' ').toUpperCase() + '</div>';
+    summaryHtml += '<div class="col-md-4"><strong>Total Installments:</strong> ' + (after.new_installment_count || 0) + '</div>';
+    summaryHtml += '</div>';
+    summaryHtml += '</div>';
+    $detailsContainer.append(summaryHtml);
+
+    // Add sample rows table (first 5 and last 3)
+    if (after.new_schedule && after.new_schedule.length > 0) {
+      var tableHtml = '<div class="table-responsive">';
+      tableHtml += '<table class="table table-sm table-bordered schedule-preview-table">';
+      tableHtml += '<thead>';
+      tableHtml += '<tr>';
+      tableHtml += '<th>#</th>';
+      tableHtml += '<th>Type</th>';
+      tableHtml += '<th>Due Date</th>';
+      tableHtml += '<th>Amount (৳)</th>';
+      tableHtml += '<th>Status</th>';
+      tableHtml += '</tr>';
+      tableHtml += '</thead>';
+      tableHtml += '<tbody>';
+
+      var rows = after.new_schedule;
+      var totalRows = rows.length;
+      var displayRows = [];
+
+      // Show first 5 rows
+      for (var i = 0; i < Math.min(5, totalRows); i++) {
+        displayRows.push({ row: rows[i], index: i });
+      }
+
+      // Add separator if there are more rows
+      if (totalRows > 8) {
+        displayRows.push({ separator: true });
+      }
+
+      // Show last 3 rows
+      if (totalRows > 5) {
+        var startLast = Math.max(5, totalRows - 3);
+        for (var i = startLast; i < totalRows; i++) {
+          displayRows.push({ row: rows[i], index: i });
+        }
+      }
+
+      displayRows.forEach(function(item) {
+        if (item.separator) {
+          tableHtml += '<tr><td colspan="5" class="text-center text-muted">... ' + (totalRows - 8) + ' more rows ...</td></tr>';
+        } else {
+          var row = item.row;
+          var rowClass = row.is_new ? 'row-new' : (row.is_modified ? 'row-modified' : '');
+          tableHtml += '<tr class="' + rowClass + '">';
+          tableHtml += '<td>' + (item.index + 1) + '</td>';
+          tableHtml += '<td>' + (row.type || 'installment') + '</td>';
+          tableHtml += '<td>' + (row.due_date || '-') + '</td>';
+          tableHtml += '<td class="fw-bold">' + formatCurrency(row.amount || 0) + '</td>';
+          tableHtml += '<td><span class="badge bg-secondary">Pending</span></td>';
+          tableHtml += '</tr>';
+        }
+      });
+
+      tableHtml += '</tbody>';
+      tableHtml += '</table>';
+      tableHtml += '</div>';
+
+      $detailsContainer.append(tableHtml);
+
+      // Add note about preview
+      var noteHtml = '<div class="alert alert-secondary mt-2">';
+      noteHtml += '<small><i class="lni lni-information-circle me-1"></i>';
+      noteHtml += '<strong>Preview Note:</strong> Showing ' + displayRows.filter(function(d){ return !d.separator; }).length + ' of ' + totalRows + ' installments. ';
+      noteHtml += 'Full schedule will be created upon submission.';
+      noteHtml += '</small>';
+      noteHtml += '</div>';
+      $detailsContainer.append(noteHtml);
+    }
+  }
+
+  // Preview button handler
+  $(document).off('click', '#reschedule_preview_btn').on('click', '#reschedule_preview_btn', function() {
+    var purchaseId = $('#reschedule_purchase_id').val();
+    var monthlyAmount = parseFloat($('#reschedule_monthly_amount').val()) || 0;
+    var adjustmentMode = $('#reschedule_adjustment_mode').val();
+
+    if (!purchaseId || !monthlyAmount) {
+      alert('Please fill in all required fields');
+      return;
+    }
+
+    if (monthlyAmount <= 0) {
+      alert('Monthly amount must be greater than 0');
+      return;
+    }
+
+    // Show loading state
+    var $btn = $(this);
+    var originalHtml = $btn.html();
+    $btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Loading Preview...');
+
+    // Call preview endpoint
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=preview_reschedule', {
+      purchase_id: purchaseId,
+      monthly_amount: monthlyAmount,
+      adjustment_mode: adjustmentMode
+    })
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+
+        if (data.status === 200 && data.preview) {
+          populatePreviewSection(data.preview);
+
+          // Show preview section and submit button
+          $('#reschedule_preview_section').slideDown();
+          $('#reschedule_submit_btn').show();
+
+          // Check if approval required
+          if (data.requires_approval) {
+            $('#reschedule_approval_notice').show();
+          } else {
+            $('#reschedule_approval_notice').hide();
+          }
+
+          // Store preview data for submission
+          $('#rescheduleModal').data('preview-data', data.preview);
+
+        } else {
+          alert(data.message || 'Failed to generate preview');
+          $('#reschedule_preview_section').hide();
+          $('#reschedule_submit_btn').hide();
+        }
+      })
+      .fail(function() {
+        alert('Server error while generating preview');
+        $('#reschedule_preview_section').hide();
+        $('#reschedule_submit_btn').hide();
+      })
+      .always(function() {
+        $btn.prop('disabled', false).html(originalHtml);
+      });
+  });
+
+  // Submit button handler - STEP 8.3: Complete implementation
+  $(document).off('click', '#reschedule_submit_btn').on('click', '#reschedule_submit_btn', function() {
+    // Sub-step 8.3.1: Validation
+    var purchaseId = $('#reschedule_purchase_id').val();
+    var monthlyAmount = parseFloat($('#reschedule_monthly_amount').val()) || 0;
+    var adjustmentMode = $('#reschedule_adjustment_mode').val();
+    var reason = $('#reschedule_reason').val().trim();
+
+    // Validate required fields
+    if (!purchaseId) {
+      alert('Purchase ID is missing');
+      return;
+    }
+
+    if (!monthlyAmount || monthlyAmount <= 0) {
+      alert('Please enter a valid monthly amount greater than 0');
+      return;
+    }
+
+    if (!adjustmentMode) {
+      alert('Please select an adjustment mode');
+      return;
+    }
+
+    // Confirm before submission
+    var confirmMsg = 'Are you sure you want to submit this reschedule?\n\n';
+    confirmMsg += 'Monthly Amount: ' + formatCurrency(monthlyAmount) + '\n';
+    confirmMsg += 'Adjustment Mode: ' + adjustmentMode.replace('_', ' ').toUpperCase() + '\n';
+
+    if (reason) {
+      confirmMsg += 'Reason: ' + reason.substring(0, 50) + (reason.length > 50 ? '...' : '') + '\n';
+    }
+
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+
+    // Sub-step 8.3.2: Show loading state
+    var $btn = $(this);
+    var originalHtml = $btn.html();
+    $btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Submitting...');
+
+    // Disable other buttons during submission
+    $('#reschedule_preview_btn').prop('disabled', true);
+    $('[data-bs-dismiss="modal"]').prop('disabled', true);
+
+    // Sub-step 8.3.2: AJAX call to submit_payment_reschedule endpoint
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=submit_payment_reschedule', {
+      purchase_id: purchaseId,
+      monthly_amount: monthlyAmount,
+      adjustment_mode: adjustmentMode,
+      reason: reason || ''
+    })
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+
+        // Sub-step 8.3.3: Handle approval-required vs direct execution responses
+        if (data.status === 200) {
+          // Success - check if approved directly or pending approval
+          if (data.requires_approval) {
+            // Pending approval workflow
+            var successMsg = 'Reschedule request submitted successfully!\n\n';
+            successMsg += 'Status: Pending Admin Approval\n';
+            successMsg += 'You will be notified once an admin reviews your request.';
+
+            alert(successMsg);
+
+            // Close modal and refresh to show pending badge
+            $('#rescheduleModal').modal('hide');
+
+            // Reload page or refresh specific sections
+            setTimeout(function() {
+              if (typeof window.refreshPurchaseTable === 'function') {
+                window.refreshPurchaseTable();
+              } else if (typeof location !== 'undefined') {
+                location.reload();
+              }
+            }, 500);
+
+          } else {
+            // Direct execution (no approval needed)
+            var successMsg = 'Payment schedule rescheduled successfully!\n\n';
+            successMsg += 'The new schedule is now active.\n';
+            successMsg += 'Monthly Amount: ' + formatCurrency(monthlyAmount);
+
+            alert(successMsg);
+
+            // Close modal and reload to show updated schedule
+            $('#rescheduleModal').modal('hide');
+
+            setTimeout(function() {
+              if (typeof window.refreshPaymentSchedule === 'function') {
+                window.refreshPaymentSchedule(purchaseId);
+              } else if (typeof location !== 'undefined') {
+                location.reload();
+              }
+            }, 500);
+          }
+
+        } else if (data.status === 403) {
+          // Permission denied
+          alert('Permission denied: ' + (data.message || 'You do not have permission to reschedule payments'));
+
+        } else if (data.status === 409) {
+          // Conflict - concurrent modification
+          alert('Conflict: ' + (data.message || 'This schedule has been modified by another user. Please refresh and try again.'));
+
+        } else {
+          // Sub-step 8.3.4: Generic error handling
+          alert('Error: ' + (data.message || 'Failed to submit reschedule request. Please try again.'));
+        }
+      })
+      .fail(function(xhr, status, error) {
+        // Sub-step 8.3.4: Network/server error handling
+        var errorMsg = 'Server error while submitting reschedule request.\n\n';
+
+        if (xhr.status === 0) {
+          errorMsg += 'Network error: Please check your internet connection.';
+        } else if (xhr.status === 500) {
+          errorMsg += 'Server error (500): Please contact support if this persists.';
+        } else if (xhr.status === 404) {
+          errorMsg += 'Endpoint not found (404): Please refresh the page.';
+        } else {
+          errorMsg += 'Error ' + xhr.status + ': ' + (error || 'Unknown error');
+        }
+
+        alert(errorMsg);
+      })
+      .always(function() {
+        // Re-enable buttons
+        $btn.prop('disabled', false).html(originalHtml);
+        $('#reschedule_preview_btn').prop('disabled', false);
+        $('[data-bs-dismiss="modal"]').prop('disabled', false);
+      });
+  });
+
+  // Clear modal data on close
+  $('#rescheduleModal').on('hidden.bs.modal', function() {
+    $('#rescheduleModal').removeData('schedule-context preview-data');
+  });
+});
+</script>

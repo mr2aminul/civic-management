@@ -1,0 +1,471 @@
+<?php
+/* Pending Actions Tab - Admin View
+ * Shows all pending changes requiring admin approval
+ * Admin can review, approve, or deny changes from this interface
+ */
+global $db, $wo;
+
+$is_admin = Wo_IsAdmin() || Wo_IsModerator() || check_permission('manage-clients');
+
+// If not admin, redirect or show error
+if (!$is_admin) {
+  echo '<div class="alert alert-danger">You do not have permission to view pending actions.</div>';
+  return;
+}
+?>
+
+<style>
+.pending-action-card {
+  transition: all 0.2s ease;
+  border-left: 4px solid #ffc107;
+}
+
+.pending-action-card.urgent {
+  border-left-color: #dc3545;
+  animation: pulse-urgent 2s infinite;
+}
+
+@keyframes pulse-urgent {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); }
+}
+
+.pending-action-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  transform: translateY(-2px);
+}
+
+.change-preview {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+.preview-comparison {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 1rem;
+  align-items: center;
+}
+
+.preview-column {
+  background: #fff;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.preview-column h6 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: #6c757d;
+  margin-bottom: 0.5rem;
+}
+
+.preview-arrow {
+  font-size: 1.5rem;
+  color: #0d6efd;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  border-left: 4px solid #6c757d;
+}
+
+.stat-card.pending { border-left-color: #ffc107; }
+.stat-card.urgent { border-left-color: #dc3545; }
+.stat-card.total { border-left-color: #0d6efd; }
+
+.stat-card h3 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0;
+  color: #212529;
+}
+
+.stat-card p {
+  margin: 0.25rem 0 0;
+  color: #6c757d;
+  font-size: 0.875rem;
+}
+</style>
+
+<div class="container-fluid p-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0 fw-bold">
+      <i class="lni lni-clipboard me-2"></i>Pending Actions (Admin)
+    </h4>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-primary btn-sm" onclick="refreshPendingActions()">
+        <i class="lni lni-reload me-1"></i>Refresh
+      </button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="autoExpirePending()">
+        <i class="lni lni-trash me-1"></i>Expire Old
+      </button>
+    </div>
+  </div>
+
+  <!-- Statistics -->
+  <div class="stats-grid" id="pendingActionStats">
+    <div class="stat-card total">
+      <h3 id="statTotal">0</h3>
+      <p>Total Pending</p>
+    </div>
+    <div class="stat-card pending">
+      <h3 id="statReschedule">0</h3>
+      <p>Reschedule Requests</p>
+    </div>
+    <div class="stat-card urgent">
+      <h3 id="statTransfer">0</h3>
+      <p>Transfer Requests</p>
+    </div>
+    <div class="stat-card urgent">
+      <h3 id="statCancel">0</h3>
+      <p>Cancellation Requests</p>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-md-3">
+          <label class="form-label small fw-medium">Change Type</label>
+          <select id="adminFilterChangeType" class="form-select form-select-sm">
+            <option value="">All Types</option>
+            <option value="reschedule">Reschedule</option>
+            <option value="transfer">Transfer</option>
+            <option value="cancel">Cancellation</option>
+            <option value="rate_change">Rate Change</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-medium">Requested By</label>
+          <input type="text" id="adminFilterRequester" class="form-control form-control-sm" placeholder="User name">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small fw-medium">Date From</label>
+          <input type="date" id="adminFilterDateFrom" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small fw-medium">Date To</label>
+          <input type="date" id="adminFilterDateTo" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+          <button class="btn btn-primary btn-sm w-100" onclick="applyAdminFilters()">
+            <i class="lni lni-funnel me-1"></i>Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading State -->
+  <div id="pendingActionsLoading" class="text-center py-5" style="display:none;">
+    <div class="spinner-border text-primary" role="status">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <p class="text-muted mt-2">Loading pending actions...</p>
+  </div>
+
+  <!-- Empty State -->
+  <div id="pendingActionsEmpty" class="text-center py-5" style="display:none;">
+    <i class="lni lni-checkmark-circle fs-1 text-success mb-3 d-block"></i>
+    <h5 class="text-muted">No Pending Actions</h5>
+    <p class="text-muted">All requests have been processed</p>
+  </div>
+
+  <!-- Pending Actions List -->
+  <div id="pendingActionsList">
+    <!-- Cards will be populated here via JavaScript -->
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  window.refreshPendingActions = function() {
+    loadPendingActions();
+  };
+
+  window.applyAdminFilters = function() {
+    loadPendingActions();
+  };
+
+  window.autoExpirePending = function() {
+    if (!confirm('Expire all pending changes older than 30 days?')) return;
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=auto_expire_pending')
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Expired ' + (data.expired_count || 0) + ' old pending changes');
+          loadPendingActions();
+        } else {
+          alert(data.message || 'Failed to expire pending changes');
+        }
+      })
+      .fail(function() {
+        alert('Server error while expiring pending changes');
+      });
+  };
+
+  function loadPendingActions() {
+    var filters = {
+      change_type: $('#adminFilterChangeType').val(),
+      status: 'pending',
+      date_from: $('#adminFilterDateFrom').val(),
+      date_to: $('#adminFilterDateTo').val(),
+      requester: $('#adminFilterRequester').val()
+    };
+
+    $('#pendingActionsLoading').show();
+    $('#pendingActionsList').hide();
+    $('#pendingActionsEmpty').hide();
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_changes', filters)
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+
+        $('#pendingActionsLoading').hide();
+
+        if (data.status === 200 && data.changes && data.changes.length > 0) {
+          renderPendingActions(data.changes);
+          updateStats(data.changes);
+          $('#pendingActionsList').show();
+        } else {
+          updateStats([]);
+          $('#pendingActionsEmpty').show();
+        }
+      })
+      .fail(function() {
+        $('#pendingActionsLoading').hide();
+        $('#pendingActionsEmpty').show();
+        alert('Failed to load pending actions');
+      });
+  }
+
+  function updateStats(changes) {
+    var total = changes.length;
+    var reschedule = changes.filter(c => c.change_type === 'reschedule').length;
+    var transfer = changes.filter(c => c.change_type === 'transfer').length;
+    var cancel = changes.filter(c => c.change_type === 'cancel').length;
+
+    $('#statTotal').text(total);
+    $('#statReschedule').text(reschedule);
+    $('#statTransfer').text(transfer);
+    $('#statCancel').text(cancel);
+  }
+
+  function renderPendingActions(changes) {
+    var $list = $('#pendingActionsList').empty();
+
+    changes.forEach(function(change) {
+      var card = buildPendingActionCard(change);
+      $list.append(card);
+    });
+  }
+
+  function buildPendingActionCard(change) {
+    var changeTypeLabel = getChangeTypeLabel(change.change_type);
+    var requestDate = change.request_date ? new Date(change.request_date).toLocaleDateString('en-US', {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    }) : '-';
+
+    var daysOld = calculateDaysOld(change.request_date);
+    var isUrgent = daysOld > 7;
+
+    var $card = $('<div class="card pending-action-card mb-3 ' + (isUrgent ? 'urgent' : '') + '"></div>');
+
+    var previewHtml = '';
+    if (change.preview_data_json) {
+      try {
+        var preview = typeof change.preview_data_json === 'string' ? JSON.parse(change.preview_data_json) : change.preview_data_json;
+        previewHtml = buildPreviewHtml(preview, change.change_type);
+      } catch(e) {}
+    }
+
+    $card.html(`
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+          <div>
+            <h5 class="mb-1 fw-bold">
+              <span class="badge bg-warning text-dark">${changeTypeLabel}</span>
+              ${isUrgent ? '<span class="badge bg-danger ms-2">Urgent (' + daysOld + ' days)</span>' : ''}
+            </h5>
+            <p class="mb-1 text-muted">
+              <strong>Purchase ID:</strong> ${change.purchase_id} |
+              <strong>Client:</strong> ${change.client_name || 'N/A'}
+            </p>
+            <p class="mb-0 text-muted small">
+              <i class="lni lni-user me-1"></i>Requested by: ${change.requested_by_name || 'Unknown'} on ${requestDate}
+            </p>
+          </div>
+        </div>
+
+        ${change.request_reason ? '<div class="alert alert-info mb-3"><strong>Reason:</strong> ' + $('<div>').text(change.request_reason).html() + '</div>' : ''}
+
+        ${previewHtml}
+
+        <div class="action-buttons">
+          <button class="btn btn-success btn-sm approve-action" data-id="${change.id}">
+            <i class="lni lni-checkmark-circle me-1"></i>Approve
+          </button>
+          <button class="btn btn-danger btn-sm deny-action" data-id="${change.id}">
+            <i class="lni lni-close me-1"></i>Deny
+          </button>
+          <button class="btn btn-outline-secondary btn-sm view-detail" data-id="${change.id}">
+            <i class="lni lni-eye me-1"></i>View Full Details
+          </button>
+        </div>
+      </div>
+    `);
+
+    return $card;
+  }
+
+  function buildPreviewHtml(preview, changeType) {
+    if (!preview) return '';
+
+    var html = '<div class="change-preview"><h6 class="fw-semibold mb-2">Preview of Changes</h6>';
+
+    if (changeType === 'reschedule' && preview.before && preview.after) {
+      html += '<div class="preview-comparison">';
+      html += '<div class="preview-column"><h6>Current</h6>';
+      html += '<p class="mb-1"><small><strong>Monthly:</strong> ' + (preview.before.monthly_amount || 'N/A') + '</small></p>';
+      html += '<p class="mb-0"><small><strong>Remaining:</strong> ' + (preview.before.remaining_balance || 'N/A') + '</small></p>';
+      html += '</div>';
+      html += '<div class="preview-arrow"><i class="lni lni-arrow-right"></i></div>';
+      html += '<div class="preview-column"><h6>Proposed</h6>';
+      html += '<p class="mb-1"><small><strong>Monthly:</strong> ' + (preview.after.monthly_amount || 'N/A') + '</small></p>';
+      html += '<p class="mb-0"><small><strong>Remaining:</strong> ' + (preview.after.remaining_balance || 'N/A') + '</small></p>';
+      html += '</div>';
+      html += '</div>';
+    } else if (changeType === 'transfer') {
+      html += '<p class="mb-0 small text-muted">Transfer details available in full view</p>';
+    } else if (changeType === 'cancel') {
+      html += '<p class="mb-0 small text-danger">Plot cancellation request</p>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function calculateDaysOld(dateStr) {
+    if (!dateStr) return 0;
+    var requestDate = new Date(dateStr);
+    var now = new Date();
+    var diff = now - requestDate;
+    return Math.floor(diff / (1000 * 60 * 60 * 24));
+  }
+
+  function getChangeTypeLabel(type) {
+    var labels = {
+      'reschedule': 'Payment Reschedule',
+      'transfer': 'Ownership/Plot Transfer',
+      'cancel': 'Plot Cancellation',
+      'rate_change': 'Rate Change'
+    };
+    return labels[type] || type;
+  }
+
+  // Approve action handler
+  $(document).on('click', '.approve-action', function() {
+    var changeId = $(this).data('id');
+    if (!changeId) return;
+
+    var notes = prompt('Optional approval notes:');
+    if (notes === null) return;
+
+    $(this).prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Approving...');
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=approve_pending_change', {
+      pending_change_id: changeId,
+      notes: notes || ''
+    })
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Change approved and executed successfully!');
+          loadPendingActions();
+        } else {
+          alert(data.message || 'Failed to approve change');
+        }
+      })
+      .fail(function() {
+        alert('Server error while approving change');
+      })
+      .always(function() {
+        $(this).prop('disabled', false).html('<i class="lni lni-checkmark-circle me-1"></i>Approve');
+      });
+  });
+
+  // Deny action handler
+  $(document).on('click', '.deny-action', function() {
+    var changeId = $(this).data('id');
+    if (!changeId) return;
+
+    var reason = prompt('Please provide a reason for denial (required):');
+    if (!reason || reason.trim() === '') {
+      alert('Denial reason is required');
+      return;
+    }
+
+    $(this).prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Denying...');
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=deny_pending_change', {
+      pending_change_id: changeId,
+      reason: reason
+    })
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          alert('Change denied successfully');
+          loadPendingActions();
+        } else {
+          alert(data.message || 'Failed to deny change');
+        }
+      })
+      .fail(function() {
+        alert('Server error while denying change');
+      })
+      .always(function() {
+        $(this).prop('disabled', false).html('<i class="lni lni-close me-1"></i>Deny');
+      });
+  });
+
+  // View detail handler
+  $(document).on('click', '.view-detail', function() {
+    var changeId = $(this).data('id');
+    if (!changeId) return;
+
+    // Admin view - always has admin permissions
+    if (typeof window.openPendingChangeDetail === 'function') {
+      window.openPendingChangeDetail(changeId, true);
+    } else {
+      alert('Detail modal not loaded. Please refresh the page.');
+    }
+  });
+
+  // Auto-load on page load
+  loadPendingActions();
+});
+</script>

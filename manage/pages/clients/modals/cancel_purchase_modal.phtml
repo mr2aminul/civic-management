@@ -1,0 +1,298 @@
+<?php
+// /manage/pages/clients/modals/cancel_purchase_modal.phtml
+// Dedicated modal for cancelling purchases
+// Moved from transfer_modal.phtml
+?>
+
+<!-- Cancel Purchase Modal -->
+<div class="modal fade" id="cancelPurchaseModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-danger text-white border-0">
+        <h5 class="modal-title">
+          <i class="lni lni-close me-2"></i>Cancel Purchase
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-4">
+        <input type="hidden" id="cancel_purchase_id" value="">
+
+        <!-- Purchase Information -->
+        <div class="card border-0 bg-light mb-4 shadow-sm">
+          <div class="card-body">
+            <h6 class="fw-semibold mb-3">
+              <i class="lni lni-home me-2"></i>Purchase Information
+            </h6>
+            <div class="row g-3">
+              <div class="col-md-3">
+                <label class="form-label fw-medium">Project</label>
+                <input type="text" id="cancel_project_name" class="form-control" readonly>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label fw-medium">Block</label>
+                <input type="text" id="cancel_block" class="form-control" readonly>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label fw-medium">Plot</label>
+                <input type="text" id="cancel_plot" class="form-control" readonly>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label fw-medium">Katha</label>
+                <input type="text" id="cancel_katha" class="form-control" readonly>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-medium">Client</label>
+                <input type="text" id="cancel_client_name" class="form-control" readonly>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Payment Summary -->
+        <div class="card border-0 bg-info bg-opacity-10 mb-4 shadow-sm">
+          <div class="card-body">
+            <h6 class="fw-semibold mb-3">
+              <i class="lni lni-money me-2"></i>Payment Summary
+            </h6>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium">Total Paid Amount</label>
+                <div class="input-group">
+                  <span class="input-group-text">৳</span>
+                  <input type="text" id="cancel_total_paid" class="form-control" readonly data-total="0">
+                </div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium">Booking Money</label>
+                <div class="input-group">
+                  <span class="input-group-text">৳</span>
+                  <input type="text" id="cancel_booking_money" class="form-control" readonly>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium">Down Payment</label>
+                <div class="input-group">
+                  <span class="input-group-text">৳</span>
+                  <input type="text" id="cancel_down_payment" class="form-control" readonly>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cancellation Form -->
+        <div class="card border-0 border-start border-4 border-danger mb-4">
+          <div class="card-body">
+            <h6 class="fw-semibold mb-3">Cancellation Details</h6>
+
+            <div class="mb-3">
+              <label class="form-label fw-medium">Cancellation Reason *</label>
+              <textarea class="form-control" id="cancel_reason" rows="4" placeholder="Enter detailed reason for cancellation..." required></textarea>
+              <small class="form-text text-muted">Minimum 10 characters required</small>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium">Cancellation Fee Type</label>
+                <select class="form-select" id="cancel_fee_mode">
+                  <option value="none" selected>No Fee</option>
+                  <option value="fixed">Fixed Amount</option>
+                  <option value="percent">Percentage</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium">Fee Value</label>
+                <input type="number" class="form-control" id="cancel_fee_value" placeholder="0" min="0" step="0.01">
+                <small class="form-text text-muted">% or fixed amount</small>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium">Calculated Fee</label>
+                <div class="input-group">
+                  <span class="input-group-text">৳</span>
+                  <input type="text" id="cancel_fee_display" class="form-control" readonly value="0">
+                </div>
+              </div>
+            </div>
+
+            <!-- Refund Summary -->
+            <div class="alert alert-warning">
+              <h6 class="alert-heading">
+                <i class="lni lni-warning me-2"></i>Refund Summary
+              </h6>
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <small>
+                    <strong>Total Paid:</strong> <span id="cancel_refund_total_paid">৳0.00</span>
+                  </small>
+                </div>
+                <div class="col-md-6">
+                  <small>
+                    <strong>Cancellation Fee:</strong> <span id="cancel_refund_fee">৳0.00</span>
+                  </small>
+                </div>
+                <div class="col-md-6">
+                  <strong class="text-success">
+                    <strong>Refundable Amount:</strong> <span id="cancel_refund_amount">৳0.00</span>
+                  </strong>
+                </div>
+                <div class="col-md-6">
+                  <small class="text-muted">After deduction of cancellation fee</small>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" id="cancel_initiate_refund" checked>
+              <label class="form-check-label" for="cancel_initiate_refund">
+                Initiate automatic refund schedule after cancellation
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cancellation Confirmation -->
+        <div class="alert alert-danger" role="alert">
+          <i class="lni lni-alert-triangle me-2"></i>
+          <strong>Warning:</strong> Cancelling this purchase is permanent and cannot be undone. All associated payment schedules will be marked as cancelled.
+        </div>
+      </div>
+
+      <div class="modal-footer border-top">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+          <i class="lni lni-close me-1"></i>Keep Purchase
+        </button>
+        <button type="button" class="btn btn-danger" id="cancel_purchase_submit_btn">
+          <i class="lni lni-check-circle me-1"></i>Confirm Cancellation
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+jQuery(function($){
+  'use strict';
+
+  // Notification helpers
+  function notifySuccess(msg){
+    if (typeof pos5_success_noti === 'function') pos5_success_noti(msg);
+    else if (typeof toastr !== 'undefined' && toastr.success) toastr.success(msg);
+    else alert(msg);
+  }
+  function notifyError(msg){
+    if (typeof pos4_error_noti === 'function') pos4_error_noti(msg);
+    else if (typeof toastr !== 'undefined' && toastr.error) toastr.error(msg);
+    else alert(msg);
+  }
+
+  // Calculate cancellation fee
+  function calculateCancellationFee() {
+    var mode = $('#cancel_fee_mode').val();
+    var value = parseFloat($('#cancel_fee_value').val()) || 0;
+    var totalPaid = parseFloat($('#cancel_total_paid').data('total') || 0);
+    var fee = 0;
+
+    if (mode === 'fixed') {
+      fee = value;
+    } else if (mode === 'percent') {
+      fee = Math.round(totalPaid * value / 100 * 100) / 100;
+    }
+
+    var refundable = Math.max(0, totalPaid - fee);
+
+    $('#cancel_fee_display').val(fee.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+    $('#cancel_refund_total_paid').text('৳' + totalPaid.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    $('#cancel_refund_fee').text('৳' + fee.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    $('#cancel_refund_amount').text('৳' + refundable.toLocaleString('en-US', {minimumFractionDigits: 2}));
+  }
+
+  // Populate modal
+  window.populateCancelPurchaseModal = function(data, purchaseId) {
+    if (!data || !purchaseId) return;
+
+    $('#cancel_purchase_id').val(purchaseId);
+    $('#cancel_project_name').val(data.project_name || '');
+    $('#cancel_block').val(data.current_block || '');
+    $('#cancel_plot').val(data.current_plot || '');
+    $('#cancel_katha').val(data.current_katha || '');
+    $('#cancel_client_name').val(data.current_name || '');
+
+    var totalPaid = parseFloat(data.total_paid || 0);
+    $('#cancel_total_paid').val(totalPaid.toLocaleString('en-US', {minimumFractionDigits: 2})).data('total', totalPaid);
+    $('#cancel_booking_money').val((data.booking_money || 0).toLocaleString('en-US', {minimumFractionDigits: 2}));
+    $('#cancel_down_payment').val((data.down_payment || 0).toLocaleString('en-US', {minimumFractionDigits: 2}));
+
+    // Reset form
+    $('#cancel_reason').val('');
+    $('#cancel_fee_mode').val('none');
+    $('#cancel_fee_value').val('0');
+    calculateCancellationFee();
+  };
+
+  // Open modal
+  window.openCancelPurchaseModal = function(purchaseId) {
+    if (!purchaseId) { notifyError('Purchase ID missing'); return; }
+
+    $.ajax({
+      url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_transfer_data',
+      type: 'POST',
+      dataType: 'json',
+      data: { purchase_id: purchaseId },
+      success: function(resp) {
+        var data = (typeof resp === 'object') ? resp : (resp ? JSON.parse(resp) : null);
+        if (data && (data.status == 200 || data.status === '200')) {
+          window.populateCancelPurchaseModal(data, purchaseId);
+          $('#cancelPurchaseModal').modal('show');
+        } else {
+          notifyError(data && data.message ? data.message : 'Failed to load purchase data');
+        }
+      },
+      error: function() { notifyError('Server error'); }
+    });
+  };
+
+  // Fee calculation listener
+  $('#cancel_fee_mode, #cancel_fee_value').off('change input').on('change input', calculateCancellationFee);
+
+  // Submit cancellation
+  $(document).off('click', '#cancel_purchase_submit_btn').on('click', '#cancel_purchase_submit_btn', function() {
+    var purchaseId = $('#cancel_purchase_id').val();
+    var reason = $('#cancel_reason').val().trim();
+    var feeMode = $('#cancel_fee_mode').val();
+    var feeValue = parseFloat($('#cancel_fee_value').val()) || 0;
+    var initiateRefund = $('#cancel_initiate_refund').is(':checked') ? 1 : 0;
+
+    if (!reason || reason.length < 10) {
+      notifyError('Please enter a valid cancellation reason (minimum 10 characters)');
+      return;
+    }
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=process_cancel_purchase', {
+      purchase_id: purchaseId,
+      reason: reason,
+      fee_mode: feeMode,
+      fee_value: feeValue,
+      initiate_refund: initiateRefund
+    }, function(resp) {
+      var data = (typeof resp === 'object') ? resp : (resp ? JSON.parse(resp) : null);
+      if (data && (data.status === 200 || data.status === '200')) {
+        notifySuccess(data.message || 'Purchase cancelled successfully!');
+        $('#cancelPurchaseModal').modal('hide');
+        setTimeout(function() { location.reload(); }, 700);
+      } else {
+        notifyError(data && data.message ? data.message : 'Failed to cancel purchase');
+      }
+    }).fail(function(xhr) {
+      notifyError('Server error: ' + (xhr.responseText || 'Unknown'));
+    });
+  });
+
+  // Cleanup on modal close
+  $('#cancelPurchaseModal').on('hidden.bs.modal', function() {
+    $('#cancel_reason').val('');
+    $('#cancel_fee_mode').val('none');
+    $('#cancel_fee_value').val('0');
+  });
+});
+</script>
