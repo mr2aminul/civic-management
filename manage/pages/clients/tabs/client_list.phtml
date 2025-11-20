@@ -1,164 +1,333 @@
-<?php 
-/**
- * Client List Tab - Main client list page
- * Path: manage/pages/clients/tabs/client_list.phtml
- * Shows all clients with their projects, plots, and basic info
- */
-?>
+<!--start breadcrumb-->
+<div class="page-breadcrumb d-flex align-items-center justify-content-between mb-3">
+    <div class="d-flex align-items-center">
+        <div class="breadcrumb-title pe-3"><?php echo $wo['title']; ?></div>
 
-<div class="tab-pane" id="tab_client_list" role="tabpanel">
-  <div class="card border-0 shadow-sm">
-    <div class="card-header bg-light d-flex justify-content-between align-items-center">
-      <h6 class="mb-0">
-        <i class="lni lni-list me-2"></i>All Clients
-        <span class="badge bg-primary" id="client_total_count">0</span>
-      </h6>
-      <div class="d-flex gap-2">
-        <button class="btn btn-sm btn-outline-primary" id="btn_client_filter">
-          <i class="lni lni-filter me-1"></i>Filter
-        </button>
-        <?php if (check_permission('manage-clients') || Wo_IsAdmin()) { ?>
-        <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createClientModal">
-          <i class="lni lni-plus me-1"></i>Add Client
-        </button>
-        <?php } ?>
-      </div>
+        <!-- Project Filter Dropdown -->
+        <div class="ms-3">
+            <select id="projectFilter" class="form-select form-select-sm" onchange="DataTableRefresh()">
+                <option value="">All Projects</option>
+                <?php
+          $projects = $db->orderBy('id', 'ASC')->get(T_PROJECTS);
+          foreach ($projects as $project) {
+            echo '<option value="' . $project->slug . '">' . htmlspecialchars($project->name) . '</option>';
+          }
+        ?>
+            </select>
+        </div>
+
+        <!-- Booking helper status numeric select (0..4) -->
+        <div class="ms-2">
+            <select id="bhStatusFilter" class="form-select form-select-sm" onchange="DataTableRefresh()"
+                title="Filter by booking_helper.status (0..4)">
+                <option value="all">All</option>
+                <option value="1">Available</option>
+                <option value="2">Sold</option>
+                <option value="3">Complete</option>
+                <option value="4">Canceled</option>
+            </select>
+        </div>
+
+        <!-- Search / quick input (uses DataTables search) -->
+        <div class="ms-3">
+            <div class="input-group input-group-sm" style="min-width:280px;">
+                <input id="clientSearch" type="search" class="form-control form-control-sm"
+                    placeholder="Search client name or file no" aria-label="Search clients">
+                <button id="clientSearchClear" class="btn btn-outline-secondary btn-sm" type="button"
+                    title="Clear search">&times;</button>
+            </div>
+        </div>
     </div>
 
-    <div class="card-body p-3">
-      <!-- Filter Panel -->
-      <div id="client_filter_panel" class="row mb-3" style="display:none;">
-        <div class="col-md-3">
-          <input type="text" class="form-control form-control-sm" id="client_filter_name" placeholder="Client name">
-        </div>
-        <div class="col-md-2">
-          <select class="form-select form-select-sm" id="client_filter_project">
-            <option value="">All Projects</option>
-          </select>
-        </div>
-        <div class="col-md-2">
-          <select class="form-select form-select-sm" id="client_filter_status">
-            <option value="">All Status</option>
-            <option value="1">Available</option>
-            <option value="2">Sold</option>
-            <option value="3">Complete</option>
-            <option value="4">Cancelled</option>
-          </select>
-        </div>
-        <div class="col-md-2">
-          <button class="btn btn-sm btn-primary w-100" id="btn_client_apply_filter">Apply</button>
-        </div>
-        <div class="col-md-1">
-          <button class="btn btn-sm btn-outline-secondary w-100" id="btn_client_reset_filter">
-            <i class="lni lni-close"></i>
-          </button>
-        </div>
-      </div>
-
-      <!-- Clients Table -->
-      <div class="table-responsive">
-        <table class="table table-hover table-sm" id="clients_list_table">
-          <thead class="table-light">
-            <tr>
-              <th width="50">#ID</th>
-              <th>Client Name</th>
-              <th>Phone</th>
-              <th>NID</th>
-              <th>Projects</th>
-              <th>Plots</th>
-              <th>Total Due</th>
-              <th width="100">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="clients_list_tbody">
-            <tr><td colspan="8" class="text-center text-muted py-4">Loading clients...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+    <!-- Right-side action button if permitted -->
+    <?php
+    if (check_permission('manage-clients') || Wo_IsAdmin() || Wo_IsModerator()) {
+      echo Wo_LoadManagePage('clients/modals/create-client');
+    }
+  ?>
 </div>
 
+<!--end breadcrumb-->
+<div class="mb-3">
+    <div class="row row-cols-auto g-3">
+        <div class="col">
+        </div>
+    </div>
+</div>
+
+<!-- Your HTML code starts here -->
+<div class="card radius-10 w-100">
+    <div class="card-body">
+        <div class="table-responsive mt-2">
+            <table id="clientsTable" class="table align-middle mb-0" style="width: 100%;">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 50px;">#ID</th>
+                        <th>Name</th>
+                        <th>Project Name</th>
+                        <th style="width: 50px;">Plots</th>
+                        <th>NID</th>
+                        <th>Birthday</th>
+                        <th>Phone</th>
+                        <th>Email</th>
+                        <th style="width: 50px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Data export buttons container (keeps your earlier integration) -->
+<div id="dataSheet_download" class="mt-3"></div>
+
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-  const tab = document.getElementById('tab_client_list');
-  if (!tab) return;
-
-  tab.addEventListener('show.bs.tab', function() {
-    loadClientsList();
-  });
-
-  document.getElementById('btn_client_filter').addEventListener('click', function() {
-    const panel = document.getElementById('client_filter_panel');
-    panel.style.display = panel.style.display === 'none' ? 'grid' : 'none';
-  });
-
-  document.getElementById('btn_client_apply_filter').addEventListener('click', function() {
-    loadClientsList({
-      name: document.getElementById('client_filter_name').value,
-      project: document.getElementById('client_filter_project').value,
-      status: document.getElementById('client_filter_status').value
+function editClient(client_id) {
+    if (!client_id) {
+        console.error("Client id can't be empty!");
+        return;
+    }
+    $.ajax({
+        url: Wo_Ajax_Requests_File() + '?f=manage_clients&s=editClient_modal',
+        type: 'POST',
+        data: {
+            client_id: client_id
+        },
+        success: function(response) {
+            if (response && response.status == 200 && response.result) {
+                // remove any existing modal with same id to avoid duplicates
+                $('#edit_clientModal').remove();
+                // append to body (always exists)
+                $('#contnet').append(response.result);
+                // show modal
+                $('#edit_clientModal').modal('show');
+            } else {
+                console.warn('No modal returned', response);
+            }
+        },
+        error: function(xhr, status, err) {
+            console.error('AJAX error', err);
+        }
     });
-  });
+}
 
-  document.getElementById('btn_client_reset_filter').addEventListener('click', function() {
-    document.getElementById('client_filter_name').value = '';
-    document.getElementById('client_filter_project').value = '';
-    document.getElementById('client_filter_status').value = '';
-    loadClientsList();
-  });
+function viewClient(client_id) {
+    if (!client_id) return;
+    $.ajax({
+        url: Wo_Ajax_Requests_File() + '?f=manage_clients&s=view_client_modal',
+        type: 'POST',
+        data: {
+            client_id: client_id
+        },
+        success: function(response) {
+            if (response && response.status == 200 && response.result) {
+                $('#viewClient-modal').remove();
+                $('#contnet').append(response.result);
+                $('#viewClient-modal').modal('show');
+            } else {
+                console.warn('No modal returned', response);
+            }
+        },
+        error: function(xhr, status, error) {
+            // Handle errors
+            console.error(error);
+        }
+    });
+}
 
-  function loadClientsList(filters = {}) {
-    fetch('/xhr/manage_clients.php?f=manage_clients&s=search_clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        q: filters.name || '',
-        project_id: filters.project || '',
-        bh_status: filters.status || 'all'
-      })
-    })
-    .then(r => r.json())
-    .then(data => {
-      renderClientsList(data);
-    })
-    .catch(e => console.error('[v0] Error loading clients:', e));
-  }
-
-  function renderClientsList(clients) {
-    const tbody = document.getElementById('clients_list_tbody');
-    tbody.innerHTML = '';
-    
-    if (!clients || clients.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No clients found</td></tr>';
-      return;
+function deleteClient(client_id) {
+    if (client_id == null) {
+        return false;
     }
 
-    document.getElementById('client_total_count').textContent = clients.length;
+    // Open delete confirmation modal (You need to implement this part)
 
-    clients.forEach(client => {
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td><strong>${client.id}</strong></td>
-        <td>${client.name}</td>
-        <td>${client.phone}</td>
-        <td>${client.nid || '-'}</td>
-        <td>${client.projects || '-'}</td>
-        <td>${client.plots || '0'}</td>
-        <td class="text-danger">৳${(client.total_due || 0).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
-        <td>
-          <div class="btn-group btn-group-sm">
-            <button class="btn btn-outline-info" onclick="viewClient(${client.id})" title="View">
-              <i class="lni lni-eye"></i>
-            </button>
-            <button class="btn btn-outline-warning" onclick="editClient(${client.id})" title="Edit">
-              <i class="lni lni-pencil"></i>
-            </button>
-          </div>
-        </td>
-      `;
-      tbody.appendChild(row);
+    // Assuming you have a confirmation from the user (e.g., using a modal)
+    var confirmed = confirm("Are you sure you want to delete this client?");
+
+    if (confirmed) {
+        // Trigger Ajax request
+        $.ajax({
+            url: Wo_Ajax_Requests_File() + '?f=manage_clients&s=delete_client',
+            type: 'POST',
+            data: {
+                client_id: client_id
+            },
+            success: function(response) {
+                if (response['status'] == 200) {
+                    pos5_success_noti(response['message']);
+                    DataTableRefresh();
+                } else if (response['message']) {
+                    pos4_error_noti(response['message']);
+                }
+            },
+            error: function(xhr, status, error) {
+                // Handle errors
+                console.error(error);
+            }
+        });
+    }
+}
+$(document).ready(function() {
+    // Initialize DataTables without buttons
+    var table = $('#clientsTable').DataTable({
+        "processing": true,
+        "serverSide": true,
+        "pageLength": 25, // Set the default number of entries per page
+        "ajax": {
+            "url": Wo_Ajax_Requests_File() + '?f=manage_clients&s=fetch_clients',
+            "type": "POST",
+            "data": function(d) {
+                // send selected project id/slug and numeric bh_status
+                d.project_id = $('#projectFilter').val();
+                var bh = $('#bhStatusFilter').val();
+                // send numeric value or 'all'
+                if (bh === null || bh === '' || bh === 'all') {
+                    d.bh_status = 'all';
+                } else {
+                    // ensure numeric 0..4 sent as string/number to server
+                    d.bh_status = parseInt(bh, 10);
+                }
+                // DataTables sends search[value] automatically; we also sync with our custom search box
+                // If custom search input has content, override DataTables' search value so server gets it
+                var custom = $('#clientSearch').val();
+                if (typeof d.search === 'object' && custom !== undefined) {
+                    d.search.value = custom.trim();
+                }
+            },
+            "beforeSend": function(xhr) {
+                $('#clientsTable').css('opacity', .5);
+            },
+            "complete": function(xhr) {
+                $('#clientsTable').css('opacity', 1);
+            }
+        },
+        "columns": [{
+                "data": "file_nums",
+                "orderable": false
+            },
+            {
+                "data": "customer_name",
+                "orderable": false
+            },
+            {
+                "data": "project_name",
+                "orderable": false
+            },
+            {
+                "data": "plots",
+                "orderable": false
+            },
+            {
+                "data": "nid",
+                "orderable": false
+            },
+            {
+                "data": "birthday",
+                "orderable": false
+            },
+            {
+                "data": "phone",
+                "orderable": false
+            },
+            {
+                "data": "email",
+                "orderable": false
+            },
+            {
+                "data": "actions",
+                "orderable": false
+            }
+        ],
+        "order": [],
+        "language": {
+            "emptyTable": "No data available in the table",
+            "infoEmpty": "Showing 0 to 0 of 0 entries",
+            "infoFiltered": "(filtered from _MAX_ total entries)",
+            "zeroRecords": "No matching records found"
+        },
+        "drawCallback": function(settings) {
+            // optional re-attach or UI tweaks for content loaded into table rows
+        }
     });
-  }
+
+    new $.fn.dataTable.Buttons(table, {
+        buttons: [{
+                extend: 'copy',
+                text: '<i class="fadeIn animated bx bx-copy"></i>',
+                titleAttr: 'Copy to clipboard',
+                exportOptions: {
+                    columns: ':not(:last-child)'
+                }
+            },
+            {
+                extend: 'excel',
+                text: '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="18" viewBox="0 0 18 24"><path fill="currentColor" d="M20.34,4.59,16.41.66A2.28,2.28,0,0,0,14.82,0H5.25A2.25,2.25,0,0,0,3,2.25v19.5A2.25,2.25,0,0,0,5.25,24h13.5A2.25,2.25,0,0,0,21,21.75V6.19A2.27,2.27,0,0,0,20.34,4.59ZM18.57,6H15V2.44ZM5.25,21.75V2.25h7.5V7.13a1.12,1.12,0,0,0,1.12,1.12h4.88v13.5ZM15.19,10.5H13.84a.55.55,0,0,0-.49.3A24.54,24.54,0,0,0,12,13.5c-.65-1.36-.32-.81-1.34-2.7a.56.56,0,0,0-.49-.3H8.81a.56.56,0,0,0-.48.85L10.5,15,8.33,18.66a.56.56,0,0,0,.48.84h1.36a.56.56,0,0,0,.49-.29A23.15,23.15,0,0,0,12,16.5c.7,1.42.28.75,1.34,2.71a.57.57,0,0,0,.5.29h1.35a.56.56,0,0,0,.48-.84L13.5,15c0-.05,1.42-2.36,2.17-3.65A.56.56,0,0,0,15.19,10.5Z" transform="translate(-3)"/></svg>',
+                titleAttr: 'Export to Excel',
+                exportOptions: {
+                    columns: ':not(:last-child)'
+                }
+            },
+            {
+                extend: 'pdf',
+                text: '<i class="fadeIn animated bx bxs-file-pdf"></i>',
+                titleAttr: 'Export to PDF',
+                exportOptions: {
+                    columns: ':not(:last-child)'
+                }
+            },
+            {
+                extend: 'print',
+                text: '<i class="fadeIn animated bx bx-printer"></i>',
+                titleAttr: 'Print',
+                exportOptions: {
+                    columns: ':not(:last-child)'
+                }
+            }
+        ]
+    }).container().appendTo('#dataSheet_download');
+
+    window.DataTableRefresh = function() {
+        table.ajax.reload(null, false);
+    };
+
+    // Custom search input syncs with DataTables search (server-side)
+    var searchTimer;
+    $('#clientSearch').on('input', function() {
+        clearTimeout(searchTimer);
+        var val = $(this).val();
+        searchTimer = setTimeout(function() {
+            table.search(val.trim()).draw();
+        }, 450);
+    });
+    $('#clientSearch').on('keydown', function(e) {
+        if (e.key === 'Enter') {
+            clearTimeout(searchTimer);
+            table.search($(this).val().trim()).draw();
+        }
+    });
+    $('#clientSearchClear').on('click', function() {
+        $('#clientSearch').val('');
+        table.search('').draw();
+    });
+
+    // Reload when project or bh_status changes (keeps your earlier inline onchange)
+    $('#projectFilter, #bhStatusFilter').on('change', function() {
+        table.ajax.reload();
+    });
+
+    // Ctrl+P shortcut to trigger DataTable print
+    $(document).on('keydown', function(e) {
+        if (e.ctrlKey && e.key.toLowerCase() === 'p') {
+            e.preventDefault(); // prevent browser default print
+            if (typeof table.buttons === 'function') {
+                table.button('.buttons-print').trigger(); // trigger the print button
+            } else {
+                window.print(); // fallback
+            }
+        }
+    });
 });
 </script>
