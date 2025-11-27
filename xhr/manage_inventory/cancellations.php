@@ -1,5 +1,6 @@
 <?php
-    if ($s === 'process_cancel_plot') {
+    // Cancellations
+    if ($s == 'process_cancel_plot' || $s == 'process_cancel_purchase') {
         header('Content-Type: application/json; charset=utf-8');
         global $db, $wo;
     

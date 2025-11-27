@@ -1,0 +1,21 @@
+<script>
+// Auto-trigger filters on change for Invoices Tab
+jQuery(document).ready(function($) {
+  // Auto-apply filter on any filter field change
+  #invoice_filter_status, #invoice_filter_type, #invoice_filter_from, #invoice_filter_to, #invoice_filter_min_amount, #invoice_filter_max_amount.on('change', function() {
+    // Debounce auto-apply by 300ms to avoid excessive calls
+    clearTimeout(window.invoiceFilterTimeout);
+    window.invoiceFilterTimeout = setTimeout(function() {
+      #btn_invoice_apply_filter.click();
+    }, 300);
+  });
+  
+  // Auto-apply filter on search with debounce
+  #invoice_filter_search.on('keyup', function() {
+    clearTimeout(window.invoiceSearchTimeout);
+    window.invoiceSearchTimeout = setTimeout(function() {
+      #btn_invoice_apply_filter.click();
+    }, 500);
+  });
+});
+</script>

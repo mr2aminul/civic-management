@@ -1,0 +1,270 @@
+<!-- List Purchases Section - Standalone Purchase Management -->
+<div class="container-fluid mt-4">
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-gradient-primary text-white">
+            <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="lni lni-archive"></i> All Purchases</h5>
+                <button class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#addPurchaseModal" id="addPurchaseFromList">
+                    <i class="lni lni-plus-circle"></i> Add New Purchase
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <!-- Search and Filters -->
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="lni lni-search"></i></span>
+                        <input type="text" class="form-control" id="searchPurchases" placeholder="Search by file #, client, project, plot...">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" id="filterProject">
+                        <option value="">All Projects</option>
+                        <?php
+                            $projects = $db->orderBy('name', 'ASC')->get(T_PROJECTS);
+                            foreach ($projects as $project) {
+                                echo '<option value="' . htmlspecialchars($project->slug ?? $project->id) . '">' . htmlspecialchars($project->name) . '</option>';
+                            }
+                        ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" id="filterStatus">
+                        <option value="">All Status</option>
+                        <option value="0">Available</option>
+                        <option value="1">Active</option>
+                        <option value="2">Sold</option>
+                        <option value="3">Complete</option>
+                        <option value="4">Cancelled</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-outline-secondary w-100" id="clearFilters">
+                        <i class="lni lni-reload"></i> Clear
+                    </button>
+                </div>
+            </div>
+
+            <!-- Purchases DataTable -->
+            <div class="table-responsive">
+                <table id="purchasesDataTable" class="table table-hover table-bordered" style="width:100%">
+                    <thead class="table-light">
+                        <tr>
+                            <th>File #</th>
+                            <th>Client</th>
+                            <th>Project</th>
+                            <th>Block</th>
+                            <th>Plot</th>
+                            <th>Katha</th>
+                            <th>Total Price</th>
+                            <th>Paid</th>
+                            <th>Due</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Data loaded via AJAX -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Include Add Purchase Modal (without client context) -->
+<?= Wo_LoadManagePage('clients/modals/add_purchase_form', []) ?>
+
+<script>
+$(document).ready(function() {
+    // Initialize DataTable
+    const purchasesTable = $('#purchasesDataTable').DataTable({
+        processing: true,
+        serverSide: true,
+        ajax: {
+            url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_purchases_list',
+            type: 'POST',
+            data: function(d) {
+                d.search = $('#searchPurchases').val();
+                d.project_filter = $('#filterProject').val();
+                d.status_filter = $('#filterStatus').val();
+            }
+        },
+        columns: [
+            { data: 'file_num', name: 'file_num' },
+            { data: 'client_name', name: 'client_name' },
+            { data: 'project', name: 'project' },
+            { data: 'block', name: 'block' },
+            { data: 'plot', name: 'plot' },
+            { data: 'katha', name: 'katha' },
+            { 
+                data: 'total_price', 
+                name: 'total_price',
+                render: function(data) {
+                    return '৳' + parseFloat(data).toLocaleString('en-BD', {minimumFractionDigits: 2});
+                }
+            },
+            { 
+                data: 'total_paid', 
+                name: 'total_paid',
+                render: function(data) {
+                    return '৳' + parseFloat(data).toLocaleString('en-BD', {minimumFractionDigits: 2});
+                }
+            },
+            { 
+                data: 'total_due', 
+                name: 'total_due',
+                render: function(data, type, row) {
+                    const due = parseFloat(data);
+                    const color = due > 0 ? 'text-danger' : 'text-success';
+                    return '<span class="' + color + '">৳' + due.toLocaleString('en-BD', {minimumFractionDigits: 2}) + '</span>';
+                }
+            },
+            { 
+                data: 'status_label', 
+                name: 'status_label',
+                render: function(data, type, row) {
+                    const badges = {
+                        'Active': 'bg-info',
+                        'Sold': 'bg-success',
+                        'Complete': 'bg-primary',
+                        'Cancelled': 'bg-danger',
+                        'Available': 'bg-secondary'
+                    };
+                    const badgeClass = badges[data] || 'bg-secondary';
+                    return '<span class="badge ' + badgeClass + '">' + data + '</span>';
+                }
+            },
+            { 
+                data: null,
+                orderable: false,
+                render: function(data, type, row) {
+                    return `
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-info view-client-btn" data-client-id="${row.client_id}" title="View Client">
+                                <i class="lni lni-user"></i>
+                            </button>
+                            <button class="btn btn-success payment-schedule-btn" data-purchase-id="${row.purchase_id}" title="Payment Schedule">
+                                <i class="lni lni-dollar"></i>
+                            </button>
+                            <button class="btn btn-warning manage-btn" data-purchase-id="${row.purchase_id}" title="Manage">
+                                <i class="lni lni-cog"></i>
+                            </button>
+                        </div>
+                    `;
+                }
+            }
+        ],
+        order: [[0, 'desc']],
+        pageLength: 25,
+        lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+        language: {
+            search: "Search:",
+            lengthMenu: "Show _MENU_ entries",
+            info: "Showing _START_ to _END_ of _TOTAL_ purchases",
+            infoEmpty: "No purchases found",
+            infoFiltered: "(filtered from _MAX_ total purchases)",
+            loadingRecords: "Loading purchases...",
+            processing: "Processing...",
+            zeroRecords: "No matching purchases found"
+        },
+        dom: '<"row"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6"f>>rtip',
+        responsive: true,
+        autoWidth: false
+    });
+
+    // Custom search trigger
+    $('#searchPurchases').on('keyup', function() {
+        purchasesTable.ajax.reload();
+    });
+
+    // Filter triggers
+    $('#filterProject, #filterStatus').on('change', function() {
+        purchasesTable.ajax.reload();
+    });
+
+    // Clear filters
+    $('#clearFilters').on('click', function() {
+        $('#searchPurchases').val('');
+        $('#filterProject').val('');
+        $('#filterStatus').val('');
+        purchasesTable.ajax.reload();
+    });
+
+    // Action button handlers
+    $('#purchasesDataTable').on('click', '.view-client-btn', function() {
+        const clientId = $(this).data('client-id');
+        // Open view client modal
+        if (typeof Wo_OpenClientView === 'function') {
+            Wo_OpenClientView(clientId);
+        } else {
+            // Fallback: navigate to client page
+            window.location.href = Wo_SiteUrl() + '/manage/clients/' + clientId;
+        }
+    });
+
+    $('#purchasesDataTable').on('click', '.payment-schedule-btn', function() {
+        const purchaseId = $(this).data('purchase-id');
+        // Open payment schedule modal
+        if (typeof window.openPaymentSchedule === 'function') {
+            window.openPaymentSchedule(purchaseId);
+        } else if (typeof updateInstallmentModal === 'function') {
+            updateInstallmentModal(purchaseId);
+        } else {
+            alert('Payment schedule function not available');
+        }
+    });
+
+    $('#purchasesDataTable').on('click', '.manage-btn', function() {
+        const purchaseId = $(this).data('purchase-id');
+        // Open management options dropdown or modal
+        // For now, open payment schedule as it's the primary management interface
+        if (typeof window.openPaymentSchedule === 'function') {
+            window.openPaymentSchedule(purchaseId);
+        }
+    });
+
+    // Handle Add Purchase from list (without client context)
+    $('#addPurchaseFromList').on('click', function() {
+        if (typeof window.resetAddPurchaseForm === 'function') {
+            window.resetAddPurchaseForm(null);
+        } else {
+            // Fallback if function not loaded yet
+            $('#contextClientId').val('');
+            $('#clientSection').show();
+            $('#addPurchaseForm')[0].reset();
+            window.generatedSchedule = null;
+            $('#schedulePreviewSection').hide();
+        }
+    });
+});
+</script>
+
+<style>
+#purchasesDataTable tbody tr {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#purchasesDataTable tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+.btn-group-sm .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+.table-responsive {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+#purchasesDataTable thead {
+    position: sticky;
+    top: 0;
+    background-color: #f8f9fa;
+    z-index: 10;
+}
+</style>

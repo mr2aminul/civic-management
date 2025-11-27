@@ -40,6 +40,12 @@
         <i class="lni lni-list me-1"></i>Client List
     </a>
 
+    <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=list_purchases'); ?>"
+       class="<?php echo ($tab == 'list_purchases') ? 'active' : ''; ?>"
+       data-spa="true">
+        <i class="lni lni-clipboard me-1"></i>List Purchases
+    </a>
+
     <a href="<?php echo Wo_LoadManageLinkSettings('clients?tab=pending_actions'); ?>"
        class="<?php echo ($tab == 'pending_actions') ? 'active' : ''; ?>"
        data-spa="true">

@@ -5,8 +5,8 @@
  */
 
 header('Content-Type: application/json; charset=utf-8');
-
-if ($s === 'get_pending_emails') {
+    // Emails
+    if ($s == 'get_pending_emails' || $s == 'get_emails') {
     try {
         $purchase_id = isset($_GET['purchase_id']) ? intval($_GET['purchase_id']) : 0;
         $client_id = isset($_GET['client_id']) ? intval($_GET['client_id']) : 0;
@@ -18,13 +18,22 @@ if ($s === 'get_pending_emails') {
             exit;
         }
 
-        $where = [];
-        if ($purchase_id) $where['purchase_id'] = $purchase_id;
-        if ($email_type) $where['email_type'] = $email_type;
-        if ($status) $where['status'] = $status;
+        // Build where conditions properly
+        if ($purchase_id) {
+            $db->where('purchase_id', $purchase_id);
+        }
+        if ($client_id) {
+            $db->where('client_id', $client_id);
+        }
+        if ($email_type) {
+            $db->where('email_type', $email_type);
+        }
+        if ($status) {
+            $db->where('status', $status);
+        }
 
         $db->orderBy('queue_date', 'DESC');
-        $emails = $db->where($where)->get('crm_email_queue', null, [
+        $emails = $db->get('crm_email_queue', null, [
             'id', 'recipient_email', 'recipient_name', 'email_type', 'status', 
             'queue_date', 'scheduled_send_date', 'retry_count'
         ]);

@@ -338,37 +338,34 @@ jQuery(function($){
     destroyMergeSecondarySelect();
     var $sel = $('#merge_secondary_purchase_select');
     var primaryId = $('#merge_primary_purchase_id').val();
+    
+    // Prepare data from local window.clientPurchases
+    var data = [];
+    if (window.clientPurchases && Array.isArray(window.clientPurchases)) {
+        data = window.clientPurchases.filter(function(item) {
+            return item.id != primaryId;
+        }).map(function(item) {
+            return {
+                id: item.id,
+                text: (item.project || '') + ' - Block ' + (item.block || '') + ', Plot ' + (item.plot || '') + ' (' + (item.katha || '0') + ' katha)',
+                raw: {
+                    project_name: item.project,
+                    block: item.block,
+                    plot: item.plot,
+                    katha: item.katha,
+                    client_name: item.client_name,
+                    total_paid: item.total_paid
+                }
+            };
+        });
+    }
 
     $sel.select2({
       dropdownParent: $('#mergePurchaseModal .modal-content'),
-      placeholder: 'Search purchases to merge...',
+      placeholder: 'Select purchase to merge...',
       allowClear: true,
-      minimumInputLength: 0,
-      width: '100%',
-      ajax: {
-        url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=search_purchases',
-        type: 'POST',
-        dataType: 'json',
-        delay: 250,
-        cache: true,
-        data: function(params) {
-          return {
-            q: params.term || '',
-            page: params.page || 1,
-            per_page: 30,
-            exclude_purchase_id: primaryId,
-            all_statuses: true
-          };
-        },
-        processResults: function(data, params) {
-          var rows = (data && data.results) ? data.results : (Array.isArray(data) ? data : []);
-          var mapped = rows.map(function(it){
-            var text = (it.block || '') + ' - Plot ' + (it.plot || '') + ' (' + (it.katha || '0') + ' katha)';
-            return { id: it.id || it.purchase_id, text: text, raw: it };
-          });
-          return { results: mapped, pagination: { more: !!(data && data.more) } };
-        }
-      }
+      data: data,
+      width: '100%'
     });
 
     $sel.off('select2:select.mergeSecondarySelected').on('select2:select.mergeSecondarySelected', function(e) {
@@ -390,12 +387,31 @@ jQuery(function($){
         $('#merge_secondary_details').hide();
       }
     });
+    
+    // Auto-select if only one option (meaning client has exactly 2 purchases)
+    if (data.length === 1) {
+        var singleOption = data[0];
+        // We need to wait a tick for Select2 to be ready or just set it directly
+        setTimeout(function(){
+            $sel.val(singleOption.id).trigger('change');
+            // Manually trigger select event logic since trigger('change') might not fire select2:select
+            var raw = singleOption.raw;
+            $('#merge_secondary_project').val(raw.project_name || '');
+            $('#merge_secondary_block').val(raw.block || '');
+            $('#merge_secondary_plot').val(raw.plot || '');
+            $('#merge_secondary_katha').val(raw.katha || '');
+            $('#merge_secondary_client').val(raw.client_name || '');
+            $('#merge_secondary_details').show();
+            $('#mergePurchaseModal').data('secondary-id', singleOption.id).data('secondary-paid', raw.total_paid || 0);
+        }, 100);
+    }
   }
 
   function destroyMergeSecondarySelect() {
     try {
       var $sel = $('#merge_secondary_purchase_select');
       if ($sel.hasClass('select2-hidden-accessible')) $sel.select2('destroy');
+      $sel.empty().append('<option value="">Select purchase to merge...</option>');
     } catch(e) {}
   }
 
@@ -463,10 +479,17 @@ jQuery(function($){
     var combinePayments = $('#merge_combine_payments').is(':checked') ? 1 : 0;
     var scheduleHandling = $('input[name="scheduleHandling"]:checked').val();
     var invoiceHandling = $('input[name="invoiceHandling"]:checked').val();
+    
+    // Get client_id from stored data or window.clientPurchases
+    var clientId = 0;
+    if (window.clientPurchases && window.clientPurchases.length > 0) {
+        clientId = window.clientPurchases[0].client_id;
+    }
 
     $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=request_purchase_merge', {
-      primary_purchase_id: primaryId,
-      secondary_purchase_id: secondaryId,
+      client_id: clientId,
+      target_purchase_id: primaryId, // Primary is the target (surviving)
+      source_purchase_id: secondaryId, // Secondary is the source (merging into target)
       merge_reason: reason,
       merge_paid_amount: combinePayments,
       merge_payment_schedule: (scheduleHandling === 'consolidate' ? 1 : 0),

@@ -54,6 +54,9 @@
         exit;
     }
 
+    // ------------------ GET PURCHASES LIST (Sold/Booked) ------------------
+    // (Removed duplicate handler to allow server-side processing handler below to run)
+
     // ------------------------------
     // GET PURCHASE DETAILS FOR PAYMENT SCHEDULE
     // ------------------------------
@@ -129,13 +132,13 @@
         }
     
         // Payment configuration fields read directly from helper columns
-        $payment_mode = $helper->payment_mode ?? ($helper->mode_of_payment ?? ($helper->mode ?? '2'));
-        $installments = intval($helper->installments ?? $helper->installment_count ?? $helper->default_installments ?? 60);
-        $adjustment_type = $helper->adjustment_type ?? ($helper->yearly_adjustment_type ?? 'year_end');
+        $payment_mode = $helper->mode_of_payment;
+        $installments = intval($helper->installment_count ?? 60);
+        $adjustment_type = $helper->adjustment_type ?? 'year_end';
         $monthly_amount = is_numeric($helper->monthly_amount ?? null) ? (float)round($helper->monthly_amount, 2) : null;
-        $yearly_adjustment = is_numeric($helper->yearly_adjustment ?? null) ? (float)round($helper->yearly_adjustment, 2) : (is_numeric($helper->yearly ?? null) ? (float)round($helper->yearly, 2) : 0.00);
-        $installment_start_date = $helper->installment_start_date ?? ($helper->start_date ?? date('Y-m-d'));
-        $start_option = $helper->start_option ?? ($helper->installment_start_option ?? 'exact');
+        $yearly_adjustment = is_numeric($helper->yearly_adjustment ?? null) ? (float)round($helper->yearly_adjustment, 2) : 0.00;
+        $installment_start_date = $helper->start_date ?? date('Y-m-d');
+        $start_option = $helper->installment_start_option ?? 'exact';
     
         // booking/down dates (legacy columns kept for UI compatibility)
         $booking_due_date = $helper->booking_due_date ?? '';
@@ -311,17 +314,153 @@
         exit;
     }
         
+    if ($s === 'get_purchases_list') {
+        header('Content-Type: application/json; charset=utf-8');
+
+        // DataTable parameters
+        $draw = isset($_POST['draw']) ? intval($_POST['draw']) : 0;
+        $start = isset($_POST['start']) ? intval($_POST['start']) : 0;
+        $length = isset($_POST['length']) ? intval($_POST['length']) : 25;
+        $search = isset($_POST['search']) ? $_POST['search'] : ''; // Global search value
+        $order = isset($_POST['order']) ? $_POST['order'] : [];
+        
+        // Custom filters
+        $project_filter = isset($_POST['project_filter']) ? $_POST['project_filter'] : '';
+        $status_filter = isset($_POST['status_filter']) ? $_POST['status_filter'] : '';
+
+        // Base query
+        $db->join('wo_booking b', 'h.booking_id = b.id', 'LEFT');
+        $db->join(T_PROJECTS . ' p', 'b.project = p.id', 'LEFT');
+        $db->join(T_CUSTOMERS . ' c', 'h.client_id = c.id', 'LEFT');
+        
+        // Select columns
+        $cols = [
+            'h.id as purchase_id',
+            'h.file_num',
+            'h.status',
+            'h.booking_money',
+            'h.down_payment',
+            'h.per_katha',
+            'b.katha',
+            'b.plot',
+            'b.block',
+            'b.road',
+            'p.name as project_name',
+            'c.name as client_name',
+            'c.id as client_id'
+        ];
+
+        // Apply filters
+        if (!empty($search)) {
+            $db->where('(h.file_num LIKE ? OR c.name LIKE ? OR p.name LIKE ? OR b.plot LIKE ?)', ["%$search%", "%$search%", "%$search%", "%$search%"]);
+        }
+        
+        if (!empty($project_filter)) {
+            $db->where('(p.id = ? OR p.slug = ?)', [$project_filter, $project_filter]);
+        }
+        
+        if ($status_filter !== '') {
+            $db->where('h.status', $status_filter);
+        }
+
+        // Clone for total count
+        $countDb = clone $db;
+        $totalRecords = $countDb->getValue('wo_booking_helper h', 'count(*)');
+        $filteredRecords = $totalRecords; // For now assume filtered = total if no complex search logic outside where
+
+        // Ordering
+        if (!empty($order)) {
+            $colIdx = $order[0]['column'];
+            $dir = $order[0]['dir'];
+            $colName = 'h.id'; // Default
+            
+            switch ($colIdx) {
+                case 0: $colName = 'h.file_num'; break;
+                case 1: $colName = 'c.name'; break;
+                case 2: $colName = 'p.name'; break;
+                case 3: $colName = 'b.block'; break;
+                case 4: $colName = 'b.plot'; break;
+                case 5: $colName = 'b.katha'; break;
+                // Add more as needed
+            }
+            $db->orderBy($colName, $dir);
+        } else {
+            $db->orderBy('h.id', 'DESC');
+        }
+
+        // Pagination
+        if ($length != -1) {
+            $db->pageLimit = $length;
+            $purchases = $db->arraybuilder()->paginate('wo_booking_helper h', ($start / $length) + 1, $cols);
+        } else {
+            $purchases = $db->get('wo_booking_helper h', null, $cols);
+        }
+
+        // Process data
+        $data = [];
+        foreach ($purchases as $p) {
+            // Calculate financials
+            $total_price = (float)$p['per_katha'] * (float)$p['katha'];
+            $paid = $db->where('purchase_id', $p['purchase_id'])->getValue('crm_payment_schedule', 'SUM(paid_amount)');
+            $total_paid = (float)$paid + (float)$p['booking_money'] + (float)$p['down_payment']; // Include initial payments if not in schedule? 
+            // Actually usually booking/down are in schedule as rows 1 & 2. Let's assume schedule sum is correct if generated properly.
+            // If schedule table is used, it should contain all payments.
+            // Let's stick to the logic used elsewhere:
+            $total_paid = (float)$paid; 
+            
+            // Status label
+            $status_labels = [
+                '0' => 'Available', '1' => 'Active', '2' => 'Sold', '3' => 'Complete', '4' => 'Cancelled'
+            ];
+            $status_label = $status_labels[$p['status']] ?? 'Unknown';
+
+            $data[] = [
+                'purchase_id' => $p['purchase_id'],
+                'file_num' => $p['file_num'],
+                'client_name' => $p['client_name'],
+                'client_id' => $p['client_id'],
+                'project' => $p['project_name'],
+                'block' => $p['block'],
+                'plot' => $p['plot'],
+                'katha' => $p['katha'],
+                'total_price' => $total_price,
+                'total_paid' => $total_paid,
+                'total_due' => max(0, $total_price - $total_paid),
+                'status_label' => $status_label
+            ];
+        }
+
+        echo json_encode([
+            'draw' => $draw,
+            'recordsTotal' => (int)$totalRecords,
+            'recordsFiltered' => (int)$filteredRecords, 
+            'data' => $data
+        ]);
+        exit;
+    }
+
+    // ... (previous code) ...
+    
     if ($s === 'search_purchases') {
         header('Content-Type: application/json; charset=utf-8');
     
         $q = isset($_GET['q']) ? trim($_GET['q']) : (isset($_POST['q']) ? trim($_POST['q']) : '');
         $page = isset($_GET['page']) ? (int)$_GET['page'] : (isset($_POST['page']) ? (int)$_POST['page'] : 1);
         $per_page = isset($_GET['per_page']) ? (int)$_GET['per_page'] : (isset($_POST['per_page']) ? (int)$_POST['per_page'] : 30);
-        $project_id = isset($_GET['project_id']) ? $_GET['project_id'] : (isset($_POST['project_id']) ? $_POST['project_id'] : '');
-    
-        if (!$project_id) {
-            echo json_encode(['results'=>[], 'more'=>false]);
-            exit;
+        $project_input = isset($_GET['project_id']) ? $_GET['project_id'] : (isset($_POST['project_id']) ? $_POST['project_id'] : ''); 
+        
+        // Resolve project_id if it's a slug
+        $project_id = '';
+        if ($project_input) {
+            if (is_numeric($project_input)) {
+                $project_id = $project_input;
+            } else {
+                // It's a slug, find the ID
+                $proj = $db->where('slug', $project_input)->getOne(T_PROJECTS, ['id']);
+                if ($proj) {
+                    $project_id = $proj->id;
+                }
+            }
         }
     
         if ($page < 1) $page = 1;
@@ -340,8 +479,13 @@
         }
     
         // Base WHERE and params
-        $whereParts = ["`project` = ?"];
-        $params = [$project_id];
+        $whereParts = [];
+        $params = [];
+        
+        if ($project_input) {
+            $whereParts[] = "`project` = ?";
+            $params[] = $project_input;
+        }
     
         // Process each token and append a single OR-group per token.
         foreach ($tokens as $token) {
@@ -723,6 +867,26 @@ if ($s === 'register_purchase' || $s === 'assign_purchase') {
         $nominee_ids_raw = $_POST['nominee_ids'] ?? $_GET['nominee_ids'] ?? '[]';
         $force           = isset($_POST['force']) ? ($_POST['force'] === '1' || $_POST['force'] === 1 || $_POST['force'] === true) :
                            (isset($_GET['force']) ? ($_GET['force'] === '1' || $_GET['force'] === 1) : false);
+        
+        // NEW: Schedule parameter for auto-generated schedule
+        $schedule_raw = $_POST['schedule'] ?? $_GET['schedule'] ?? null;
+        $schedule = null;
+        if ($schedule_raw) {
+            $decoded_schedule = json_decode($schedule_raw, true);
+            if (is_array($decoded_schedule)) {
+                $schedule = $decoded_schedule;
+            }
+        }
+        
+        // Schedule generation parameters (to store in helper)
+        $payment_mode = $_POST['payment_mode'] ?? null;
+        $installments = isset($_POST['installments']) ? (int)$_POST['installments'] : 60;
+        $adjustment_type = $_POST['adjustment_type'] ?? 'year_end';
+        $monthly_amount = isset($_POST['monthly_amount']) ? (float)$_POST['monthly_amount'] : 0;
+        $yearly_adjustment = isset($_POST['yearly_adjustment']) ? (float)$_POST['yearly_adjustment'] : 0;
+        $start_date = $_POST['start_date'] ?? date('Y-m-d');
+        $start_option = $_POST['start_option'] ?? 'exact';
+        $interest_rate = isset($_POST['interest_percent']) ? (float)$_POST['interest_percent'] : 3.0;
 
         // Basic required validation
         $missing = [];
@@ -865,6 +1029,16 @@ if ($s === 'register_purchase' || $s === 'assign_purchase') {
                 'booking_money'=> $booking_money, // Add booking money
                 'cancel_date'  => '', // clear cancel date on re-book
             ];
+            
+            // Add schedule generation parameters if provided
+            if ($payment_mode) $updateData['mode_of_payment'] = $payment_mode;
+            if ($monthly_amount) $updateData['monthly_amount'] = $monthly_amount;
+            if ($adjustment_type) $updateData['adjustment_type'] = $adjustment_type;
+            if ($yearly_adjustment) $updateData['yearly_adjustment'] = $yearly_adjustment;
+            if ($start_date) $updateData['start_date'] = $start_date;
+            if ($start_option) $updateData['installment_start_option'] = $start_option;
+            if ($installments) $updateData['installment_count'] = $installments;
+            if ($interest_rate) $updateData['interest_rate'] = $interest_rate;
 
             $ok = $db->where('id', $existingHelperForClient->id)->update('wo_booking_helper', $updateData);
             if ($ok === false) {
@@ -884,6 +1058,37 @@ if ($s === 'register_purchase' || $s === 'assign_purchase') {
                 http_response_code(500);
                 echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
                 exit;
+            }
+            
+            // Save schedule if provided
+            if ($schedule && is_array($schedule) && count($schedule) > 0) {
+                // Delete old schedule for this purchase (exclude status=99)
+                $db->where('purchase_id', $existingHelperForClient->id);
+                $db->where('status', '99', '!=');
+                $db->delete('crm_payment_schedule');
+                
+                // Insert new schedule
+                foreach ($schedule as $item) {
+                    $scheduleData = [
+                        'purchase_id' => $existingHelperForClient->id,
+                        'installment_number' => $item['installment_number'],
+                        'particular' => $item['particular'],
+                        'due_date' => $item['due_date'],
+                        'installment_amount' => $item['installment_amount'],
+                        'installment_type' => $item['installment_type'] ?? 'installment',
+                        'paid_amount' => $item['paid_amount'] ?? 0,
+                        'status' => $item['status'] ?? 0,
+                        'created_at' => date('Y-m-d H:i:s'),
+                        'updated_at' => date('Y-m-d H:i:s')
+                    ];
+                    
+                    $insertSchedule = $db->insert('crm_payment_schedule', $scheduleData);
+                    if (!$insertSchedule) {
+                        $db->rollback();
+                        echo json_encode(['status'=>500,'message'=>'Failed to save payment schedule']);
+                        exit;
+                    }
+                }
             }
 
             $db->commit();
@@ -950,6 +1155,16 @@ if ($s === 'register_purchase' || $s === 'assign_purchase') {
             'booking_money' => $booking_money, // Add booking money
             'cancel_date'   => '',
         ];
+        
+        // Add schedule generation parameters if provided
+        if ($payment_mode) $helperData['mode_of_payment'] = $payment_mode;
+        if ($monthly_amount) $helperData['monthly_amount'] = $monthly_amount;
+        if ($adjustment_type) $helperData['adjustment_type'] = $adjustment_type;
+        if ($yearly_adjustment) $helperData['yearly_adjustment'] = $yearly_adjustment;
+        if ($start_date) $helperData['start_date'] = $start_date;
+        if ($start_option) $helperData['installment_start_option'] = $start_option;
+        if ($installments) $helperData['installment_count'] = $installments;
+        if ($interest_rate) $helperData['interest_rate'] = $interest_rate;
 
         $insert = $db->insert('wo_booking_helper', $helperData);
         if (!$insert) {
@@ -969,6 +1184,31 @@ if ($s === 'register_purchase' || $s === 'assign_purchase') {
             http_response_code(500);
             echo json_encode(['status'=>500,'message'=>'Failed to update booking (wo_booking).','debug'=>($DEV_DEBUG ? $err : null)]);
             exit;
+        }
+        
+        // Save schedule if provided
+        if ($schedule && is_array($schedule) && count($schedule) > 0) {
+            foreach ($schedule as $item) {
+                $scheduleData = [
+                    'purchase_id' => $insert,
+                    'installment_number' => $item['installment_number'],
+                    'particular' => $item['particular'],
+                    'due_date' => $item['due_date'],
+                    'installment_amount' => $item['installment_amount'],
+                    'installment_type' => $item['installment_type'] ?? 'installment',
+                    'paid_amount' => $item['paid_amount'] ?? 0,
+                    'status' => $item['status'] ?? 0,
+                    'created_at' => date('Y-m-d H:i:s'),
+                    'updated_at' => date('Y-m-d H:i:s')
+                ];
+                
+                $insertSchedule = $db->insert('crm_payment_schedule', $scheduleData);
+                if (!$insertSchedule) {
+                    $db->rollback();
+                    echo json_encode(['status'=>500,'message'=>'Failed to save payment schedule']);
+                    exit;
+                }
+            }
         }
 
         $db->commit();

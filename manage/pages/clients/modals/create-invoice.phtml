@@ -1,0 +1,503 @@
+<!-- Create Invoice Modal -->
+<div class="modal fade" id="createInvoiceModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title">Create Invoice</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="createInvoiceForm" autocomplete="off">
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label class="form-label">New Owner Name or Select Existing Client *</label>
+              <input type="hidden" id="transfer_new_client_id" value="">
+              <select class="form-select" id="create_invoice_client_select">
+                <option value="">-- Create new client or select existing --</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Select Purchase <span class="text-danger">*</span></label>
+              <select class="form-select" id="invoice_purchase_select" disabled>
+                <option value="">-- Select Purchase First --</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Client Summary -->
+          <div id="client_summary_box" class="card mb-3" style="display:none;">
+            <div class="card-body">
+              <div class="row g-3 align-items-center">
+                <div class="col-md-3">
+                  <small class="text-muted">Total Amount</small>
+                  <div class="h6 mb-0">৳<span id="summary_total_amount">0</span></div>
+                </div>
+                <div class="col-md-2">
+                  <small class="text-muted">Booking M. (Paid / Total)</small>
+                  <div class="h6 mb-0 text-primary">৳<span id="summary_booking_money">0/0</span></div>
+                </div>
+                <div class="col-md-2">
+                  <small class="text-muted">Down P. (Paid / Total)</small>
+                  <div class="h6 mb-0 text-warning">৳<span id="summary_down_payment">0/0</span></div>
+                </div>
+                <div class="col-md-2">
+                  <small class="text-muted">Total Paid</small>
+                  <div class="h6 mb-0 text-success">৳<span id="summary_paid_amount">0</span></div>
+                </div>
+                <div class="col-md-3">
+                  <small class="text-muted">Total Due</small>
+                  <div class="h6 mb-0 text-danger">৳<span id="summary_due_amount">0</span></div>
+                </div>
+                <div class="col-md-3 mt-2 d-none">
+                  <small class="text-muted">Credits Available</small>
+                  <div class="h6 mb-0 text-info">৳<span id="summary_credits">0</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Payment Schedule Preview -->
+          <div id="invoice_schedule_box" class="card mb-3" style="display:none;">
+            <div class="card-body">
+              <h6>Pending Payment Schedule</h6>
+              <table class="table table-sm table-bordered">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Particular</th>
+                    <th>Due Date</th>
+                    <th>Installment</th>
+                    <th>Paid</th>
+                    <th>Balance</th>
+                  </tr>
+                </thead>
+                <tbody id="invoice_schedule_tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Smart Suggestions Panel -->
+          <div id="smart_suggestions_box" class="card mb-3 border-primary" style="display:none;">
+            <div class="card-header bg-primary text-white">
+              <div class="d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="lni lni-bulb me-2"></i>Smart Suggestion</h6>
+                <button type="button" class="btn btn-sm btn-light" id="dismiss_suggestion">
+                  <i class="lni lni-close"></i>
+                </button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="alert alert-info mb-3" id="suggestion_alert" style="display:none;">
+                <strong><i class="lni lni-information me-1"></i>Recommendation:</strong>
+                <p class="mb-0" id="suggestion_message"></p>
+              </div>
+              
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="small text-muted d-block">Suggested Type</label>
+                  <span class="fw-bold" id="suggested_type">-</span>
+                </div>
+                <div class="col-md-4">
+                  <label class="small text-muted d-block">Suggested Amount</label>
+                  <span class="fw-bold text-primary" id="suggested_amount">৳0</span>
+                  <span class="badge bg-warning ms-2" id="late_fee_badge" style="display:none;">
+                    +৳<span id="late_fee_amount">0</span> late fee
+                  </span>
+                </div>
+                <div class="col-md-4">
+                  <label class="small text-muted d-block">Due Date</label>
+                  <span class="fw-bold" id="suggested_due_date">-</span>
+                  <span class="badge bg-danger ms-2" id="overdue_badge" style="display:none;">
+                    <i class="lni lni-alarm me-1"></i><span id="days_overdue">0</span> days overdue
+                  </span>
+                </div>
+              </div>
+              
+              <div class="mt-3 d-flex gap-2">
+                <button type="button" class="btn btn-success btn-sm" id="use_suggestion">
+                  <i class="lni lni-checkmark me-1"></i>Use This Suggestion
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="suggest_all_pending">
+                  <i class="lni lni-calculator me-1"></i>Calculate All Pending
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label class="form-label">Invoice Type <span class="text-danger">*</span></label>
+              <select class="form-select" id="invoice_type_select">
+                <option value="">-- Select Type --</option>
+                <option value="booking_money">Booking Money</option>
+                <option value="down_payment">Down Payment</option>
+                <option value="installment">Installment</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">
+                Amount <span class="text-danger">*</span>
+                <button type="button" class="btn btn-sm btn-outline-primary ms-2" id="smart_calc_btn">
+                  <i class="lni lni-calculator"></i> Smart Calculate
+                </button>
+              </label>
+              <div class="input-group">
+                <input type="number" class="form-control" id="invoice_amount" step="0.01" placeholder="0.00">
+                <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                  Quick Fill
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li><a class="dropdown-item" href="#" id="fill_next_installment">Next Installment</a></li>
+                  <li><a class="dropdown-item" href="#" id="fill_all_pending">All Pending</a></li>
+                  <li><a class="dropdown-item" href="#" id="fill_with_late_fee">With Late Fee</a></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><a class="dropdown-item" href="#" id="apply_credits">Apply Available Credits</a></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label class="form-label">Invoice Date <span class="text-danger">*</span></label>
+              <input type="date" class="form-control" id="invoice_date">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Due Date</label>
+              <input type="date" class="form-control" id="invoice_due_date">
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Description/Remarks</label>
+            <textarea class="form-control" id="invoice_description" rows="3" placeholder="Invoice description or remarks"></textarea>
+          </div>
+        </form>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn_create_invoice_submit">
+          <i class="lni lni-plus me-1"></i>Create Invoice
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+$(document).ready(function(){
+    // Cached selectors
+    var $clientSel = $('#create_invoice_client_select');
+    var $purchaseSel = $('#invoice_purchase_select');
+    var $summaryBox = $('#client_summary_box');
+    var currentSuggestion = null;
+
+    function resetSummary(){
+        $('#summary_total_amount').text('0.00');
+        $('#summary_booking_money').text('0/0');
+        $('#summary_down_payment').text('0/0');
+        $('#summary_paid_amount').text('0.00');
+        $('#summary_due_amount').text('0.00');
+        $('#summary_credits').text('0.00');
+        $('#invoice_schedule_box').hide();
+        $summaryBox.hide();
+        $('#invoice_schedule_tbody').empty();
+        $('#smart_suggestions_box').hide();
+    }
+
+    function fetchSummary(clientId, purchaseId){
+        if(!clientId || !purchaseId){ resetSummary(); return; }
+        $.ajax({
+            url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_invoice_summary',
+            type: 'POST',
+            dataType: 'json',
+            data: { client_id: clientId, purchase_id: purchaseId },
+            success: function(res){
+                if(!res){ resetSummary(); return; }
+                $('#summary_total_amount').text(parseFloat(res.total_amount || 0).toFixed(2));
+                var bm = res.booking_money || {}; var dp = res.down_payment || {};
+                $('#summary_booking_money').text((bm.paid||0) + '/' + (bm.total||0));
+                $('#summary_down_payment').text((dp.paid||0) + '/' + (dp.total||0));
+                $('#summary_paid_amount').text(parseFloat(res.total_paid || 0).toFixed(2));
+                $('#summary_due_amount').text(parseFloat(res.total_due || 0).toFixed(2));
+                $('#summary_credits').text(parseFloat(res.credits || 0).toFixed(2));
+                $summaryBox.show();
+
+                // populate schedule
+                var tbody = $('#invoice_schedule_tbody').empty();
+                if(Array.isArray(res.payment_schedule) && res.payment_schedule.length){
+                    res.payment_schedule.forEach(function(sch, i){
+                        var installment = parseFloat(sch.installment_amount || 0).toFixed(2);
+                        var paid = parseFloat(sch.paid_amount || 0).toFixed(2);
+                        var balance = parseFloat(sch.balance || 0).toFixed(2);
+                        tbody.append(
+                            '<tr>' +
+                                '<td>' + (i+1) + '</td>' +
+                                '<td>' + (sch.particular || '-') + '</td>' +
+                                '<td>' + (sch.due_date || '-') + '</td>' +
+                                '<td>৳' + installment + '</td>' +
+                                '<td>৳' + paid + '</td>' +
+                                '<td>৳' + balance + '</td>' +
+                            '</tr>'
+                        );
+                    });
+                    $('#invoice_schedule_box').show();
+
+                    // Auto-fill invoice amount with total pending balance
+                    var pendingTotal = res.payment_schedule.reduce(function(sum, s){
+                        return sum + (parseFloat(s.balance || 0) || 0);
+                    }, 0);
+                    $('#invoice_amount').val(pendingTotal.toFixed(2));
+                } else {
+                    $('#invoice_schedule_box').hide();
+                }
+            },
+            error: function(){ resetSummary(); }
+        });
+    }
+
+    // init select2 for clients
+    function initTransferClientSelect2(){
+        try{ if($clientSel.hasClass('select2-hidden-accessible')) $clientSel.select2('destroy'); }catch(e){}
+        $clientSel.select2({
+            dropdownParent: $('#createInvoiceModal .modal-content'),
+            placeholder: '-- Create new client or select existing --',
+            allowClear:true,
+            minimumInputLength:1,
+            width:'100%',
+            ajax:{
+                url: Wo_Ajax_Requests_File() + '?f=manage_clients&s=search_clients',
+                type: 'POST',
+                dataType: 'json',
+                delay: 250,
+                cache: true,
+                data: function(params){ return { q: params.term || '', include_purchase: 1, include_client_summary: 1 }; },
+                processResults: function(data){
+                    var rows = Array.isArray(data) ? data : (data.results && Array.isArray(data.results) ? data.results : []);
+                    return {
+                        results: rows.map(function(it){
+                            var name = it.name || it.text || '';
+                            var phone = it.phone || '';
+                            return { id: it.id, text: name + (phone ? (' ('+phone+')') : ''), raw: it };
+                        })
+                    };
+                }
+            }
+        });
+
+        $clientSel.off('select2:select').on('select2:select', function(e){
+            var item = e.params.data, clientId = item ? item.id : '';
+            $('#transfer_new_client_id').val(clientId);
+            $purchaseSel.prop('disabled', true).empty().append('<option>-- Loading Purchases --</option>');
+            if(clientId && item.raw && Array.isArray(item.raw.purchases)){
+                $purchaseSel.empty().append('<option value="">-- Select Purchase --</option>');
+                item.raw.purchases.forEach(function(p){
+                    var pid = p.purchase_id || p.id;
+                    var label = p.file_num ? p.file_num : ('Purchase ' + pid);
+                    $purchaseSel.append('<option value="' + pid + '">' + label + '</option>');
+                });
+                $purchaseSel.prop('disabled', false);
+            } else {
+                $purchaseSel.empty().append('<option value="">-- Select Purchase First --</option>').prop('disabled', true);
+            }
+            resetSummary();
+        });
+
+        $clientSel.off('select2:clear').on('select2:clear', function(){
+            $('#transfer_new_client_id').val('');
+            $purchaseSel.empty().append('<option value="">-- Select Purchase First --</option>').prop('disabled', true);
+            resetSummary();
+        });
+    }
+
+    initTransferClientSelect2();
+
+    // purchase change
+    $purchaseSel.on('change', function(){
+        var purchaseId = $(this).val();
+        var clientId = $('#transfer_new_client_id').val();
+        if(!purchaseId){ resetSummary(); return; }
+        fetchSummary(clientId, purchaseId);
+        loadSmartSuggestion(purchaseId);
+    });
+
+    // create invoice submit
+    $('#btn_create_invoice_submit').on('click', function(e){
+        e.preventDefault();
+        var clientId = $('#transfer_new_client_id').val();
+        var purchaseId = $('#invoice_purchase_select').val();
+        var invoiceType = $('#invoice_type_select').val();
+        var amount = parseFloat($('#invoice_amount').val() || 0);
+        var invoiceDate = $('#invoice_date').val();
+        var dueDate = $('#invoice_due_date').val();
+        var description = $('#invoice_description').val() || '';
+
+        if(!clientId || !purchaseId || !invoiceType || !amount || amount <= 0){
+            alert('Please fill all required fields');
+            return;
+        }
+
+        $.ajax({
+            url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=create_invoice',
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                purchase_id: purchaseId,
+                client_id: clientId,
+                invoice_type: invoiceType,
+                amount: amount,
+                invoice_date: invoiceDate,
+                due_date: dueDate,
+                description: description
+            },
+            success: function(resp){
+                if(resp && resp.status == 200){
+                    alert('Invoice created: ' + (resp.invoice_number || ''));
+                    $('#createInvoiceForm')[0].reset();
+                    $('#transfer_new_client_id').val('');
+                    $clientSel.val(null).trigger('change.select2');
+                    $purchaseSel.empty().append('<option value="">-- Select Purchase First --</option>').prop('disabled', true);
+                    resetSummary();
+                    $('#createInvoiceModal').modal('hide');
+                } else {
+                    alert('Error: ' + (resp.message || 'Failed to create invoice'));
+                }
+            },
+            error: function(xhr, status, err){
+                alert('Request failed: ' + (xhr.responseText || err));
+            }
+        });
+    });
+
+    $('#createInvoiceModal').on('show.bs.modal', function(){
+        $('#createInvoiceForm')[0].reset();
+        $('#transfer_new_client_id').val('');
+        $clientSel.val(null).trigger('change.select2');
+        $purchaseSel.empty().append('<option value="">-- Select Purchase First --</option>').prop('disabled', true);
+        resetSummary();
+    });
+
+    // --- Smart Suggestions Logic ---
+    function loadSmartSuggestion(purchaseId){
+        if(!purchaseId){ currentSuggestion = null; $('#smart_suggestions_box').hide(); return; }
+        $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=suggest_next_invoice', { purchase_id: purchaseId })
+          .done(function(resp){
+            var data = (typeof resp === 'string') ? JSON.parse(resp) : resp;
+            if(data && data.status === 200 && data.suggestion){
+                currentSuggestion = data.suggestion;
+                displaySuggestion(currentSuggestion);
+            } else {
+                currentSuggestion = null;
+                $('#smart_suggestions_box').hide();
+            }
+          })
+          .fail(function(){ currentSuggestion = null; $('#smart_suggestions_box').hide(); });
+    }
+
+    function displaySuggestion(s){
+        if(!s){ $('#smart_suggestions_box').hide(); return; }
+        $('#suggested_type').text(s.particular || s.type || '-');
+        $('#suggested_amount').text('৳' + (parseFloat(s.suggested_amount || 0)).toLocaleString());
+        $('#suggested_due_date').text(s.due_date || '-');
+
+        if(s.is_overdue){
+            $('#overdue_badge').show();
+            $('#days_overdue').text(s.days_overdue || 0);
+            $('#suggestion_alert').show();
+            $('#suggestion_message').text('This installment is ' + (s.days_overdue || 0) + ' days overdue. Consider adding late fee.');
+        } else {
+            $('#overdue_badge').hide();
+            $('#suggestion_alert').hide();
+        }
+
+        if(parseFloat(s.late_fee || 0) > 0){
+            $('#late_fee_badge').show();
+            $('#late_fee_amount').text(parseFloat(s.late_fee || 0).toLocaleString());
+        } else {
+            $('#late_fee_badge').hide();
+        }
+
+        $('#smart_suggestions_box').fadeIn();
+    }
+
+    $('#use_suggestion').on('click', function(){
+        if(!currentSuggestion) return;
+        var t = currentSuggestion.type || '';
+        if(t === 'booking_money' || t === 'down_payment') $('#invoice_type_select').val(t);
+        else $('#invoice_type_select').val('installment');
+
+        $('#invoice_amount').val(parseFloat(currentSuggestion.suggested_amount || 0));
+        $('#invoice_due_date').val(currentSuggestion.due_date || '');
+        $('#invoice_description').val((currentSuggestion.particular || '') + (currentSuggestion.is_overdue ? ' (Overdue by ' + (currentSuggestion.days_overdue||0) + ' days)' : ''));
+        $('#invoice_amount').addClass('border-success').delay(1500).queue(function(next){ $(this).removeClass('border-success'); next(); });
+    });
+
+    $('#dismiss_suggestion').on('click', function(){ $('#smart_suggestions_box').fadeOut(); });
+
+    // Quick Fill: next installment
+    $('#fill_next_installment').on('click', function(e){ e.preventDefault(); $('#use_suggestion').click(); });
+
+    // Quick Fill: all pending (reads schedule rows)
+    $('#fill_all_pending').on('click', function(e){
+        e.preventDefault();
+        var purchaseId = $purchaseSel.val();
+        if(!purchaseId){ alert('Please select a purchase first'); return; }
+        var totalPending = 0;
+        $('#invoice_schedule_tbody tr').each(function(){
+            var txt = $(this).find('td:eq(5)').text() || '';
+            var val = parseFloat(txt.replace(/[^0-9.-]+/g, '')) || 0;
+            if(val > 0) totalPending += val;
+        });
+        if(totalPending > 0){
+            $('#invoice_amount').val(totalPending.toFixed(2));
+            $('#invoice_description').val('Payment for all pending installments');
+        } else {
+            alert('No pending balance found');
+        }
+    });
+
+    // Quick Fill: with late fee (asks backend to calculate)
+    $('#fill_with_late_fee').on('click', function(e){
+        e.preventDefault();
+        var purchaseId = $purchaseSel.val();
+        var amount = parseFloat($('#invoice_amount').val() || 0);
+        if(!purchaseId || !amount){ alert('Please select purchase and enter amount first'); return; }
+        $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=calculate_late_fees', { purchase_id: purchaseId, amount: amount })
+          .done(function(resp){
+            var data = (typeof resp === 'string') ? JSON.parse(resp) : resp;
+            if(data && data.status === 200){
+                $('#invoice_amount').val(parseFloat(data.suggested_total || 0));
+                var msg = 'Original: ' + amount.toFixed(2) + ' + Late Fee: ' + parseFloat(data.total_late_fee || 0).toFixed(2) + ' = ' + parseFloat(data.suggested_total || 0).toFixed(2);
+                $('#invoice_description').val(msg);
+                alert('Late fee calculated: ' + (parseFloat(data.total_late_fee || 0)).toLocaleString());
+            } else {
+                alert('Failed to calculate late fee');
+            }
+          })
+          .fail(function(){ alert('Failed to calculate late fee'); });
+    });
+
+    // Apply available credits
+    $('#apply_credits').on('click', function(e){
+        e.preventDefault();
+        var availableCredits = parseFloat($('#summary_credits').text() || 0) || 0;
+        var currentAmount = parseFloat($('#invoice_amount').val() || 0) || 0;
+        if(availableCredits <= 0){ alert('No credits available'); return; }
+        if(currentAmount <= 0){ alert('Please enter invoice amount first'); return; }
+        var finalAmount = Math.max(0, currentAmount - availableCredits);
+        var creditsUsed = currentAmount - finalAmount;
+        $('#invoice_amount').val(finalAmount.toFixed(2));
+        $('#invoice_description').val('Applied ' + creditsUsed.toFixed(2) + ' from available credits. Original amount: ' + currentAmount.toFixed(2));
+        alert('Applied ' + creditsUsed.toFixed(2) + ' credits. New amount: ' + finalAmount.toFixed(2));
+    });
+
+    // Smart calculate button (load suggestion)
+    $('#smart_calc_btn').on('click', function(){
+        var purchaseId = $purchaseSel.val();
+        if(!purchaseId){ alert('Please select a purchase first'); return; }
+        loadSmartSuggestion(purchaseId);
+    });
+
+});
+</script>

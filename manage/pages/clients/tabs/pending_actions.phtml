@@ -58,6 +58,51 @@ if (!$is_admin) {
 .preview-column h6 {
   font-size: 0.75rem;
   text-transform: uppercase;
+}
+
+/* Priority Indicators */
+.priority-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 0.7rem;
+  padding: 3px 8px;
+  border-radius: 12px;
+}
+
+.priority-high {
+  background: #dc3545;
+  color: white;
+  font-weight: bold;
+}
+
+.priority-medium {
+  background: #ffc107;
+  color: #000;
+}
+
+.priority-low {
+  background: #6c757d;
+  color: white;
+}
+
+/* Batch Selection */
+.action-checkbox {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.batch-action-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
   font-weight: 600;
   color: #6c757d;
   margin-bottom: 0.5rem;
@@ -326,13 +371,13 @@ jQuery(function($){
         ${previewHtml}
 
         <div class="action-buttons">
-          <button class="btn btn-success btn-sm approve-action" data-id="${change.id}">
+          <button class="btn btn-success btn-sm approve-action" data-id="${change.id}" data-type="${change.change_type}">
             <i class="lni lni-checkmark-circle me-1"></i>Approve
           </button>
-          <button class="btn btn-danger btn-sm deny-action" data-id="${change.id}">
+          <button class="btn btn-danger btn-sm deny-action" data-id="${change.id}" data-type="${change.change_type}">
             <i class="lni lni-close me-1"></i>Deny
           </button>
-          <button class="btn btn-outline-secondary btn-sm view-detail" data-id="${change.id}">
+          <button class="btn btn-outline-secondary btn-sm view-detail" data-id="${change.id}" data-type="${change.change_type}">
             <i class="lni lni-eye me-1"></i>View Full Details
           </button>
         </div>
@@ -399,6 +444,7 @@ jQuery(function($){
 
     $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=approve_pending_change', {
       pending_change_id: changeId,
+      change_type: $(this).data('type'),
       notes: notes || ''
     })
       .done(function(resp) {
@@ -433,6 +479,7 @@ jQuery(function($){
 
     $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=deny_pending_change', {
       pending_change_id: changeId,
+      change_type: $(this).data('type'),
       reason: reason
     })
       .done(function(resp) {
@@ -458,8 +505,9 @@ jQuery(function($){
     if (!changeId) return;
 
     // Admin view - always has admin permissions
+    var changeType = $(this).data('type');
     if (typeof window.openPendingChangeDetail === 'function') {
-      window.openPendingChangeDetail(changeId, true);
+      window.openPendingChangeDetail(changeId, true, changeType);
     } else {
       alert('Detail modal not loaded. Please refresh the page.');
     }
@@ -469,3 +517,5 @@ jQuery(function($){
   loadPendingActions();
 });
 </script>
+
+<?= Wo_LoadManagePage('clients/modals/pending_change_detail') ?>

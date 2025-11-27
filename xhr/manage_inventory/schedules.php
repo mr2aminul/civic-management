@@ -119,7 +119,7 @@
             $type             = strtolower(trim((string)($item['type'] ?? 'installment')));
     
             // normalize dates to Y-m-d. If due_date is empty, fall back to helper start date (or today) because DB due_date may be NOT NULL
-            $installment_start_date = $helper->installment_start_date ?? ($helper->start_date ?? date('Y-m-d'));
+            $installment_start_date = $helper->start_date ?? date('Y-m-d');
             $norm_due_date = $due_date ?: $installment_start_date;
             try { $nd = new DateTime($norm_due_date); $norm_due_date = $nd->format('Y-m-d'); } catch (Exception $e) { $norm_due_date = $installment_start_date; }
             $norm_payment_date = null;
@@ -271,7 +271,7 @@
                     'installment_number' => intval($si['installment'] ?? 0),
                     'particular'         => $si['particular'] ?? '',
                     'type'               => $si['type'] ?? 'installment',
-                    'due_date'           => !empty($si['date']) ? $si['date'] : ($helper->installment_start_date ?? date('Y-m-d')),
+                    'due_date'           => !empty($si['date']) ? $si['date'] : ($helper->start_date ?? date('Y-m-d')),
                     'installment_amount' => number_format((float)$si['installment_amount'], 2, '.', ''),
                     'paid_amount'        => number_format((float)$si['paid_amount'], 2, '.', ''),
                     'payment_date'       => !empty($si['payment_date']) ? $si['payment_date'] : null,
@@ -797,6 +797,271 @@
             ]);
         } catch (Exception $e) {
             echo json_encode(['status' => 500, 'message' => 'Server error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // Get Reschedule Context
+    if ($s === 'get_reschedule_context') {
+        header('Content-Type: application/json; charset=utf-8');
+        
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        
+        if (!$purchase_id) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID required']);
+            exit;
+        }
+        
+        try {
+            $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
+            if (!$helper) {
+                echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+                exit;
+            }
+            
+            $booking = $db->where('id', $helper->booking_id)->getOne(T_BOOKING);
+            $client = GetCustomerById($helper->client_id);
+            
+            $current_schedule = [];
+            if (!empty($helper->installment)) {
+                $current_schedule = json_decode($helper->installment, true) ?: [];
+            }
+            
+            $total_amount = 0;
+            $paid_amount = 0;
+            $pending_count = 0;
+            
+            foreach ($current_schedule as $item) {
+                $inst_amt = floatval($item['installment_amount'] ?? 0);
+                $paid_amt = floatval($item['paid_amount'] ?? 0);
+                $total_amount += $inst_amt;
+                $paid_amount += $paid_amt;
+                if ($paid_amt < $inst_amt) $pending_count++;
+            }
+            
+            echo json_encode([
+                'status' => 200,
+                'purchase_id' => $purchase_id,
+                'client_name' => $client['name'] ?? 'Unknown',
+                'plot_info' => ($booking->block ?? '') . ' - Plot ' . ($booking->plot ?? ''),
+                'current_schedule' => $current_schedule,
+                'summary' => [
+                    'total_amount' => $total_amount,
+                    'paid_amount' => $paid_amount,
+                    'remaining_balance' => $total_amount - $paid_amount,
+                    'pending_installments' => $pending_count,
+                    'total_installments' => count($current_schedule)
+                ]
+            ]);
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // Preview Reschedule
+    if ($s === 'preview_reschedule') {
+        header('Content-Type: application/json; charset=utf-8');
+        
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        $new_monthly_amount = isset($_POST['new_monthly_amount']) ? floatval($_POST['new_monthly_amount']) : 0;
+        $adjustment_mode = isset($_POST['adjustment_mode']) ? Wo_Secure($_POST['adjustment_mode']) : 'proportional';
+        
+        if (!$purchase_id || !$new_monthly_amount) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID and new monthly amount required']);
+            exit;
+        }
+        
+        try {
+            $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
+            if (!$helper) {
+                echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+                exit;
+            }
+            
+            $current_schedule = json_decode($helper->installment, true) ?: [];
+            
+            $total_paid = 0;
+            $total_remaining = 0;
+            $pending_items = [];
+            
+            foreach ($current_schedule as $item) {
+                $inst_amt = floatval($item['installment_amount'] ?? 0);
+                $paid_amt = floatval($item['paid_amount'] ?? 0);
+                $total_paid += $paid_amt;
+                
+                if ($paid_amt < $inst_amt) {
+                    $pending_items[] = $item;
+                    $total_remaining += ($inst_amt - $paid_amt);
+                }
+            }
+            
+            $new_schedule = [];
+            $count = count($pending_items);
+            
+            if ($adjustment_mode === 'equal') {
+                $per_installment = $count > 0 ? round($total_remaining / $count, 2) : 0;
+                foreach ($pending_items as $idx => $item) {
+                    $new_item = $item;
+                    $new_item['installment_amount'] = $per_installment;
+                    $new_schedule[] = $new_item;
+                }
+            } else {
+                $remaining = $total_remaining;
+                foreach ($pending_items as $idx => $item) {
+                    $new_item = $item;
+                    if ($remaining > $new_monthly_amount) {
+                        $new_item['installment_amount'] = $new_monthly_amount;
+                        $remaining -= $new_monthly_amount;
+                    } else {
+                        $new_item['installment_amount'] = $remaining;
+                        $remaining = 0;
+                    }
+                    $new_schedule[] = $new_item;
+                }
+            }
+            
+            echo json_encode([
+                'status' => 200,
+                'preview' => [
+                    'current_pending_count' => count($pending_items),
+                    'new_pending_count' => count($new_schedule),
+                    'total_remaining' => $total_remaining,
+                    'new_schedule' => $new_schedule
+                ]
+            ]);
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // Submit Payment Reschedule
+    if ($s === 'submit_payment_reschedule') {
+        header('Content-Type: application/json; charset=utf-8');
+        
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        $new_schedule_json = isset($_POST['new_schedule']) ? $_POST['new_schedule'] : '[]';
+        $reason = isset($_POST['reason']) ? Wo_Secure($_POST['reason']) : '';
+        $requires_approval = isset($_POST['requires_approval']) ? boolval($_POST['requires_approval']) : true;
+        
+        if (!$purchase_id || empty($reason)) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID and reason required']);
+            exit;
+        }
+        
+        try {
+            $new_schedule = json_decode($new_schedule_json, true);
+            if (!is_array($new_schedule)) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid schedule data']);
+                exit;
+            }
+            
+            if ($requires_approval) {
+                $change_data = [
+                    'purchase_id' => $purchase_id,
+                    'change_type' => 'reschedule',
+                    'reason' => $reason,
+                    'change_data_json' => json_encode([
+                        'new_schedule' => $new_schedule,
+                        'requested_at' => date('Y-m-d H:i:s')
+                    ]),
+                    'status' => 'pending',
+                    'requested_by' => $wo['user_id'] ?? 0,
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
+                
+                if ($db->tableExists('crm_pending_changes')) {
+                    $db->insert('crm_pending_changes', $change_data);
+                    echo json_encode(['status' => 200, 'message' => 'Reschedule request submitted for approval']);
+                } else {
+                    echo json_encode(['status' => 500, 'message' => 'Pending changes table not found']);
+                }
+            } else {
+                $helper = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER);
+                if ($helper) {
+                    $db->where('id', $purchase_id);
+                    $db->update(T_BOOKING_HELPER, ['installment' => json_encode($new_schedule)]);
+                    
+                    if ($db->tableExists('crm_audit_trail')) {
+                        $db->insert('crm_audit_trail', [
+                            'purchase_id' => $purchase_id,
+                            'action_type' => 'reschedule',
+                            'action_category' => 'payment_schedule',
+                            'description' => 'Payment schedule rescheduled: ' . $reason,
+                            'performed_by' => $wo['user_id'] ?? 0,
+                            'timestamp' => date('Y-m-d H:i:s')
+                        ]);
+                    }
+                    
+                    echo json_encode(['status' => 200, 'message' => 'Schedule updated successfully']);
+                } else {
+                    echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+                }
+            }
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // Get Reschedule History
+    if ($s === 'get_reschedule_history') {
+        header('Content-Type: application/json; charset=utf-8');
+        
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        
+        if (!$purchase_id) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID required']);
+            exit;
+        }
+        
+        try {
+            $history = [];
+            
+            if ($db->tableExists('crm_audit_trail')) {
+                $db->where('purchase_id', $purchase_id);
+                $db->where('action_category', 'payment_schedule');
+                $db->where('action_type', 'reschedule');
+                $db->orderBy('performed_at', 'DESC');
+                $audit_records = $db->get('crm_audit_trail', 20);
+                
+                foreach ($audit_records as $record) {
+                    $history[] = [
+                        'id' => $record['id'],
+                        'type' => 'completed',
+                        'description' => $record['action_description'] ?? 'Schedule rescheduled',
+                        'performed_by' => $record['performed_by'] ?? 0,
+                        'timestamp' => $record['performed_at']
+                    ];
+                }
+            }
+            
+            if ($db->tableExists('crm_pending_changes')) {
+                $db->where('purchase_id', $purchase_id);
+                $db->where('change_type', 'reschedule');
+                $db->orderBy('request_date', 'DESC');
+                $pending_records = $db->get('crm_pending_changes', 10);
+                
+                foreach ($pending_records as $record) {
+                    $history[] = [
+                        'id' => $record['id'],
+                        'type' => 'pending',
+                        'status' => $record['status'] ?? 'pending',
+                        'description' => $record['request_reason'] ?? 'Reschedule request',
+                        'requested_by' => $record['requested_by'] ?? 0,
+                        'timestamp' => $record['request_date'] ?? $record['created_at']
+                    ];
+                }
+            }
+            
+            usort($history, function($a, $b) {
+                return strtotime($b['timestamp']) - strtotime($a['timestamp']);
+            });
+            
+            echo json_encode(['status' => 200, 'history' => $history]);
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
         }
         exit;
     }

@@ -1,295 +1,956 @@
-<?php
-/**
- * Add Purchase Form Modal
- * Allows adding new purchases to clients with complete validation and conflict checking
- */
+<?php 
+$projects = $db->orderBy('name', 'ASC')->get(T_PROJECTS);
+$clients = $db->orderBy('name', 'ASC')->get(T_CUSTOMERS);
 ?>
-<!-- Add/Register Purchase Modal -->
-<div class="modal fade" id="addPurchaseModal" tabindex="-1" role="dialog">
-    <div class="modal-dialog modal-lg" role="document">
+
+<!-- Add Purchase Modal -->
+<div class="modal fade full_screen always" id="addPurchaseModal" tabindex="-1" aria-labelledby="addPurchaseModalLabel" aria-hidden="true" data-bs-backdrop="false">
+    <div class="modal-dialog modal-fullscreen">
         <div class="modal-content">
-            <div class="modal-header border-bottom">
-                <h5 class="modal-title">
-                    <i class="lni lni-plus-circle"></i> Register New Purchase
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="addPurchaseModalLabel"><i class="lni lni-plus-circle me-2"></i>Add New Purchase</h5>
+                <button type="button" class="btn-close btn-close-white" onclick="closeAddPurchaseModal()" aria-label="Close"></button>
             </div>
-            <form id="addPurchaseForm" method="POST">
-                <div class="modal-body">
-                    <!-- Project Selection -->
-                    <div class="mb-3">
-                        <label for="purchaseProject" class="form-label">Project <span class="text-danger">*</span></label>
-                        <select class="form-select" id="purchaseProject" name="project_id" required onchange="loadPlots()">
-                            <option value="">-- Select Project --</option>
-                            <?php
-                                $projects = $db->orderBy('name', 'ASC')->get('wo_projects');
-                                foreach ($projects as $project) {
-                                    echo '<option value="' . htmlspecialchars($project->slug ?? $project->id) . '">' . htmlspecialchars($project->name) . '</option>';
-                                }
-                            ?>
-                        </select>
-                    </div>
+            <div class="modal-body bg-light">
+                <form id="addPurchaseForm" class="needs-validation" novalidate>
+                    <div class="container-fluid">
+                        <div class="row g-4">
+                            <!-- Left Column: Purchase Details -->
+                            <div class="col-lg-8">
+                                <div class="card shadow-sm border-0 h-100">
+                                    <div class="card-header bg-white py-3">
+                                        <h6 class="mb-0 text-primary"><i class="lni lni-apartment me-2"></i>Purchase Information</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <!-- Client & Project Selection -->
+                                        <div class="row mb-4">
+                                            <!-- Client Selection (Hidden if context is set) -->
+                                            <div class="col-md-6" id="clientSection">
+                                                <label for="purchaseClient" class="form-label small text-muted text-uppercase">Client</label>
+                                                <select class="form-select" id="purchaseClient" name="client_id" required>
+                                                    <option value="">Select Client</option>
+                                                </select>
+                                                <input type="hidden" id="contextClientId" name="context_client_id" value="">
+                                            </div>
+                                            
+                                            <!-- Project Selection -->
+                                            <div class="col-md-6">
+                                                <label for="purchaseProject" class="form-label small text-muted text-uppercase">Project</label>
+                                                <select class="form-select" id="purchaseProject" name="project_id" required>
+                                                    <option value="">Select Project</option>
+                                                    <?php foreach ($projects as $project): ?>
+                                                        <option value="<?= $project->slug ?>"><?= htmlspecialchars($project->name) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                        </div>
 
-                    <!-- Purchase/Plot Selection with Search -->
-                    <div class="mb-3">
-                        <label for="purchaseBooking" class="form-label">Select Plot/Property <span class="text-danger">*</span></label>
-                        <select class="form-select" id="purchaseBooking" name="purchase_id" required onchange="loadPurchaseDetails()"></select>
-                        <small class="form-text text-muted">Search by plot number, block, katha, road, or file number</small>
-                        <div id="purchaseConflictAlert" class="alert alert-warning mt-2" style="display: none;"></div>
-                    </div>
+                                        <!-- Plot Selection -->
+                                        <div class="mb-4">
+                                            <label for="purchaseBooking" class="form-label small text-muted text-uppercase">Select Plot/Property</label>
+                                            <select class="form-select" id="purchaseBooking" name="booking_id" required disabled>
+                                                <option value="">Select Project First</option>
+                                            </select>
+                                            <div id="purchaseConflictAlert" class="alert alert-warning mt-2 d-none" role="alert">
+                                                <i class="lni lni-warning me-1"></i> This plot is already sold or booked!
+                                            </div>
+                                        </div>
 
-                    <!-- Client Selection -->
-                    <div class="mb-3">
-                        <label for="purchaseClient" class="form-label">Client <span class="text-danger">*</span></label>
-                        <select class="form-select" id="purchaseClient" name="client_id" required>
-                            <option value="">-- Select Client --</option>
-                        </select>
-                        <small class="form-text text-muted">Type to search for existing clients</small>
-                    </div>
+                                        <!-- Plot Details (Auto-populated) -->
+                                        <div class="card bg-light border-0 mb-4" id="plotDetails">
+                                            <div class="card-body">
+                                                <h6 class="card-title text-muted mb-3">Property Details</h6>
+                                                <div class="row g-3">
+                                                    <div class="col-md-2 col-6">
+                                                        <small class="d-block text-muted">Block</small>
+                                                        <strong id="detailBlock">-</strong>
+                                                    </div>
+                                                    <div class="col-md-2 col-6">
+                                                        <small class="d-block text-muted">Plot</small>
+                                                        <strong id="detailPlot">-</strong>
+                                                    </div>
+                                                    <div class="col-md-2 col-6">
+                                                        <small class="d-block text-muted">Road</small>
+                                                        <strong id="detailRoad">-</strong>
+                                                    </div>
+                                                    <div class="col-md-2 col-6">
+                                                        <small class="d-block text-muted">Facing</small>
+                                                        <strong id="detailFacing">-</strong>
+                                                    </div>
+                                                    <div class="col-md-2 col-6">
+                                                        <small class="d-block text-muted">Status</small>
+                                                        <span id="detailStatus" class="badge bg-secondary">Unknown</span>
+                                                    </div>
+                                                    <div class="col-md-2 col-6">
+                                                        <small class="d-block text-muted">Katha</small>
+                                                        <strong id="detailKatha" class="text-primary">-</strong>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
 
-                    <!-- Price Information -->
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="purchasePerKatha" class="form-label">Price Per Katha <span class="text-danger">*</span></label>
-                            <div class="input-group">
-                                <span class="input-group-text">৳</span>
-                                <input type="number" class="form-control" id="purchasePerKatha" name="per_katha" step="0.01" required onchange="calculateTotalPrice()">
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Total Katha</label>
-                            <input type="text" class="form-control" id="purchaseTotalKatha" readonly>
-                        </div>
-                    </div>
+                                        <!-- Nominees -->
+                                        <div class="mb-3">
+                                            <label for="purchaseNominees" class="form-label small text-muted text-uppercase">Nominees</label>
+                                            <select class="form-select" id="purchaseNominees" name="nominee_ids[]" multiple="multiple">
+                                                <!-- Populated via AJAX -->
+                                            </select>
+                                            <div class="form-text">Select one or more nominees associated with this client.</div>
+                                        </div>
 
-                    <!-- Down Payment & Booking Money -->
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="purchaseDownPayment" class="form-label">Down Payment <span class="text-danger">*</span></label>
-                            <div class="input-group">
-                                <span class="input-group-text">৳</span>
-                                <input type="number" class="form-control" id="purchaseDownPayment" name="down_payment" step="0.01" value="0" required onchange="calculateTotalPrice()">
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="purchaseBookingMoney" class="form-label">Booking Money</label>
-                            <div class="input-group">
-                                <span class="input-group-text">৳</span>
-                                <input type="number" class="form-control" id="purchaseBookingMoney" name="booking_money" step="0.01" value="0" onchange="calculateTotalPrice()">
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Total Price Summary -->
-                    <div class="card bg-light mb-3">
-                        <div class="card-body">
-                            <div class="row text-center">
-                                <div class="col-md-4">
-                                    <small class="text-muted">Total Price</small>
-                                    <p class="mb-0" id="purchaseTotalPrice" style="font-size: 1.2rem; font-weight: bold;">৳0.00</p>
+                                        <!-- File Number -->
+                                        <div class="mb-3">
+                                            <label for="purchaseFileNum" class="form-label small text-muted text-uppercase">File Number</label>
+                                            <input type="text" class="form-control" id="purchaseFileNum" name="file_num" placeholder="e.g., File-001" required>
+                                            <div class="form-text">Unique file number for this purchase.</div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="col-md-4">
-                                    <small class="text-muted">Total Advance</small>
-                                    <p class="mb-0" id="purchaseTotalAdvance" style="font-size: 1.2rem; font-weight: bold;">৳0.00</p>
+                            </div>
+
+                            <!-- Right Column: Financials & Schedule -->
+                            <div class="col-lg-4">
+                                <div class="card shadow-sm border-0 h-100">
+                                    <div class="card-header bg-white py-3">
+                                        <h6 class="mb-0 text-success"><i class="lni lni-dollar me-2"></i>Financials</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <!-- Pricing Inputs -->
+                                        <div class="row g-3 mb-4">
+                                            <div class="col-12">
+                                                <label for="purchasePerKatha" class="form-label small text-muted text-uppercase">Price Per Katha</label>
+                                                <div class="input-group">
+                                                    <span class="input-group-text">৳</span>
+                                                    <input type="number" class="form-control fw-bold" id="purchasePerKatha" name="per_katha" required min="0" step="0.01">
+                                                </div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label for="purchaseBookingMoney" class="form-label small text-muted text-uppercase">Booking Money</label>
+                                                <div class="input-group">
+                                                    <span class="input-group-text">৳</span>
+                                                    <input type="number" class="form-control" id="purchaseBookingMoney" name="booking_money" min="0" step="0.01" value="0">
+                                                </div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label for="purchaseDownPayment" class="form-label small text-muted text-uppercase">Down Payment</label>
+                                                <div class="input-group">
+                                                    <span class="input-group-text">৳</span>
+                                                    <input type="number" class="form-control" id="purchaseDownPayment" name="down_payment" min="0" step="0.01" value="0">
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Summary Card -->
+                                        <div class="card bg-primary text-white mb-4">
+                                            <div class="card-body">
+                                                <div class="d-flex justify-content-between mb-2">
+                                                    <span>Total Price:</span>
+                                                    <span class="fw-bold" id="displayTotalPrice">৳0.00</span>
+                                                </div>
+                                                <div class="d-flex justify-content-between mb-2">
+                                                    <span>Total Advance:</span>
+                                                    <span id="displayTotalAdvance">৳0.00</span>
+                                                </div>
+                                                <hr class="border-white opacity-50 my-2">
+                                                <div class="d-flex justify-content-between">
+                                                    <span class="h5 mb-0">Balance:</span>
+                                                    <span class="h5 mb-0" id="displayRemainingBalance">৳0.00</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Payment Mode -->
+                                        <div class="mb-3">
+                                            <label class="form-label small text-muted text-uppercase">Mode of Payment</label>
+                                            <div class="btn-group w-100" role="group">
+                                                <input type="radio" class="btn-check" name="payment_mode" id="modeFull" value="1" checked>
+                                                <label class="btn btn-outline-primary" for="modeFull">Full Payment</label>
+                                                
+                                                <input type="radio" class="btn-check" name="payment_mode" id="modeInstallment" value="2">
+                                                <label class="btn btn-outline-primary" for="modeInstallment">Installment</label>
+                                            </div>
+                                        </div>
+
+                                        <!-- Installment Options (Always Visible) -->
+                                        <div id="installmentOptions" class="border rounded p-3 bg-light">
+                                            <h6 class="text-muted mb-3 small text-uppercase">Schedule Configuration</h6>
+                                            
+                                            <div id="installmentFields">
+                                                <div class="row g-2 mb-3">
+                                                    <div class="col-md-6">
+                                                        <label for="installmentsCount" class="form-label small fw-medium">Number of Installments</label>
+                                                        <input type="number" class="form-control form-control-sm" id="installmentsCount" name="installments" min="1" value="60" step="1">
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label for="adjustmentType" class="form-label small fw-medium">Adjustment Type</label>
+                                                        <select class="form-select form-select-sm" id="adjustmentType" name="adjustment_type">
+                                                            <option value="year_start">Year — Start</option>
+                                                            <option value="year_middle">Year — Middle</option>
+                                                            <option value="year_end">Year — End</option>
+                                                            <option value="year_quarterly">Year — Quarterly</option>
+                                                            <option value="custom">Custom (no yearly auto)</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+
+                                                <div class="row g-2 mb-3">
+                                                    <div class="col-md-6">
+                                                        <label for="monthly Amount" class="form-label small fw-medium">Monthly Amount <small class="text-muted">(optional)</small></label>
+                                                        <div class="input-group input-group-sm">
+                                                            <span class="input-group-text">৳</span>
+                                                            <input type="number" class="form-control" id="monthlyAmount" name="monthly_amount" placeholder="Auto-calc if empty" step="1">
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label for="yearlyAdjustment" class="form-label small fw-medium">Yearly Adjustment</label>
+                                                        <div class="input-group input-group-sm">
+                                                            <span class="input-group-text">৳</span>
+                                                            <input type="number" class="form-control" id="yearlyAdjustment" name="yearly_adjustment" placeholder="e.g. 50000" step="1">
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div class="row g-2 mb-3">
+                                                    <div class="col-md-6">
+                                                        <label for="installmentStartDate" class="form-label small fw-medium">Installment Start Date</label>
+                                                        <input type="date" class="form-control form-control-sm" id="installmentStartDate" name="start_date" value="<?= date('Y-m-d') ?>">
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label for="startOption" class="form-label small fw-medium">Start Option</label>
+                                                        <select class="form-select form-select-sm" id="startOption" name="start_option">
+                                                            <option value="start">Start of month (1st)</option>
+                                                            <option value="middle">Middle (15th)</option>
+                                                            <option value="end">End of month (last day)</option>
+                                                            <option value="exact">Exact (keep chosen day)</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label for="interestPercent" class="form-label small fw-medium">Interest %</label>
+                                                <select class="form-select form-select-sm" id="interestPercent" name="interest_percent">
+                                                    <option value="2">2%</option>
+                                                    <option value="3" selected>3%</option>
+                                                    <option value="4">4%</option>
+                                                    <option value="5">5%</option>
+                                                    <option value="6">6%</option>
+                                                </select>
+                                                <small class="text-muted d-block mt-1">Flat percent applied to overdue amount. Skipped when paid ≥ 70%.</small>
+                                            </div>
+
+                                            <button type="button" class="btn btn-primary btn-sm w-100" id="previewScheduleBtn">
+                                                <i class="lni lni-eye me-1"></i> Preview Schedule
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="col-md-4">
-                                    <small class="text-muted">Remaining</small>
-                                    <p class="mb-0" id="purchaseRemaining" style="font-size: 1.2rem; font-weight: bold;">৳0.00</p>
+                            </div>
+                        </div>
+
+                        <!-- Schedule Preview Section -->
+                        <div class="row mt-4" id="schedulePreviewSection" style="display: none;">
+                            <div class="col-12">
+                                <div class="card shadow-sm border-0">
+                                    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0 text-info"><i class="lni lni-list me-2"></i>Payment Schedule Preview</h6>
+                                        <span class="badge bg-info" id="previewTotalInstallments">0 Installments</span>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                            <table class="table table-hover table-striped mb-0 text-center align-middle" id="schedulePreviewTable">
+                                                <thead class="table-light sticky-top">
+                                                    <tr>
+                                                        <th>#</th>
+                                                        <th>Particular</th>
+                                                        <th>Due Date</th>
+                                                        <th>Amount</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody></tbody>
+                                            </table>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-
-                    <!-- File Number -->
-                    <div class="mb-3">
-                        <label for="purchaseFileNum" class="form-label">File Number <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="purchaseFileNum" name="file_num" required placeholder="e.g., MH-001-2024">
-                    </div>
-
-                    <!-- Nominees Selection -->
-                    <div class="mb-3">
-                        <label for="purchaseNominees" class="form-label">Nominee(s)</label>
-                        <select class="form-select" id="purchaseNominees" name="nominee_ids" multiple size="3">
-                            <option value="">-- Select Nominees (Optional) --</option>
-                        </select>
-                        <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple nominees</small>
-                    </div>
-
-                    <!-- Force Override Option -->
-                    <div class="mb-3 form-check">
-                        <input type="checkbox" class="form-check-input" id="purchaseForce" name="force" value="1">
-                        <label class="form-check-label" for="purchaseForce">
-                            Force override if plot conflicts detected
-                        </label>
-                        <small class="form-text text-danger d-block">⚠️ Use only if you're sure previous booking was cancelled</small>
-                    </div>
-                </div>
-
-                <div class="modal-footer border-top">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary" id="purchaseSubmitBtn">Register Purchase</button>
-                </div>
-            </form>
+                </form>
+            </div>
+            <div class="modal-footer bg-white border-top">
+                <button type="button" class="btn btn-light" onclick="closeAddPurchaseModal()">Cancel</button>
+                <button type="button" class="btn btn-primary px-4" id="savePurchaseBtn">
+                    <i class="lni lni-checkmark-circle me-2"></i> Confirm Purchase
+                </button>
+            </div>
         </div>
     </div>
 </div>
 
+<style>
+/* Ensure modal is truly full screen and on top */
+#addPurchaseModal {
+    z-index: 1060 !important;
+}
+
+/* Fix Select2 z-index issues in modals */
+.select2-container {
+    z-index: 9999 !important;
+}
+
+.select2-dropdown {
+    z-index: 9999 !important;
+}
+
+/* Custom Select2 Styling */
+.select2-container--bootstrap-5 .select2-selection {
+    border-color: #dee2e6;
+    padding: 0.375rem 0.75rem;
+    height: auto;
+}
+
+.select2-container--bootstrap-5 .select2-selection--single .select2-selection__rendered {
+    padding-left: 0;
+    line-height: 1.5;
+    color: #212529;
+}
+
+/* Badge styling in Select2 results */
+.select2-result-repository__meta {
+    margin-left: 0;
+}
+</style>
+
 <script>
+// Global Select2 Focus Fix
+$(document).on('select2:open', function(e) {
+    var targetId = e.target.id;
+    // Only apply if the select2 is inside our modal
+    if ($(e.target).closest('#addPurchaseModal').length) {
+        window.setTimeout(function () {
+            document.querySelector('.select2-container--open .select2-search__field').focus();
+        }, 50);
+    }
+});
+
+// Move modal to body immediately to ensure correct z-index and positioning
 $(document).ready(function() {
-    // Initialize Select2 for purchase/booking selection
+    // Remove any existing modal with the same ID to prevent duplicates
+    $('body > #addPurchaseModal').remove();
+    // Move the current modal to body
+    $('#addPurchaseModal').appendTo("body");
+});
+
+function closeAddPurchaseModal() {
+    $('#addPurchaseModal').modal('hide');
+}
+
+// Function to reset form and set client context
+window.resetAddPurchaseForm = function(clientId = null) {
+    var form = $('#addPurchaseForm')[0];
+    form.reset();
+    $('#addPurchaseForm').removeClass('was-validated');
+    
+    // Reset Select2s
+    $('#purchaseProject').val(null).trigger('change');
+    $('#purchaseBooking').val(null).trigger('change').prop('disabled', true);
+    $('#purchaseNominees').val(null).trigger('change');
+    
+    // Clear details
+    $('#detailBlock, #detailPlot, #detailRoad, #detailFacing').text('-');
+    $('#detailKatha').text('-');
+    $('#detailStatus').html('<span class="badge bg-secondary">Unknown</span>');
+    $('#purchaseConflictAlert').addClass('d-none');
+    
+    // Reset Financials
+    $('#displayTotalPrice, #displayTotalAdvance, #displayRemainingBalance').text('৳0.00');
+    $('#displayRemainingBalance').removeClass('text-danger');
+    $('#schedulePreviewSection').hide();
+    window.generatedSchedule = null;
+
+    // Handle Client Context
+    if (clientId) {
+        // Pre-select client and hide selector
+        // Since Select2 is AJAX, we need to fetch the client name or just use ID if name unavailable
+        // Ideally we pass name too, but if not, we can just set ID and let user see it in view_client
+        // Or we can fetch it. For now, assuming view_client context implies we know the client.
+        // We will create a dummy option to satisfy Select2 if needed, but since we hide the section, it matters less visually.
+        // However, the form submit needs the value.
+        
+        // If we have the client object in global scope (from view_client), use it.
+        // Otherwise, just set the value.
+        if ($('#purchaseClient').find("option[value='" + clientId + "']").length) {
+            $('#purchaseClient').val(clientId).trigger('change');
+        } else {
+             // Create a temporary option so val() works
+             var newOption = new Option("Selected Client", clientId, true, true);
+             $('#purchaseClient').append(newOption).trigger('change');
+        }
+        
+        $('#contextClientId').val(clientId);
+        $('#clientSection').hide();
+    } else {
+        // Clear client and show selector
+        $('#purchaseClient').val(null).trigger('change');
+        $('#contextClientId').val('');
+        $('#clientSection').show();
+    }
+};
+
+$(document).ready(function() {
+    // Initialize Select2
+    function initSelect2(selector, placeholder) {
+        $(selector).select2({
+            theme: 'bootstrap-5',
+            dropdownParent: $('#addPurchaseModal'),
+            width: '100%',
+            placeholder: placeholder,
+            allowClear: true
+        });
+    }
+
+    // Client Select2 with AJAX
+    $('#purchaseClient').select2({
+        theme: 'bootstrap-5',
+        dropdownParent: $('#addPurchaseModal'),
+        width: '100%',
+        placeholder: 'Search Client...',
+        allowClear: true,
+        ajax: {
+            url: Wo_Ajax_Requests_File() + '?f=manage_clients&s=search_clients',
+            dataType: 'json',
+            delay: 250,
+            data: function (params) {
+                return {
+                    q: params.term
+                };
+            },
+            processResults: function (data) {
+                return {
+                    results: data
+                };
+            },
+            cache: true
+        },
+        minimumInputLength: 1
+    });
+
+    initSelect2('#purchaseProject', 'Select Project');
+    initSelect2('#purchaseNominees', 'Select Nominees');
+
+    // Initialize Plot Selection with Custom Formatting
     $('#purchaseBooking').select2({
-        placeholder: 'Search plots...',
+        theme: 'bootstrap-5',
+        dropdownParent: $('#addPurchaseModal'),
+        width: '100%',
+        placeholder: 'Search for a plot...',
         allowClear: true,
         ajax: {
             url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=search_purchases',
             dataType: 'json',
-            delay: 300,
-            data: function(params) {
+            delay: 250,
+            data: function (params) {
                 return {
-                    q: params.term,
-                    project_id: $('#purchaseProject').val(),
-                    page: params.page || 1,
-                    per_page: 30
+                    q: params.term, 
+                    search: params.term, 
+                    project_id: $('#purchaseProject').val() 
                 };
             },
-            processResults: function(data) {
-                return {
-                    results: data.results || [],
-                    pagination: { more: data.more || false }
-                };
-            }
-        },
-        templateResult: function(item) {
-            if (!item.id) return item.text;
-            let badge = '<span class="badge bg-' + (item.available ? 'success' : 'danger') + '">' + item.status_label + '</span>';
-            return $('<span>' + item.text + ' ' + badge + '</span>');
-        }
-    });
-
-    // Initialize Select2 for client selection
-    $('#purchaseClient').select2({
-        placeholder: 'Search clients...',
-        allowClear: true,
-        ajax: {
-            url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_all_clients',
-            dataType: 'json',
-            delay: 300,
-            data: function(params) {
-                return { q: params.term };
-            },
-            processResults: function(data) {
-                return { results: data || [] };
-            }
-        }
-    });
-
-    // Initialize Select2 for nominees
-    $('#purchaseNominees').select2({
-        placeholder: 'Select nominees...',
-        allowClear: true
-    });
-});
-
-function loadPlots() {
-    const projectId = $('#purchaseProject').val();
-    if (!projectId) {
-        $('#purchaseBooking').html('<option value="">Select project first</option>').trigger('change');
-        return;
-    }
-    // Select2 will handle loading via AJAX
-}
-
-function loadPurchaseDetails() {
-    const purchaseId = $('#purchaseBooking').val();
-    if (!purchaseId) return;
-
-    // Get purchase details to populate katha
-    $.ajax({
-        url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_purchase_by_id',
-        type: 'GET',
-        data: { id: purchaseId },
-        dataType: 'json',
-        success: function(resp) {
-            if (resp.status === 200 && resp.item) {
-                const item = resp.item;
-                $('#purchaseTotalKatha').val(item.katha || 0);
-                calculateTotalPrice();
+            processResults: function (data) {
+                var rawResults = data.results || data;
+                if (!Array.isArray(rawResults)) rawResults = [];
                 
-                // Show conflict warning if not available
-                if (!item.available) {
-                    $('#purchaseConflictAlert').html(
-                        '<strong>⚠️ Warning:</strong> This plot may have active bookings. ' +
-                        'Check "Force override" to proceed.'
-                    ).show();
-                } else {
-                    $('#purchaseConflictAlert').hide();
+                return {
+                    results: rawResults.map(function(item) {
+                        return normalizePlotItem(item);
+                    })
+                };
+            },
+            cache: true
+        },
+        minimumInputLength: 0,
+        templateResult: select2TemplateResult,
+        templateSelection: select2TemplateSelection,
+        matcher: advancedMatcher
+    });
+
+    // Handle Project Change
+    $('#purchaseProject').on('change', function() {
+        $('#purchaseBooking').val(null).trigger('change');
+        $('#purchaseBooking').prop('disabled', false);
+    });
+
+    // Handle Plot Selection
+    $('#purchaseBooking').on('select2:select', function(e) {
+        var data = e.params.data;
+        
+        // Populate Details
+        $('#detailBlock').text(data.block || '-');
+        $('#detailPlot').text(data.plot || '-');
+        $('#detailRoad').text(data.road || '-');
+        $('#detailFacing').text(data.facing || '-'); 
+        $('#detailKatha').text(data.katha || '-');
+        $('#detailStatus').html(data.status_label || '<span class="badge bg-secondary">Unknown</span>');
+
+        // Store katha for calculation
+        $('#purchaseBooking').data('katha', parseFloat(data.katha) || 0);
+
+        // Check availability
+        if (!data.available) { 
+            $('#purchaseConflictAlert').removeClass('d-none');
+        } else {
+            $('#purchaseConflictAlert').addClass('d-none');
+        }
+
+        calculateTotalPrice();
+    });
+
+    // ---------------------------------------------------------
+    // Legacy Helper Functions (Restored)
+    // ---------------------------------------------------------
+
+    // Normalize plot data
+    function normalizePlotItem(item) {
+        if (!item) return null;
+        
+        var id = item.id || item.purchase_id || '';
+        var plot = item.plot || item.plot_number || '';
+        var katha = (item.katha !== undefined) ? String(item.katha) : '';
+        var block = item.block || item.block_name || '';
+        var road = item.road || item.road_name || '';
+        var facing = item.facing || '';
+        var status = item.status || '';
+        var statusLabel = item.status_label || getStatusLabel(status);
+        var available = item.available === 1 || item.available === true || item.available === '1';
+
+        // Fallback availability check if 'available' prop missing but status exists
+        if (item.available === undefined) {
+             available = (status == 0 || status == 1 || status == '0' || status == '1');
+        }
+
+        var parts = [];
+        if (block) parts.push('Block ' + String(block).toUpperCase());
+        if (plot) parts.push('Plot ' + String(plot));
+        if (katha) parts.push(String(katha) + ' katha');
+        if (road) parts.push('Road ' + String(road));
+        if (facing) parts.push('Facing ' + String(facing));
+
+        return {
+            id: id,
+            text: parts.join(' • ') || String(id),
+            plot: plot,
+            katha: katha,
+            block: block,
+            road: road,
+            facing: facing,
+            status: status,
+            status_label: statusLabel,
+            available: available,
+            blocked: !available,
+            raw: item
+        };
+    }
+
+    function getStatusLabel(status) {
+        var s = String(status).toLowerCase();
+        if (s === '0' || s === '1' || s === 'available') return 'Available';
+        if (s === '2' || s === 'sold' || s === 'booked') return 'Sold';
+        if (s === '3' || s === 'complete') return 'Complete';
+        if (s === '4' || s.indexOf('cancel') !== -1) return 'Cancelled';
+        return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : '';
+    }
+
+    // Enhanced template functions
+    function select2TemplateResult(item) {
+        if (!item || !item.id) return item && item.text ? item.text : null;
+        
+        var $wrap = $('<div class="select2-result-item d-flex justify-content-between align-items-center"></div>');
+        var $label = $('<div class="select2-main-text flex-grow-1"></div>').text(item.text);
+        $wrap.append($label);
+
+        if (item.status_label) {
+            var badgeClass = getBadgeClass(item.status);
+            var $badge = $('<span class="select2-result-badge ' + badgeClass + '"></span>').text(item.status_label);
+            $wrap.append($badge);
+        }
+
+        if (item.blocked) {
+            $wrap.addClass('select2-result--disabled');
+            $label.append(' <small class="text-muted">(Not Available)</small>');
+        }
+
+        return $wrap;
+    }
+
+    function select2TemplateSelection(item) {
+        if (!item || !item.id) return item && item.text ? item.text : null;
+        return item.text;
+    }
+
+    function getBadgeClass(status) {
+        var s = String(status || '').toLowerCase();
+        if (/(sold|2|booked)/.test(s)) return 'sold';
+        if (/(cancel|4)/.test(s)) return 'cancelled';
+        if (/(complete|3)/.test(s)) return 'completed';
+        if (/(available|0|1)/.test(s)) return 'available';
+        return 'other';
+    }
+
+    // Advanced matcher for intelligent search
+    function advancedMatcher(params, data) {
+        if (!params || !params.term) return data;
+
+        var term = params.term.toLowerCase().trim();
+        var searchable = [
+            data.text || '',
+            data.block || '',
+            data.plot || '',
+            data.katha || '',
+            data.road || '',
+            data.facing || '',
+            data.status_label || ''
+        ].join(' ').toLowerCase();
+
+        if (searchable.indexOf(term) !== -1) return data;
+
+        var patterns = [
+            /(\d+)\s*k/i,
+            /r(\d+)/i,
+            /p(\d+)/i,
+            /b([a-z])/i
+        ];
+
+        for (var i = 0; i < patterns.length; i++) {
+            var match = term.match(patterns[i]);
+            if (match && searchable.indexOf(match[1]) !== -1) return data;
+        }
+
+        return null;
+    }
+
+    // Utility functions
+    function formatCurrencyNumber(n) {
+        if (isNaN(n) || n === null) return '৳0';
+        return '৳' + Number(Math.round(n * 10) / 10).toLocaleString('en-US', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 1
+        });
+    }
+
+    // Handle Client Selection (Load Nominees)
+    $('#purchaseClient').on('change', function() {
+        var clientId = $(this).val();
+        if (clientId) {
+            $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_nominees', {client_id: clientId}, function(data) {
+                var nominees = $('#purchaseNominees');
+                nominees.empty();
+                if (data.status == 200) {
+                    $.each(data.nominees, function(index, nominee) {
+                        nominees.append(new Option(nominee.name + ' (' + nominee.relation + ')', nominee.id));
+                    });
                 }
-            }
+            });
         }
     });
-}
 
-function calculateTotalPrice() {
-    const perKatha = parseFloat($('#purchasePerKatha').val()) || 0;
-    const totalKatha = parseFloat($('#purchaseTotalKatha').val()) || 0;
-    const downPayment = parseFloat($('#purchaseDownPayment').val()) || 0;
-    const bookingMoney = parseFloat($('#purchaseBookingMoney').val()) || 0;
+    // Financial Calculations
+    function calculateTotalPrice() {
+        var katha = parseFloat($('#purchaseBooking').data('katha')) || 0;
+        var perKatha = parseFloat($('#purchasePerKatha').val()) || 0;
+        var bookingMoney = parseFloat($('#purchaseBookingMoney').val()) || 0;
+        var downPayment = parseFloat($('#purchaseDownPayment').val()) || 0;
 
-    const totalPrice = perKatha * totalKatha;
-    const totalAdvance = downPayment + bookingMoney;
-    const remaining = totalPrice - totalAdvance;
+        var totalPrice = katha * perKatha;
+        var totalAdvance = bookingMoney + downPayment;
+        var remaining = totalPrice - totalAdvance;
 
-    $('#purchaseTotalPrice').text('৳' + totalPrice.toLocaleString('en-BD', { minimumFractionDigits: 2 }));
-    $('#purchaseTotalAdvance').text('৳' + totalAdvance.toLocaleString('en-BD', { minimumFractionDigits: 2 }));
-    $('#purchaseRemaining').text('৳' + Math.max(0, remaining).toLocaleString('en-BD', { minimumFractionDigits: 2 }));
-
-    // Validate advance doesn't exceed total
-    if (totalAdvance > totalPrice && totalPrice > 0) {
-        $('#purchaseRemaining').css('color', 'red');
-        $('#purchaseSubmitBtn').prop('disabled', true);
-    } else {
-        $('#purchaseRemaining').css('color', 'inherit');
-        $('#purchaseSubmitBtn').prop('disabled', false);
-    }
-}
-
-$('#addPurchaseForm').on('submit', function(e) {
-    e.preventDefault();
-
-    const formData = {
-        client_id: $('#purchaseClient').val(),
-        project_id: $('#purchaseProject').val(),
-        purchase_id: $('#purchaseBooking').val(),
-        per_katha: $('#purchasePerKatha').val(),
-        down_payment: $('#purchaseDownPayment').val(),
-        booking_money: $('#purchaseBookingMoney').val(),
-        file_num: $('#purchaseFileNum').val(),
-        nominee_ids: $('#purchaseNominees').val() ? JSON.stringify($('#purchaseNominees').val()) : '[]',
-        force: $('#purchaseForce').is(':checked') ? '1' : '0'
-    };
-
-    $.ajax({
-        url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=register_purchase',
-        type: 'POST',
-        data: formData,
-        dataType: 'json',
-        success: function(resp) {
-            if (resp.status === 200) {
-                pos5_success_noti(resp.message);
-                $('#addPurchaseModal').modal('hide');
-                this.form.reset();
-                // Refresh the parent data table
-                if (typeof DataTableRefresh === 'function') {
-                    DataTableRefresh();
-                }
-            } else {
-                pos4_error_noti(resp.message || 'Error registering purchase');
-            }
-        },
-        error: function(xhr, status, error) {
-            console.error('AJAX error:', error);
-            pos4_error_noti('Error: ' + error);
+        $('#displayTotalPrice').text('৳' + totalPrice.toLocaleString('en-BD', {minimumFractionDigits: 2}));
+        $('#displayTotalAdvance').text('৳' + totalAdvance.toLocaleString('en-BD', {minimumFractionDigits: 2}));
+        $('#displayRemainingBalance').text('৳' + remaining.toLocaleString('en-BD', {minimumFractionDigits: 2}));
+        
+        if (remaining < 0) {
+            $('#displayRemainingBalance').addClass('text-danger');
+        } else {
+            $('#displayRemainingBalance').removeClass('text-danger');
         }
+    }
+
+    $('#purchasePerKatha, #purchaseBookingMoney, #purchaseDownPayment').on('input', calculateTotalPrice);
+
+    // Payment Mode Change Handlerfn
+    $('input[name="payment_mode"]').on('change', function() {
+        var mode = $(this).val();
+        if (mode === '1') {
+            // Full Payment - hide installment fields
+            $('#installmentFields').hide();
+        } else {
+            // Installment - show all fields
+            $('#installmentFields').show();
+        }
+    });
+    // Trigger initial state
+    $('input[name="payment_mode"]:checked').trigger('change');
+
+    // Schedule Preview - Client-side Generation (matching payment_schedule_modal.phtml)
+    $('#previewScheduleBtn').on('click', function() {
+        var katha = parseFloat($('#purchaseBooking').data('katha')) || 0;
+        var perKatha = parseFloat($('#purchasePerKatha').val()) || 0;
+        var totalPrice = katha * perKatha;
+        var bookingMoney = parseFloat($('#purchaseBookingMoney').val()) || 0;
+        var downPayment = parseFloat($('#purchaseDownPayment').val()) || 0;
+        var remaining = totalPrice - (bookingMoney + downPayment);
+
+        if (remaining <= 0) {
+            alert('Remaining balance must be greater than 0 to generate a schedule.');
+            return;
+        }
+
+        var mode = $('input[name="payment_mode"]:checked').val();
+        var schedule = [];
+
+        // Always add booking money and down payment rows if they exist
+        if (bookingMoney > 0) {
+            schedule.push({
+                installment_number: 'B',
+                particular: 'Booking Money',
+                due_date: new Date().toISOString().slice(0,10),
+                installment_amount: bookingMoney
+            });
+        }
+        if (downPayment > 0) {
+            schedule.push({
+                installment_number: 'D',
+                particular: 'Down Payment',
+                due_date: new Date().toISOString().slice(0,10),
+                installment_amount: downPayment
+            });
+        }
+
+        if (mode === '1') {
+            // Full Payment Mode
+            var startDate = $('#installmentStartDate').val() || new Date().toISOString().slice(0,10);
+            schedule.push({
+                installment_number: 'Full',
+                particular: 'Full Payment',
+                due_date: startDate,
+                installment_amount: remaining
+            });
+        } else {
+            // Installment Mode - Match payment_schedule_modal.phtml logic
+            var installments = parseInt($('#installmentsCount').val() || 60);
+            var adjustmentType = $('#adjustmentType').val() || 'year_end';
+            var monthlyInput = parseInt($('#monthlyAmount').val() || 0);
+            var yearlyAdjustment = parseInt($('#yearlyAdjustment').val() || 0);
+            var startDate = $('#installmentStartDate').val() || new Date().toISOString().slice(0,10);
+            var startOption = $('#startOption').val() || 'exact';
+
+            // Calculate adjustment months
+            var years = Math.ceil(installments / 12);
+            var adjMonths = [];
+            var totalAdjSum = 0;
+
+            if (yearlyAdjustment > 0 && adjustmentType !== 'custom') {
+                if (adjustmentType === 'year_quarterly') {
+                    for (var y = 0; y < years; y++) {
+                        [2, 5, 8, 11].forEach(function(off) {
+                            var idx = y * 12 + off;
+                            if (idx < installments) {
+                                adjMonths.push(idx);
+                                totalAdjSum += yearlyAdjustment;
+                            }
+                        });
+                    }
+                } else {
+                    for (var y = 0; y < years; y++) {
+                        var idx = 0;
+                        if (adjustmentType === 'year_start') idx = y * 12;
+                        else if (adjustmentType === 'year_middle') idx = y * 12 + 6;
+                        else idx = y * 12 + 11; // year_end
+                        if (idx < installments) {
+                            adjMonths.push(idx);
+                            totalAdjSum += yearlyAdjustment;
+                        }
+                    }
+                }
+            }
+
+            // Calculate monthly amount
+            var remainingAfterAdj = remaining - totalAdjSum;
+            if (remainingAfterAdj < 0) remainingAfterAdj = 0;
+            var regularCount = installments - adjMonths.length;
+            if (regularCount < 0) regularCount = 0;
+            var monthlyAmount = monthlyInput > 0 ? monthlyInput : (regularCount > 0 ? Math.floor(remainingAfterAdj / regularCount) : 0);
+
+            // Build amounts array
+            var amounts = new Array(installments).fill(0);
+            adjMonths.forEach(function(mi) { amounts[mi] = yearlyAdjustment; });
+            for (var i = 0; i < installments; i++) {
+                if (amounts[i] === 0) amounts[i] = monthlyAmount;
+            }
+
+            // Distribute remainder
+            var baseSum = amounts.reduce(function(s,v) { return s + v; }, 0);
+            var diff = remaining - baseSum;
+            if (diff !== 0) {
+                var distributeIdxs = [];
+                for (var k = 0; k < installments; k++) {
+                    if (adjMonths.indexOf(k) === -1) distributeIdxs.push(k);
+                }
+                if (distributeIdxs.length === 0) {
+                    for (var k2 = 0; k2 < installments; k2++) distributeIdxs.push(k2);
+                }
+                var sign = diff > 0 ? 1 : -1;
+                var left = Math.abs(diff);
+                var j = 0;
+                while (left > 0) {
+                    var target = distributeIdxs[j % distributeIdxs.length];
+                    amounts[target] += sign;
+                    left--;
+                    j++;
+                }
+            }
+
+            // Generate schedule rows
+            var cd = new Date(startDate);
+            if (isNaN(cd.getTime())) cd = new Date();
+            if (startOption === 'start') cd.setDate(1);
+            else if (startOption === 'middle') cd.setDate(15);
+            else if (startOption === 'end') cd.setDate(new Date(cd.getFullYear(), cd.getMonth() + 1, 0).getDate());
+
+            for (var idx = 0; idx < installments; idx++) {
+                var isAdj = adjMonths.indexOf(idx) !== -1;
+                var amt = amounts[idx];
+                var label = (idx === 0 ? '1st Installment' : (idx + 1) + 'th Installment');
+                var dueDate = cd.getFullYear() + '-' + ('0' + (cd.getMonth() + 1)).slice(-2) + '-' + ('0' + cd.getDate()).slice(-2);
+                
+                schedule.push({
+                    installment_number: idx + 1,
+                    particular: label + (isAdj ? ' (Yearly Adjustment)' : ''),
+                    due_date: dueDate,
+                    installment_amount: amt
+                });
+                
+                cd.setMonth(cd.getMonth() + 1);
+            }
+
+            // Final adjustment to match total exactly
+            var sumAll = schedule.reduce(function(s, r) { return s + parseInt(r.installment_amount); }, 0);
+            var totalDiff = remaining - sumAll;
+            if (totalDiff !== 0 && schedule.length > 0) {
+                schedule[schedule.length - 1].installment_amount = parseInt(schedule[schedule.length - 1].installment_amount) + totalDiff;
+            }
+        }
+
+        window.generatedSchedule = schedule;
+        renderSchedulePreview(schedule);
+    });
+
+    function renderSchedulePreview(schedule) {
+        var tbody = $('#schedulePreviewTable tbody');
+        tbody.empty();
+        $('#previewTotalInstallments').text(schedule.length + ' Installments');
+        
+        schedule.forEach(function(item) {
+            tbody.append(`
+                <tr>
+                    <td>${item.installment_number}</td>
+                    <td>${item.particular}</td>
+                    <td>${item.due_date}</td>
+                    <td>৳${parseFloat(item.installment_amount).toLocaleString('en-BD')}</td>
+                </tr>
+            `);
+        });
+        
+        $('#schedulePreviewSection').show();
+    }
+
+    // Check plot booking status
+    function checkPlotBooking(plotId, projectId, callback) {
+        $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=check_plot_booking', {
+            purchase_id: plotId,
+            project_id: projectId
+        })
+        .done(function(response){
+            var data = typeof response === 'string' ? JSON.parse(response) : response;
+            callback(data);
+        })
+        .fail(function(){
+            callback({ status: 500, message: 'Server error while checking plot availability' });
+        });
+    }
+
+    // Save Purchase
+    $('#savePurchaseBtn').on('click', function() {
+        var form = $('#addPurchaseForm')[0];
+        if (!form.checkValidity()) {
+            form.classList.add('was-validated');
+            return;
+        }
+
+        // Build payload object
+        var payload = {
+            client_id: $('#purchaseClient').val(),
+            purchase_id: $('#purchaseBooking').val(),
+            project_id: $('#purchaseProject').val(),
+            file_num: $('#purchaseFileNum').val(),
+            nominee_ids: $('#purchaseNominees').val(),
+            per_katha: $('#purchasePerKatha').val(),
+            booking_money: $('#purchaseBookingMoney').val(),
+            down_payment: $('#purchaseDownPayment').val(),
+            payment_mode: $('input[name="payment_mode"]:checked').val(),
+            installments: $('#installmentsCount').val(),
+            adjustment_type: $('#adjustmentType').val(),
+            monthly_amount: $('#monthlyAmount').val(),
+            yearly_adjustment: $('#yearlyAdjustment').val(),
+            start_date: $('#installmentStartDate').val(),
+            start_option: $('#startOption').val(),
+            interest_percent: $('#interestPercent').val()
+        };
+
+        // Add schedule if generated
+        if (window.generatedSchedule) {
+            payload.schedule = JSON.stringify(window.generatedSchedule);
+        }
+
+        $('#savePurchaseBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span>Processing...');
+
+        $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=register_purchase', payload)
+            .done(function(response){
+                var data = typeof response === 'string' ? JSON.parse(response) : response;
+                
+                if (data.status === 200) {
+                    alert('Purchase added successfully!');
+                    location.reload();
+                } else if (data.status === 409) {
+                    if (confirm(data.message + '\n\nDo you want to force assign this plot?')) {
+                        payload.force = 1;
+                        $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=register_purchase', payload)
+                            .done(function(response2){
+                                var data2 = typeof response2 === 'string' ? JSON.parse(response2) : response2;
+                                if (data2.status === 200) {
+                                    alert('Purchase added successfully!');
+                                    location.reload();
+                                } else {
+                                    alert(data2.message || 'Failed to force assign plot.');
+                                    $('#savePurchaseBtn').prop('disabled', false).html('<i class="lni lni-checkmark-circle me-2"></i> Confirm Purchase');
+                                }
+                            })
+                            .fail(function(){
+                                alert('Server error occurred while forcing assignment.');
+                                $('#savePurchaseBtn').prop('disabled', false).html('<i class="lni lni-checkmark-circle me-2"></i> Confirm Purchase');
+                            });
+                    } else {
+                        $('#savePurchaseBtn').prop('disabled', false).html('<i class="lni lni-checkmark-circle me-2"></i> Confirm Purchase');
+                    }
+                } else {
+                    alert(data.message || 'Failed to add purchase.');
+                    $('#savePurchaseBtn').prop('disabled', false).html('<i class="lni lni-checkmark-circle me-2"></i> Confirm Purchase');
+                }
+            })
+            .fail(function(){
+                alert('Server error while adding purchase.');
+                $('#savePurchaseBtn').prop('disabled', false).html('<i class="lni lni-checkmark-circle me-2"></i> Confirm Purchase');
+            });
     });
 });
 </script>

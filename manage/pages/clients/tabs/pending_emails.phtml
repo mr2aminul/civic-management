@@ -260,10 +260,187 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function previewEmail(emailId) {
-  console.log('[v0] Preview email:', emailId);
+  // Simple preview using alert for now, or could open a modal
+  // Ideally fetch full content via AJAX if body is large
+  alert('Preview functionality coming soon for email #' + emailId);
 }
 
 function sendEmailNow(emailId) {
-  console.log('[v0] Send email now:', emailId);
+  if (!confirm('Send this email immediately?')) return;
+
+  const btn = document.querySelector(`button[onclick="sendEmailNow(${emailId})"]`);
+  if(btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="lni lni-spinner lni-spin"></i>';
+  }
+
+  $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=send_email', {
+    email_id: emailId
+  })
+  .done(function(resp) {
+    const data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+    if (data.status === 200) {
+      // Refresh list
+      const tab = document.querySelector('.nav-link.active');
+      if(tab) tab.click(); // Reload current tab
+      if(typeof toastr !== 'undefined') toastr.success('Email sent successfully');
+      else alert('Email sent successfully');
+    } else {
+      if(typeof toastr !== 'undefined') toastr.error(data.message || 'Failed to send email');
+      else alert(data.message || 'Failed to send email');
+      if(btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="lni lni-send"></i>';
+      }
+    }
+  })
+  .fail(function() {
+    alert('Server error sending email');
+    if(btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="lni lni-send"></i>';
+    }
+  });
 }
+</script>
+
+<!-- Compose Email Modal -->
+<div class="modal fade" id="composeEmailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="lni lni-pencil me-2"></i>Compose Email</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="composeEmailForm">
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label class="form-label">Recipient Type</label>
+              <select class="form-select" name="recipient_type" id="compose_recipient_type" required>
+                <option value="client">Client (Primary)</option>
+                <option value="nominee">Nominee</option>
+                <option value="custom">Custom Email</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Email Type</label>
+              <select class="form-select" name="email_type" required>
+                <option value="general">General Message</option>
+                <option value="payment_reminder">Payment Reminder</option>
+                <option value="schedule_update">Schedule Update</option>
+                <option value="document_request">Document Request</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="mb-3" id="compose_custom_email_div" style="display:none;">
+            <label class="form-label">Recipient Email</label>
+            <input type="email" class="form-control" name="custom_email" placeholder="name@example.com">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Subject</label>
+            <input type="text" class="form-control" name="subject" required placeholder="Email Subject">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Message</label>
+            <textarea class="form-control" name="message" rows="6" required placeholder="Write your message here..."></textarea>
+            <div class="form-text">You can use placeholders like {client_name}, {project_name}, {due_amount}</div>
+          </div>
+
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="send_now" id="compose_send_now" checked>
+              <label class="form-check-label" for="compose_send_now">
+                Send Immediately
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="send_sms" id="compose_send_sms">
+              <label class="form-check-label" for="compose_send_sms">
+                Send as SMS too (if available)
+              </label>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn_send_composed_email">
+          <i class="lni lni-send me-1"></i>Send Email
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle recipient type change
+    const recipientSelect = document.getElementById('compose_recipient_type');
+    const customEmailDiv = document.getElementById('compose_custom_email_div');
+    
+    if(recipientSelect) {
+        recipientSelect.addEventListener('change', function() {
+            if(this.value === 'custom') {
+                customEmailDiv.style.display = 'block';
+                customEmailDiv.querySelector('input').required = true;
+            } else {
+                customEmailDiv.style.display = 'none';
+                customEmailDiv.querySelector('input').required = false;
+            }
+        });
+    }
+
+    // Handle Send Button
+    const sendBtn = document.getElementById('btn_send_composed_email');
+    if(sendBtn) {
+        sendBtn.addEventListener('click', function() {
+            const form = document.getElementById('composeEmailForm');
+            if(!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+
+            const formData = new FormData(form);
+            const purchaseId = document.getElementById('ui_purchase_id')?.value;
+            if(purchaseId) formData.append('purchase_id', purchaseId);
+
+            const btn = this;
+            const origHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="lni lni-spinner lni-spin me-1"></i>Sending...';
+
+            // Convert FormData to object
+            const data = {};
+            formData.forEach((value, key) => data[key] = value);
+            data.s = 'send_composed_email'; // Backend handler needed
+
+            $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory', data)
+            .done(function(resp) {
+                const res = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                if(res.status === 200) {
+                    alert('Email sent/queued successfully');
+                    const modalEl = document.getElementById('composeEmailModal');
+                    const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+                    modal.hide();
+                    form.reset();
+                    // Reload list if function exists
+                    if(typeof loadEmails === 'function') loadEmails('pending');
+                } else {
+                    alert(res.message || 'Failed to send email');
+                }
+            })
+            .fail(function() {
+                alert('Server error');
+            })
+            .always(function() {
+                btn.disabled = false;
+                btn.innerHTML = origHtml;
+            });
+        });
+    }
+});
 </script>

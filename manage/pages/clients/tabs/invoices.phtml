@@ -2,7 +2,6 @@
 /**
  * Invoices Tab - Complete invoice management
  * Path: manage/pages/clients/tabs/invoices.phtml
- * Features: Create invoice, record payments, track overpayments, view money receipts
  */
 ?>
 
@@ -24,33 +23,113 @@
     </div>
 
     <div class="card-body p-3">
-      <!-- Filter Panel -->
-      <div id="invoice_filter_panel" class="row mb-3 g-2" style="display:none;">
-        <div class="col-md-2">
-          <select class="form-select form-select-sm" id="invoice_filter_status">
-            <option value="">All Status</option>
-            <option value="draft">Draft</option>
-            <option value="issued">Issued</option>
-            <option value="partial">Partial</option>
-            <option value="paid">Paid</option>
-            <option value="cancelled">Cancelled</option>
+
+      <!-- Client & Purchase Selects -->
+      <div class="row g-2 mb-3">
+        <div class="col-md-6">
+          <label class="form-label small">Select Client</label>
+          <select id="invoices_client_select" class="form-select"></select>
+          <input type="hidden" id="invoices_client_id" value="">
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label small">Select Purchase</label>
+          <select id="invoices_purchase_select" class="form-select" disabled>
+            <option value="">-- Select Purchase First --</option>
           </select>
         </div>
-        <div class="col-md-2">
-          <input type="date" class="form-control form-control-sm" id="invoice_filter_from">
+      </div>
+
+      <!-- Filter Panel with Quick Filters -->
+      <div id="invoice_filter_panel" class="mb-3" style="display:none;">
+        <!-- Quick Filter Buttons -->
+        <div class="btn-group mb-2" role="group">
+          <button type="button" class="btn btn-sm btn-outline-primary quick-filter" data-filter="this_month">
+            <i class="lni lni-calendar"></i> This Month
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-primary quick-filter" data-filter="last_month">
+            Last Month
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-primary quick-filter" data-filter="this_quarter">
+            This Quarter
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-danger quick-filter" data-filter="overdue">
+            <i class="lni lni-alarm"></i> Overdue Only
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-warning quick-filter" data-filter="pending">
+            Pending Only
+          </button>
         </div>
-        <div class="col-md-2">
-          <input type="date" class="form-control form-control-sm" id="invoice_filter_to">
+        
+        <!-- Advanced Filter Row -->
+        <div class="row g-2">
+          <div class="col-md-2">
+            <select class="form-select form-select-sm" id="invoice_filter_status">
+              <option value="">All Status</option>
+              <option value="draft">Draft</option>
+              <option value="issued">Issued</option>
+              <option value="partial">Partial</option>
+              <option value="paid">Paid</option>
+              <option value="overdue">Overdue</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <select class="form-select form-select-sm" id="invoice_filter_type">
+              <option value="">All Types</option>
+              <option value="booking_money">Booking Money</option>
+              <option value="down_payment">Down Payment</option>
+              <option value="installment">Installment</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <input type="date" class="form-control form-control-sm" id="invoice_filter_from" placeholder="From Date">
+          </div>
+          <div class="col-md-2">
+            <input type="date" class="form-control form-control-sm" id="invoice_filter_to" placeholder="To Date">
+          </div>
+          <div class="col-md-2">
+            <input type="number" class="form-control form-control-sm" id="invoice_filter_min_amount" placeholder="Min Amount">
+          </div>
+          <div class="col-md-2">
+            <input type="number" class="form-control form-control-sm" id="invoice_filter_max_amount" placeholder="Max Amount">
+          </div>
         </div>
-        <div class="col-md-3">
-          <input type="text" class="form-control form-control-sm" id="invoice_filter_search" placeholder="Invoice # or receipt #">
+        
+        <div class="row g-2 mt-2">
+          <div class="col-md-4">
+            <input type="text" class="form-control form-control-sm" id="invoice_filter_search" placeholder="Search: Invoice #, Receipt #, Client Name">
+          </div>
+          <div class="col-md-2">
+            <button class="btn btn-sm btn-primary w-100" id="btn_invoice_apply_filter">
+              <i class="lni lni-search-alt me-1"></i>Apply Filter
+            </button>
+          </div>
+          <div class="col-md-2">
+            <button class="btn btn-sm btn-outline-secondary w-100" id="btn_invoice_reset_filter">
+              <i class="lni lni-close me-1"></i>Reset
+            </button>
+          </div>
         </div>
-        <div class="col-md-2">
-          <button class="btn btn-sm btn-primary w-100" id="btn_invoice_apply_filter">Apply</button>
+      </div>
+
+      <!-- Bulk Operations Bar -->
+      <div id="invoice_bulk_operations" class="alert alert-info d-flex justify-content-between align-items-center" style="display:none !important;">
+        <div>
+          <span id="invoice_selected_count">0</span> invoice(s) selected
         </div>
-        <div class="col-md-1">
-          <button class="btn btn-sm btn-outline-secondary w-100" id="btn_invoice_reset_filter">
-            <i class="lni lni-close"></i>
+        <div class="btn-group" role="group">
+          <button type="button" class="btn btn-sm btn-success" id="btn_bulk_export_pdf">
+            <i class="lni lni-download"></i> Export PDF
+          </button>
+          <button type="button" class="btn btn-sm btn-primary" id="btn_bulk_export_excel">
+            <i class="lni lni-file-excel"></i> Export Excel
+          </button>
+          <button type="button" class="btn btn-sm btn-warning" id="btn_bulk_send_email">
+            <i class="lni lni-envelope"></i> Send Emails
+          </button>
+          <button type="button" class="btn btn-sm btn-danger" id="btn_bulk_void">
+            <i class="lni lni-trash"></i> Void Selected
           </button>
         </div>
       </div>
@@ -113,7 +192,7 @@
             </tr>
           </thead>
           <tbody id="invoices_tbody">
-            <tr><td colspan="10" class="text-center text-muted py-3">Loading invoices...</td></tr>
+            <tr><td colspan="10" class="text-center text-muted py-3">Please select client or purchase to load invoices</td></tr>
           </tbody>
         </table>
       </div>
@@ -129,239 +208,576 @@
   </div>
 </div>
 
-<!-- Create Invoice Modal -->
-<div class="modal fade" id="createInvoiceModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header bg-primary text-white">
-        <h5 class="modal-title">Create Invoice</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <form id="createInvoiceForm">
-          <div class="row mb-3">
-            <div class="col-md-6">
-              <label class="form-label">Select Client <span class="text-danger">*</span></label>
-              <select class="form-select" id="invoice_client_select">
-                <option value="">-- Select Client --</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Select Purchase <span class="text-danger">*</span></label>
-              <select class="form-select" id="invoice_purchase_select" disabled>
-                <option value="">-- Select Purchase First --</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Client Summary -->
-          <div id="client_summary_box" class="card mb-3" style="display:none;">
-            <div class="card-body">
-              <div class="row g-3">
-                <div class="col-md-3">
-                  <small class="text-muted">Total Amount</small>
-                  <div class="h6 mb-0">৳<span id="summary_total_amount">0</span></div>
-                </div>
-                <div class="col-md-3">
-                  <small class="text-muted">Total Paid</small>
-                  <div class="h6 mb-0 text-success">৳<span id="summary_paid_amount">0</span></div>
-                </div>
-                <div class="col-md-3">
-                  <small class="text-muted">Total Due</small>
-                  <div class="h6 mb-0 text-danger">৳<span id="summary_due_amount">0</span></div>
-                </div>
-                <div class="col-md-3">
-                  <small class="text-muted">Credits Available</small>
-                  <div class="h6 mb-0 text-info">৳<span id="summary_credits">0</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="row mb-3">
-            <div class="col-md-6">
-              <label class="form-label">Invoice Type <span class="text-danger">*</span></label>
-              <select class="form-select" id="invoice_type_select">
-                <option value="">-- Select Type --</option>
-                <option value="booking_money">Booking Money</option>
-                <option value="down_payment">Down Payment</option>
-                <option value="installment">Installment</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Amount <span class="text-danger">*</span></label>
-              <input type="number" class="form-control" id="invoice_amount" step="0.01" placeholder="0.00">
-            </div>
-          </div>
-
-          <div class="row mb-3">
-            <div class="col-md-6">
-              <label class="form-label">Invoice Date <span class="text-danger">*</span></label>
-              <input type="date" class="form-control" id="invoice_date">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Due Date</label>
-              <input type="date" class="form-control" id="invoice_due_date">
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label">Description/Remarks</label>
-            <textarea class="form-control" id="invoice_description" rows="3" placeholder="Invoice description or remarks"></textarea>
-          </div>
-        </form>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" id="btn_create_invoice_submit">
-          <i class="lni lni-plus me-1"></i>Create Invoice
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
+<?php echo Wo_LoadManagePage('clients/modals/create-invoice'); ?>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-  const invoiceTab = document.getElementById('tab_invoices');
-  if (!invoiceTab) return;
+jQuery(function($){
+  // elements
+  const $clientSel = $('#invoices_client_select');
+  const $clientIdHidden = $('#invoices_client_id');
+  const $purchaseSel = $('#invoices_purchase_select');
 
-  invoiceTab.addEventListener('show.bs.tab', function() {
-    loadInvoices();
-  });
+  const $filterStatus = $('#invoice_filter_status');
+  const $filterFrom = $('#invoice_filter_from');
+  const $filterTo = $('#invoice_filter_to');
+  const $filterSearch = $('#invoice_filter_search');
 
-  document.getElementById('btn_invoice_filter_toggle').addEventListener('click', function() {
-    const panel = document.getElementById('invoice_filter_panel');
-    panel.style.display = panel.style.display === 'none' ? 'grid' : 'none';
-  });
+  const $invoicesTbody = $('#invoices_tbody');
+  const $invoiceTotalCount = $('#invoice_total_count');
+  const $invSummaryTotal = $('#inv_summary_total');
+  const $invSummaryPaid = $('#inv_summary_paid');
+  const $invSummaryPending = $('#inv_summary_pending');
+  const $invSummaryOverdue = $('#inv_summary_overdue');
+  const $invSummaryOutstanding = $('#inv_summary_outstanding');
+  const $invSummaryOverpayment = $('#inv_summary_overpayment');
+  const $overpaymentCreditsList = $('#overpayment_credits_list');
 
-  document.getElementById('btn_invoice_apply_filter').addEventListener('click', loadInvoices);
-  document.getElementById('btn_invoice_reset_filter').addEventListener('click', function() {
-    document.getElementById('invoice_filter_status').value = '';
-    document.getElementById('invoice_filter_from').value = '';
-    document.getElementById('invoice_filter_to').value = '';
-    document.getElementById('invoice_filter_search').value = '';
-    loadInvoices();
-  });
+  // debounce util
+  function debounce(fn, ms) {
+    let t = null;
+    return function(...args) { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), ms); };
+  }
 
-  function loadInvoices(filters = {}) {
-    const purchaseId = document.getElementById('ui_purchase_id')?.value;
-    if (!purchaseId) return;
+  function esc(s) { return String(s || '').replace(/[&<>"'\/]/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','/':'&#x2F;'})[c]; }); }
+  function formatMoney(v) { const n = parseFloat(v || 0); return n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 }); }
+  function invoiceStatusBadge(status) {
+    const map = {
+      'draft':'<span class="badge bg-secondary">Draft</span>',
+      'issued':'<span class="badge bg-primary">Issued</span>',
+      'partial':'<span class="badge bg-info text-dark">Partial</span>',
+      'paid':'<span class="badge bg-success">Paid</span>',
+      'cancelled':'<span class="badge bg-danger">Cancelled</span>'
+    };
+    return map[status] || ('<span class="badge bg-light text-dark">' + esc(status || 'Unknown') + '</span>');
+  }
 
-    fetch('/xhr/manage_inventory.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        action: 'get_invoices_list',
-        purchase_id: purchaseId,
-        status: document.getElementById('invoice_filter_status').value || '',
-        from_date: document.getElementById('invoice_filter_from').value || '',
-        to_date: document.getElementById('invoice_filter_to').value || '',
-        search: document.getElementById('invoice_filter_search').value || ''
-      })
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        renderInvoices(data.invoices);
-        updateInvoiceSummary(data.summary);
-        loadOverpaymentCredits(data.credits);
+  // --- init client select2 (uses manage_clients search_clients) ---
+  function initClientSelect2() {
+    try { if ($clientSel.hasClass('select2-hidden-accessible')) $clientSel.select2('destroy'); } catch(e){}
+
+    $clientSel.select2({
+      placeholder: '-- Search client --',
+      minimumInputLength: 1,
+      width: '100%',
+      ajax: {
+        url: Wo_Ajax_Requests_File() + '?f=manage_clients&s=search_clients',
+        type: 'POST',
+        dataType: 'json',
+        delay: 250,
+        data: function(params) {
+          return {
+            q: params.term || '',
+            include_purchase: 1,
+            include_client_summary: 0,
+            page: params.page || 1,
+            per_page: 30
+          };
+        },
+        processResults: function(data) {
+          var rows = Array.isArray(data) ? data : (data.results && Array.isArray(data.results) ? data.results : []);
+          return {
+            results: rows.map(function(it){
+              return { id: it.id, text: it.text || it.name || '', raw: it };
+            })
+          };
+        }
+      },
+      templateResult: function(item){ return item && item.text ? $('<div>').text(item.text) : null; },
+      templateSelection: function(item){ return item && item.text ? item.text : null; }
+    });
+
+    // On select populate purchases and load invoices (client-level)
+    $clientSel.off('select2:select').on('select2:select', function(e){
+      var item = e.params.data;
+      var clientId = item ? item.id : '';
+      $clientIdHidden.val(clientId);
+
+      var purchases = (item.raw && item.raw.purchases) ? item.raw.purchases : [];
+      $purchaseSel.prop('disabled', true).empty();
+      if (purchases.length) {
+        $purchaseSel.append('<option value="">-- Select Purchase --</option>');
+        purchases.forEach(function(p){
+          var val = p.purchase_id || p.id;
+          var txt = p.file_num ? (p.file_num + ' (Booking ID: ' + p.booking_id + ')') : ('Purchase ' + val);
+          $purchaseSel.append('<option value="'+val+'">'+txt+'</option>');
+        });
+        $purchaseSel.prop('disabled', false);
+      } else {
+        $purchaseSel.append('<option value="">-- No Purchases Found --</option>');
       }
-    })
-    .catch(e => console.error('[v0] Error loading invoices:', e));
+
+      // load invoices for client (client-level)
+      loadInvoices();
+    });
+
+    $clientSel.off('select2:clear').on('select2:clear', function(){
+      $clientIdHidden.val('');
+      $purchaseSel.prop('disabled', true).empty().append('<option value="">-- Select Purchase First --</option>');
+      clearInvoicesPlaceholder();
+    });
+  }
+
+  // Purchase change -> load invoices for purchase
+  $purchaseSel.on('change', function(){ loadInvoices(); });
+
+  // filters auto-apply
+  [$filterStatus, $filterFrom, $filterTo].forEach(function($el){ $el.on('change', loadInvoices); });
+  $filterSearch.on('input', debounce(loadInvoices, 400));
+
+  $('#btn_invoice_apply_filter').on('click', loadInvoices);
+  $('#btn_invoice_reset_filter').on('click', function(){
+    $filterStatus.val('');
+    $filterFrom.val('');
+    $filterTo.val('');
+    $filterSearch.val('');
+    loadInvoices();
+  });
+
+  $('#btn_invoice_filter_toggle').on('click', function(){ $('#invoice_filter_panel').toggle(); });
+
+  function clearInvoicesPlaceholder(){
+    $invoicesTbody.html('<tr><td colspan="10" class="text-center text-muted py-3">Please select client or purchase to load invoices</td></tr>');
+    $invoiceTotalCount.text('0');
+    updateSummary({});
+    $overpaymentCreditsList.html('<p class="text-muted text-center py-2">No overpayment credits</p>');
+  }
+
+  // load invoices via $.ajax
+  function loadInvoices() {
+    const purchaseId = $purchaseSel.val() || '';
+    const clientId = $clientIdHidden.val() || '';
+
+    if (!purchaseId && !clientId) {
+      clearInvoicesPlaceholder();
+      return;
+    }
+
+    // build URL params (GET)
+    const params = [];
+    if (purchaseId) params.push('purchase_id=' + encodeURIComponent(purchaseId));
+    else if (clientId) params.push('client_id=' + encodeURIComponent(clientId));
+
+    if ($filterStatus.val()) params.push('status=' + encodeURIComponent($filterStatus.val()));
+    if ($filterFrom.val()) params.push('from_date=' + encodeURIComponent($filterFrom.val()));
+    if ($filterTo.val()) params.push('to_date=' + encodeURIComponent($filterTo.val()));
+    if ($filterSearch.val()) params.push('search=' + encodeURIComponent($filterSearch.val()));
+
+    $invoicesTbody.html('<tr><td colspan="10" class="text-center text-muted py-3">Loading invoices...</td></tr>');
+
+    const url = Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_invoices' + (params.length ? '&' + params.join('&') : '');
+    $.ajax({
+      url: url,
+      method: 'GET',
+      dataType: 'json',
+      success: function(data) {
+        if (data && parseInt(data.status || 0) === 200) {
+          renderInvoices(data.invoices || []);
+          updateSummary(data.summary || {});
+          renderCredits(data.credits || []);
+        } else {
+          $invoicesTbody.html('<tr><td colspan="10" class="text-center text-danger py-3">Failed to load invoices</td></tr>');
+          updateSummary({});
+          renderCredits([]);
+        }
+      },
+      error: function(xhr, status, err) {
+        console.error('loadInvoices error', status, err);
+        $invoicesTbody.html('<tr><td colspan="10" class="text-center text-muted py-3">Error loading invoices</td></tr>');
+        updateSummary({});
+        renderCredits([]);
+      }
+    });
   }
 
   function renderInvoices(invoices) {
-    const tbody = document.getElementById('invoices_tbody');
-    tbody.innerHTML = '';
-    document.getElementById('invoice_total_count').textContent = invoices.length;
+    $invoicesTbody.empty();
+    $invoiceTotalCount.text(invoices.length || 0);
 
-    if (invoices.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">No invoices found</td></tr>';
+    if (!invoices || !invoices.length) {
+      $invoicesTbody.html('<tr><td colspan="10" class="text-center text-muted py-3">No invoices found</td></tr>');
       return;
     }
 
-    invoices.forEach((inv, idx) => {
-      const row = document.createElement('tr');
-      const statusBadge = getInvoiceStatusBadge(inv.status);
-      row.innerHTML = `
-        <td>${idx + 1}</td>
-        <td><strong>${inv.invoice_number}</strong></td>
-        <td><span class="badge bg-secondary">${inv.invoice_type}</span></td>
-        <td>${inv.invoice_date}</td>
-        <td>${inv.due_date || '-'}</td>
-        <td class="text-end">৳${parseFloat(inv.amount).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
-        <td class="text-end text-success">৳${parseFloat(inv.paid_amount).toLocaleString('en-US', {maximumFractionDigits: 2})}</td>
-        <td class="text-end">${inv.remaining_amount > 0 ? '৳' + parseFloat(inv.remaining_amount).toLocaleString('en-US', {maximumFractionDigits: 2}) : '<span class="text-success">Paid</span>'}</td>
-        <td>${statusBadge}</td>
-        <td>
-          <button class="btn btn-sm btn-outline-primary" title="View" onclick="viewInvoice(${inv.id})">
-            <i class="lni lni-eye"></i>
-          </button>
-          ${inv.status === 'draft' ? `<button class="btn btn-sm btn-outline-warning" title="Edit" onclick="editInvoice(${inv.id})"><i class="lni lni-pencil"></i></button>` : ''}
-          ${['draft', 'issued', 'partial'].includes(inv.status) ? `<button class="btn btn-sm btn-outline-success" title="Record Payment" onclick="recordInvoicePayment(${inv.id})"><i class="lni lni-dollar"></i></button>` : ''}
-        </td>
-      `;
-      tbody.appendChild(row);
+    invoices.forEach(function(inv, idx){
+      const remaining = parseFloat((inv.remaining_amount != null) ? inv.remaining_amount : ((inv.amount || 0) - (inv.paid_amount || 0)));
+      const remainingHtml = remaining > 0 ? '৳' + formatMoney(remaining) : '<span class="text-success">Paid</span>';
+
+      const $row = $('<tr/>').html(
+        '<td>' + (idx + 1) + '</td>' +
+        '<td><strong>' + esc(inv.invoice_number || '') + '</strong></td>' +
+        '<td><span class="badge bg-secondary">' + esc(inv.invoice_type || '') + '</span></td>' +
+        '<td>' + esc(inv.invoice_date || '') + '</td>' +
+        '<td>' + (inv.due_date ? esc(inv.due_date) : '-') + '</td>' +
+        '<td class="text-end">৳' + formatMoney(inv.amount || 0) + '</td>' +
+        '<td class="text-end text-success">৳' + formatMoney(inv.paid_amount || 0) + '</td>' +
+        '<td class="text-end">' + remainingHtml + '</td>' +
+        '<td>' + invoiceStatusBadge(inv.status) + '</td>' +
+        '<td>' +
+          '<button class="btn btn-sm btn-outline-primary" title="View" onclick="viewInvoice(' + (inv.id) + ')"><i class="lni lni-eye"></i></button> ' +
+          (inv.status === 'draft' ? '<button class="btn btn-sm btn-outline-warning" title="Edit" onclick="editInvoice(' + (inv.id) + ')"><i class="lni lni-pencil"></i></button> ' : '') +
+          (['draft','issued','partial'].includes(inv.status) ? '<button class="btn btn-sm btn-outline-success" title="Record Payment" onclick="recordInvoicePayment(' + (inv.id) + ')"><i class="lni lni-dollar"></i></button>' : '') +
+        '</td>'
+      );
+      $invoicesTbody.append($row);
     });
   }
 
-  function updateInvoiceSummary(summary) {
-    document.getElementById('inv_summary_total').textContent = parseFloat(summary.total_amount || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
-    document.getElementById('inv_summary_paid').textContent = parseFloat(summary.total_paid || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
-    document.getElementById('inv_summary_pending').textContent = summary.pending_count || 0;
-    document.getElementById('inv_summary_overdue').textContent = summary.overdue_count || 0;
-    document.getElementById('inv_summary_outstanding').textContent = parseFloat(summary.outstanding || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
-    document.getElementById('inv_summary_overpayment').textContent = parseFloat(summary.overpayment || 0).toLocaleString('en-US', {maximumFractionDigits: 2});
+  function updateSummary(s) {
+    $invSummaryTotal.text(formatMoney(s.total_amount || 0));
+    $invSummaryPaid.text(formatMoney(s.total_paid || 0));
+    $invSummaryPending.text(s.pending_count || 0);
+    $invSummaryOverdue.text(s.overdue_count || 0);
+    $invSummaryOutstanding.text(formatMoney(s.outstanding || 0));
+    $invSummaryOverpayment.text(formatMoney(s.overpayment || 0));
   }
 
-  function loadOverpaymentCredits(credits) {
-    const list = document.getElementById('overpayment_credits_list');
-    list.innerHTML = '';
-    
-    if (!credits || credits.length === 0) {
-      list.innerHTML = '<p class="text-muted text-center py-2">No overpayment credits</p>';
+  function renderCredits(credits) {
+    $overpaymentCreditsList.empty();
+    if (!credits || !credits.length) {
+      $overpaymentCreditsList.html('<p class="text-muted text-center py-2">No overpayment credits</p>');
       return;
     }
-
-    credits.forEach(credit => {
-      const item = document.createElement('div');
-      item.className = 'list-group-item';
-      item.innerHTML = `
-        <div class="d-flex justify-content-between align-items-center">
-          <div>
-            <small class="text-muted">Credit from Invoice #${credit.source_invoice}</small>
-            <div>Remaining: <strong>৳${parseFloat(credit.remaining_amount).toLocaleString('en-US', {maximumFractionDigits: 2})}</strong></div>
-          </div>
-          <small class="text-muted">${credit.created_at}</small>
-        </div>
-      `;
-      list.appendChild(item);
+    credits.forEach(function(c){
+      const $item = $('<div class="list-group-item"></div>').html(
+        '<div class="d-flex justify-content-between align-items-center">' +
+          '<div><small class="text-muted">Credit from Invoice #' + esc(c.source_invoice_id || c.source_invoice || 'N/A') + '</small><div>Remaining: <strong>৳' + formatMoney(c.remaining_amount || c.remaining_credit || 0) + '</strong></div></div>' +
+          '<small class="text-muted">' + esc(c.created_at || '') + '</small>' +
+        '</div>'
+      );
+      $overpaymentCreditsList.append($item);
     });
   }
 
-  function getInvoiceStatusBadge(status) {
-    const badges = {
-      'draft': '<span class="badge bg-secondary">Draft</span>',
-      'issued': '<span class="badge bg-primary">Issued</span>',
-      'partial': '<span class="badge bg-info">Partial</span>',
-      'paid': '<span class="badge bg-success">Paid</span>',
-      'cancelled': '<span class="badge bg-danger">Cancelled</span>'
-    };
-    return badges[status] || '<span class="badge bg-light">Unknown</span>';
+  // actions: view/edit/record using $.ajax
+  window.viewInvoice = function(invoiceId) {
+    if (!invoiceId) return alert('Invalid invoice id');
+    const url = Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_invoice_detail&invoice_id=' + encodeURIComponent(invoiceId);
+    $.ajax({
+      url: url,
+      method: 'GET',
+      dataType: 'json',
+      success: function(data) {
+        if (data && parseInt(data.status || 0) === 200 && data.invoice) {
+          const inv = data.invoice;
+          let out = 'Invoice #: ' + esc(inv.invoice_number || '') + '\n';
+          out += 'Type: ' + esc(inv.invoice_type || '') + '\n';
+          out += 'Amount: ৳' + formatMoney(inv.amount || 0) + '\n';
+          out += 'Paid: ৳' + formatMoney(inv.paid_amount || 0) + '\n';
+          out += 'Remaining: ৳' + formatMoney((inv.remaining_amount != null) ? inv.remaining_amount : ((inv.amount || 0) - (inv.paid_amount || 0))) + '\n';
+          out += 'Date: ' + esc(inv.invoice_date || '') + '\n';
+          out += 'Due: ' + esc(inv.due_date || '-') + '\n';
+          out += 'Status: ' + esc(inv.status || '') + '\n';
+          out += 'Notes: ' + esc(inv.notes || inv.description || '');
+          alert(out);
+        } else {
+          alert('Invoice not found');
+        }
+      },
+      error: function() { alert('Failed to load invoice details'); }
+    });
+  };
+
+  window.editInvoice = function(invoiceId) {
+    if (!invoiceId) return alert('Invalid invoice id');
+    const url = Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_invoice_detail&invoice_id=' + encodeURIComponent(invoiceId);
+    $.ajax({
+      url: url,
+      method: 'GET',
+      dataType: 'json',
+      success: function(data) {
+        if (data && parseInt(data.status || 0) === 200 && data.invoice) {
+          const inv = data.invoice;
+          $('#createInvoiceModal').modal('show');
+          if (inv.purchase_id) {
+            if ($purchaseSel.find('option[value="'+inv.purchase_id+'"]').length === 0) {
+              $purchaseSel.append('<option value="'+inv.purchase_id+'">Purchase ' + inv.purchase_id + '</option>');
+            }
+            $purchaseSel.val(inv.purchase_id).trigger('change');
+          }
+          $('#invoice_type_select').val(inv.invoice_type || '').trigger('change');
+          $('#invoice_amount').val((parseFloat(inv.amount || 0)).toFixed(2));
+          $('#invoice_date').val(inv.invoice_date || '');
+          $('#invoice_due_date').val(inv.due_date || '');
+          $('#invoice_description').val(inv.description || inv.notes || '');
+          $('#createInvoiceModal').data('editInvoiceId', inv.id);
+          alert('Invoice loaded into Create modal. Submitting will create a NEW invoice unless an update endpoint is implemented on the backend.');
+        } else {
+          alert('Invoice not found for editing');
+        }
+      },
+      error: function() { alert('Failed to load invoice for edit'); }
+    });
+  };
+
+  window.recordInvoicePayment = function(invoiceId) {
+    if (!invoiceId) return alert('Invalid invoice id');
+    const detailUrl = Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_invoice_detail&invoice_id=' + encodeURIComponent(invoiceId);
+    $.ajax({
+      url: detailUrl,
+      method: 'GET',
+      dataType: 'json',
+      success: function(data) {
+        if (!data || parseInt(data.status || 0) !== 200 || !data.invoice) return alert('Invoice not found');
+        const inv = data.invoice;
+        const purchaseId = inv.purchase_id || $purchaseSel.val() || '';
+
+        const unpaid = (parseFloat(inv.amount || 0) - parseFloat(inv.paid_amount || 0)) || 0;
+        const sAmount = prompt('Enter payment amount (remaining: ' + formatMoney(unpaid) + ')', unpaid.toFixed(2));
+        if (sAmount === null) return;
+        const amount = parseFloat(sAmount);
+        if (isNaN(amount) || amount <= 0) return alert('Invalid amount');
+
+        const method = prompt('Payment method (cash, bkash, bank...)', 'cash') || 'cash';
+        const reference = prompt('Reference (optional)', '') || '';
+        const notes = prompt('Notes (optional)', '') || '';
+
+        // prepare POST body (jQuery will encode arrays correctly for invoice_ids[])
+        const body = {
+          purchase_id: purchaseId,
+          amount: amount,
+          payment_date: (new Date()).toISOString().slice(0,10),
+          payment_method: method,
+          reference: reference,
+          notes: notes,
+          'invoice_ids[]': [invoiceId]
+        };
+
+        const postUrl = Wo_Ajax_Requests_File() + '?f=manage_inventory&s=record_payment';
+        $.ajax({
+          url: postUrl,
+          method: 'POST',
+          dataType: 'json',
+          data: body,
+          success: function(resp) {
+            if (resp && parseInt(resp.status || 0) === 200) {
+              alert('Payment recorded. Receipt: ' + (resp.receipt_number || resp.receipt_id || 'N/A'));
+              loadInvoices();
+            } else {
+              alert('Failed to record payment: ' + (resp && resp.message ? resp.message : 'unknown'));
+            }
+          },
+          error: function() { alert('Error recording payment'); }
+        });
+      },
+      error: function() { alert('Failed to fetch invoice details'); }
+    });
+  };
+
+  // init on load
+  initClientSelect2();
+  clearInvoicesPlaceholder();
+
+  // prefill from page-level ui_purchase_id / ui_client_id if present
+  const prePurchase = $('#ui_purchase_id').val();
+  const preClient = ($('#ui_client_id').length ? $('#ui_client_id').val() : '');
+  if (preClient) {
+    $clientIdHidden.val(preClient);
+    // if client id only is provided (no select2 option), just directly load invoices by client_id
+    loadInvoices();
+  } else if (prePurchase) {
+    $purchaseSel.append('<option value="'+prePurchase+'">Purchase '+prePurchase+'</option>');
+    $purchaseSel.val(prePurchase);
+    loadInvoices();
   }
 });
 
-// Global functions
-function viewInvoice(invoiceId) {
-  console.log('[v0] Viewing invoice:', invoiceId);
-}
-
-function editInvoice(invoiceId) {
-  console.log('[v0] Editing invoice:', invoiceId);
-}
-
-function recordInvoicePayment(invoiceId) {
-  console.log('[v0] Recording payment for invoice:', invoiceId);
-}
+// Bulk Operations for Invoices Tab
+$(document).ready(function() {
+  var selectedInvoices = [];
+  
+  // Quick Filter Handlers
+  $('.quick-filter').on('click', function() {
+    var filter = $(this).data('filter');
+    var today = new Date();
+    var fromDate, toDate;
+    
+    switch(filter) {
+      case 'this_month':
+        fromDate = new Date(today.getFullYear(), today.getMonth(), 1);
+        toDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        break;
+      case 'last_month':
+        fromDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        toDate = new Date(today.getFullYear(), today.getMonth(), 0);
+        break;
+      case 'this_quarter':
+        var quarter = Math.floor(today.getMonth() / 3);
+        fromDate = new Date(today.getFullYear(), quarter * 3, 1);
+        toDate = new Date(today.getFullYear(), quarter * 3 + 3, 0);
+        break;
+      case 'overdue':
+        $('#invoice_filter_status').val('overdue');
+        $('#btn_invoice_apply_filter').click();
+        return;
+      case 'pending':
+        $('#invoice_filter_status').val('partial');
+        $('#btn_invoice_apply_filter').click();
+        return;
+    }
+    
+    if (fromDate && toDate) {
+      $('#invoice_filter_from').val(formatDate(fromDate));
+      $('#invoice_filter_to').val(formatDate(toDate));
+      $('#btn_invoice_apply_filter').click();
+    }
+  });
+  
+  function formatDate(date) {
+    return date.getFullYear() + '-' + 
+           String(date.getMonth() + 1).padStart(2, '0') + '-' + 
+           String(date.getDate()).padStart(2, '0');
+  }
+  
+  // Bulk Selection
+  $(document).on('change', '.invoice-checkbox', function() {
+    var invoiceId = $(this).val();
+    if ($(this).is(':checked')) {
+      selectedInvoices.push(invoiceId);
+    } else {
+      selectedInvoices = selectedInvoices.filter(id => id !== invoiceId);
+    }
+    updateBulkBar();
+  });
+  
+  function updateBulkBar() {
+    if (selectedInvoices.length > 0) {
+      $('#invoice_selected_count').text(selectedInvoices.length);
+      $('#invoice_bulk_operations').show();
+    } else {
+      $('#invoice_bulk_operations').hide();
+    }
+  }
+  
+  // Bulk Export PDF
+  $('#btn_bulk_export_pdf').on('click', function() {
+    if (selectedInvoices.length === 0) {
+      alert('Please select invoices first');
+      return;
+    }
+    
+    $(this).prop('disabled', true).html('<i class="lni lni-spinner-arrow lni-spin"></i> Exporting...');
+    
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=bulk_export_invoices_pdf', {
+      invoice_ids: selectedInvoices.join(',')
+    })
+    .done(function(resp) {
+      var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+      if (data.status === 200) {
+        alert(data.message);
+        if (data.download_url) {
+          window.open(data.download_url, '_blank');
+        }
+      } else {
+        alert(data.message || 'Export failed');
+      }
+    })
+    .fail(function() {
+      alert('Server error during export');
+    })
+    .always(function() {
+      $('#btn_bulk_export_pdf').prop('disabled', false).html('<i class="lni lni-download"></i> Export PDF');
+    });
+  });
+  
+  // Bulk Export Excel
+  $('#btn_bulk_export_excel').on('click', function() {
+    if (selectedInvoices.length === 0) {
+      alert('Please select invoices first');
+      return;
+    }
+    
+    $(this).prop('disabled', true).html('<i class="lni lni-spinner-arrow lni-spin"></i> Exporting...');
+    
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=bulk_export_invoices_excel', {
+      invoice_ids: selectedInvoices.join(',')
+    })
+    .done(function(resp) {
+      var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+      if (data.status === 200) {
+        alert(data.message);
+        if (data.download_url) {
+          window.open(data.download_url, '_blank');
+        }
+      } else {
+        alert(data.message || 'Export failed');
+      }
+    })
+    .fail(function() {
+      alert('Server error during export');
+    })
+    .always(function() {
+      $('#btn_bulk_export_excel').prop('disabled', false).html('<i class="lni lni-file-excel"></i> Export Excel');
+    });
+  });
+  
+  // Bulk Send Emails
+  $('#btn_bulk_send_email').on('click', function() {
+    if (selectedInvoices.length === 0) {
+      alert('Please select invoices first');
+      return;
+    }
+    
+    if (!confirm('Send invoice emails to ' + selectedInvoices.length + ' clients?')) {
+      return;
+    }
+    
+    $(this).prop('disabled', true).html('<i class="lni lni-spinner-arrow lni-spin"></i> Sending...');
+    
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=bulk_send_invoice_emails', {
+      invoice_ids: selectedInvoices.join(',')
+    })
+    .done(function(resp) {
+      var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+      if (data.status === 200) {
+        alert(data.message + '\nQueued: ' + data.queued + '\nFailed: ' + data.failed);
+      } else {
+        alert(data.message || 'Send failed');
+      }
+    })
+    .fail(function() {
+      alert('Server error during send');
+    })
+    .always(function() {
+      $('#btn_bulk_send_email').prop('disabled', false).html('<i class="lni lni-envelope"></i> Send Emails');
+    });
+  });
+  
+  // Bulk Void
+  $('#btn_bulk_void').on('click', function() {
+    if (selectedInvoices.length === 0) {
+      alert('Please select invoices first');
+      return;
+    }
+    
+    var reason = prompt('Reason for voiding ' + selectedInvoices.length + ' invoices:');
+    if (!reason) return;
+    
+    $(this).prop('disabled', true).html('<i class="lni lni-spinner-arrow lni-spin"></i> Voiding...');
+    
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=bulk_void_invoices', {
+      invoice_ids: selectedInvoices.join(','),
+      reason: reason
+    })
+    .done(function(resp) {
+      var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+      if (data.status === 200) {
+        alert(data.message);
+        selectedInvoices = [];
+        updateBulkBar();
+        // Reload invoices table
+        if (typeof loadInvoices === 'function') {
+          loadInvoices();
+        }
+      } else {
+        alert(data.message || 'Void failed');
+      }
+    })
+    .fail(function() {
+      alert('Server error during void');
+    })
+    .always(function() {
+      $('#btn_bulk_void').prop('disabled', false).html('<i class="lni lni-trash"></i> Void Selected');
+    });
+  });
+});
 </script>

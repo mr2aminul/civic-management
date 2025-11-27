@@ -5,53 +5,77 @@
  */
 
 header('Content-Type: application/json; charset=utf-8');
+    // Merges
+    if ($s == 'create_merge_request' || $s == 'request_purchase_merge') {
+        try {
+            $client_id = isset($_POST['client_id']) ? intval($_POST['client_id']) : 0;
+            $source_purchase_id = isset($_POST['source_purchase_id']) ? intval($_POST['source_purchase_id']) : 0;
+            $target_purchase_id = isset($_POST['target_purchase_id']) ? intval($_POST['target_purchase_id']) : 0;
 
-if ($s === 'create_merge_request') {
-    try {
-        $client_id = isset($_POST['client_id']) ? intval($_POST['client_id']) : 0;
-        $source_purchase_id = isset($_POST['source_purchase_id']) ? intval($_POST['source_purchase_id']) : 0;
-        $target_purchase_id = isset($_POST['target_purchase_id']) ? intval($_POST['target_purchase_id']) : 0;
+            if (!$client_id || !$source_purchase_id || !$target_purchase_id) {
+                echo json_encode(['status' => 400, 'message' => 'All fields required']);
+                exit;
+            }
 
-        if (!$client_id || !$source_purchase_id || !$target_purchase_id) {
-            echo json_encode(['status' => 400, 'message' => 'All fields required']);
+            // Verify both purchases belong to same client
+            $db->where('id', $source_purchase_id);
+            $source = $db->getOne(T_BOOKING_HELPER);
+            
+            $db->where('id', $target_purchase_id);
+            $target = $db->getOne(T_BOOKING_HELPER);
+
+            if (!$source || !$target || $source->client_id != $client_id || $target->client_id != $client_id) {
+                echo json_encode(['status' => 400, 'message' => 'Invalid purchase ownership']);
+                exit;
+            }
+
+            // Check for existing pending merge request
+            $db->where('source_purchase_id', $source_purchase_id);
+            $db->where('target_purchase_id', $target_purchase_id);
+            $db->where('approval_status', 'pending');
+            if ($db->getValue('crm_merge_requests', 'count(*)') > 0) {
+                echo json_encode(['status' => 400, 'message' => 'A pending merge request already exists for these purchases']);
+                exit;
+            }
+
+            $merge_paid_amount = isset($_POST['merge_paid_amount']) ? intval($_POST['merge_paid_amount']) : 0;
+            $merge_payment_schedule = isset($_POST['merge_payment_schedule']) ? intval($_POST['merge_payment_schedule']) : 0;
+            $merge_invoices = isset($_POST['merge_invoices']) ? intval($_POST['merge_invoices']) : 0;
+            $merge_reason = isset($_POST['merge_reason']) ? Wo_Secure($_POST['merge_reason']) : '';
+
+            $data = [
+                'client_id' => $client_id,
+                'source_purchase_id' => $source_purchase_id,
+                'target_purchase_id' => $target_purchase_id,
+                'merge_reason' => $merge_reason,
+                'merge_paid_amount' => $merge_paid_amount,
+                'merge_payment_schedule' => $merge_payment_schedule,
+                'merge_credits' => $merge_invoices, // Mapping invoices to credits as per schema
+                'reschedule_payments' => 0, // Default
+                'approval_status' => 'pending',
+                'created_at' => date('Y-m-d H:i:s')
+            ];
+
+            $id = $db->insert('crm_merge_requests', $data);
+
+            if ($id) {
+                // Trigger pending actions badge
+                $db->where('id', $source_purchase_id)->update(T_BOOKING_HELPER, ['has_pending_changes' => 1]);
+                $db->where('id', $target_purchase_id)->update(T_BOOKING_HELPER, ['has_pending_changes' => 1]);
+                
+                echo json_encode(['status' => 200, 'message' => 'Merge request created', 'merge_id' => $id]);
+            } else {
+                echo json_encode(['status' => 500, 'message' => 'Failed to create merge request']);
+            }
+            exit;
+        } catch (Exception $e) {
+            echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
             exit;
         }
-
-        // Verify both purchases belong to same client
-        $db->where('id', $source_purchase_id);
-        $source = $db->getOne(T_BOOKING_HELPER);
-        
-        $db->where('id', $target_purchase_id);
-        $target = $db->getOne(T_BOOKING_HELPER);
-
-        if (!$source || !$target || $source->customer_id != $client_id || $target->customer_id != $client_id) {
-            echo json_encode(['status' => 400, 'message' => 'Invalid purchase ownership']);
-            exit;
-        }
-
-        $data = [
-            'client_id' => $client_id,
-            'source_purchase_id' => $source_purchase_id,
-            'target_purchase_id' => $target_purchase_id,
-            'approval_status' => 'pending',
-            'created_at' => date('Y-m-d H:i:s')
-        ];
-
-        $id = $db->insert('crm_merge_requests', $data);
-
-        if ($id) {
-            echo json_encode(['status' => 200, 'message' => 'Merge request created', 'merge_id' => $id]);
-        } else {
-            echo json_encode(['status' => 500, 'message' => 'Failed to create merge request']);
-        }
-        exit;
-    } catch (Exception $e) {
-        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
-        exit;
     }
-}
 
-if ($s === 'get_merge_requests') {
+   // Emails
+if ($s == 'get_merge_requests') {
     try {
         $approval_status = isset($_GET['status']) ? Wo_Secure($_GET['status']) : '';
         
@@ -83,7 +107,8 @@ if ($s === 'get_merge_requests') {
     }
 }
 
-if ($s === 'approve_merge') {
+   // Cancellations
+if ($s == 'approve_merge') {
     try {
         $merge_id = isset($_POST['merge_id']) ? intval($_POST['merge_id']) : 0;
         
@@ -110,12 +135,20 @@ if ($s === 'approve_merge') {
 
         try {
             // Update merge status
-            $db->where('id', $merge_id);
-            $db->update('crm_merge_requests', [
+            $review_notes = isset($_POST['review_notes']) ? Wo_Secure($_POST['review_notes']) : (isset($_POST['notes']) ? Wo_Secure($_POST['notes']) : null);
+            
+            $update_data = [
                 'approval_status' => 'approved',
                 'approved_by' => $wo['user_id'] ?? 0,
                 'updated_at' => date('Y-m-d H:i:s')
-            ]);
+            ];
+            
+            if ($review_notes) {
+                $update_data['review_notes'] = $review_notes;
+            }
+
+            $db->where('id', $merge_id);
+            $db->update('crm_merge_requests', $update_data);
 
             // Transfer all invoices from source to target
             $db->where('purchase_id', $merge->source_purchase_id);

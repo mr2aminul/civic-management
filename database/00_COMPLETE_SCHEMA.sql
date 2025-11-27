@@ -85,35 +85,51 @@ CREATE TABLE IF NOT EXISTS `wo_booking` (
   KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
-CREATE TABLE IF NOT EXISTS `wo_booking_helper` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
+
+CREATE TABLE `wo_booking_helper` (
+  `id` int(11) NOT NULL,
   `booking_id` int(11) NOT NULL DEFAULT 0,
   `client_id` varchar(32) NOT NULL DEFAULT '0',
   `file_num` varchar(32) DEFAULT NULL,
-  `status` varchar(32) NOT NULL DEFAULT '0' COMMENT '0=available, 1=available, 2=sold, 3=complete, 4=cancelled',
+  `status` varchar(32) NOT NULL DEFAULT '0' COMMENT '0 or 1=avillable, 2=sold, 3=complete, 4=canceled',
   `time` int(11) NOT NULL,
   `updated_at` int(11) NOT NULL,
-  `nominee_ids` longtext DEFAULT NULL COMMENT 'JSON array of crm_nominees ids',
+  `nominee_ids` longtext DEFAULT NULL COMMENT 'JSON array of crm_nominees ids, e.g. [23,45]',
   `per_katha` decimal(12,2) DEFAULT NULL,
+  `monthly_amount` decimal(12,2) DEFAULT NULL,
+  `yearly_adjustment` decimal(12,2) NOT NULL DEFAULT 0.00,
+  `start_date` varchar(120) DEFAULT NULL,
+  `installment_start_option` varchar(32) DEFAULT NULL,
+  `mode_of_payment` varchar(32) NOT NULL,
   `booking_money` decimal(12,2) NOT NULL,
   `booking_due_date` varchar(120) NOT NULL,
   `booking_payment_date` varchar(120) NOT NULL,
   `down_payment` decimal(12,2) NOT NULL,
   `down_due_date` varchar(120) NOT NULL,
   `down_payment_date` varchar(120) NOT NULL,
-  `installment` longtext DEFAULT NULL,
+  `installment_count` int(11) DEFAULT NULL,
+  `default_installments` int(11) DEFAULT 60,
+  `adjustment_type` varchar(64) NOT NULL DEFAULT 'year_end',
   `cancel_date` int(11) DEFAULT 0,
-  `has_pending_changes` tinyint(1) NOT NULL DEFAULT 0,
-  `transfer_history_id` int(11) DEFAULT NULL,
-  `is_transferred` tinyint(1) NOT NULL DEFAULT 0,
-  `transfer_source_type` enum('original','name_transfer','plot_transfer') DEFAULT 'original',
-  PRIMARY KEY (`id`),
-  KEY `idx_booking_id` (`booking_id`),
-  KEY `idx_client_id` (`client_id`),
-  KEY `idx_status` (`status`),
-  KEY `idx_pending_changes` (`has_pending_changes`),
-  KEY `idx_transferred` (`is_transferred`)
+  `transfer_history_id` int(11) DEFAULT NULL COMMENT 'Latest transfer record ID',
+  `is_transferred` tinyint(1) NOT NULL DEFAULT 0 COMMENT '0=original, 1=transferred in/out',
+  `transfer_source_type` enum('original','name_transfer','plot_transfer') DEFAULT 'original' COMMENT 'How this purchase was acquired',
+  `has_pending_changes` tinyint(4) NOT NULL DEFAULT 0 COMMENT 'Flag for quick check for is there are any pending changes'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
+
+ALTER TABLE `wo_booking_helper`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `booking_id` (`booking_id`),
+  ADD KEY `file_id` (`client_id`),
+  ADD KEY `status` (`status`),
+  ADD KEY `idx_transfer_history` (`transfer_history_id`),
+  ADD KEY `idx_is_transferred` (`is_transferred`),
+  ADD KEY `idx_transfer_source` (`transfer_source_type`),
+  ADD KEY `idx_pending_changes` (`has_pending_changes`) USING BTREE;
+
+ALTER TABLE `wo_booking_helper`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+COMMIT;
 
 -- ========================================
 -- 2. PAYMENT SCHEDULE TABLE
@@ -596,6 +612,15 @@ CREATE TABLE IF NOT EXISTS `crm_purchase_merge_history` (
   PRIMARY KEY (`id`),
   KEY `idx_merge_request` (`merge_request_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE `wo_payment_transactions` (
+  `id` int(10) UNSIGNED NOT NULL,
+  `userid` int(10) UNSIGNED NOT NULL,
+  `kind` varchar(100) NOT NULL,
+  `amount` decimal(11,0) UNSIGNED NOT NULL,
+  `transaction_dt` timestamp NOT NULL DEFAULT current_timestamp(),
+  `notes` text NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
 
 -- ========================================
 -- INDEXES FOR COMMON QUERIES

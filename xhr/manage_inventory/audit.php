@@ -23,39 +23,74 @@ if ($s === 'get_audit_trail') {
             exit;
         }
 
-        $where = [];
-        if ($purchase_id) $where['purchase_id'] = $purchase_id;
-        if ($client_id) $where['client_id'] = $client_id;
-        if ($category) $where['action_category'] = $category;
-        if ($action_type) $where['action_type'] = $action_type;
 
+        // Build where conditions
+        if ($purchase_id) {
+            $db->where('purchase_id', $purchase_id);
+        }
+        if ($client_id) {
+            $db->where('client_id', $client_id);
+        }
+        if ($category) {
+            $db->where('action_category', $category);
+        }
+        if ($action_type) {
+            $db->where('action_type', $action_type);
+        }
         if ($date_from) {
-            $db->where('timestamp', $date_from . ' 00:00:00', '>=');
+            $db->where('performed_at', $date_from . ' 00:00:00', '>=');
         }
         if ($date_to) {
-            $db->where('timestamp', $date_to . ' 23:59:59', '<=');
+            $db->where('performed_at', $date_to . ' 23:59:59', '<=');
         }
 
-        $db->orderBy('timestamp', 'DESC');
-        $total = $db->where($where)->getValue('crm_audit_trail', 'count(*)');
+        $db->orderBy('performed_at', 'DESC');
+        $total = $db->getValue('crm_audit_trail', 'count(*)');
         
-        $logs = $db->where($where)
-            ->orderBy('timestamp', 'DESC')
-            ->limit($limit, $offset)
-            ->get('crm_audit_trail');
+        // Rebuild where conditions for second query
+        if ($purchase_id) {
+            $db->where('purchase_id', $purchase_id);
+        }
+        if ($client_id) {
+            $db->where('client_id', $client_id);
+        }
+        if ($category) {
+            $db->where('action_category', $category);
+        }
+        if ($action_type) {
+            $db->where('action_type', $action_type);
+        }
+        if ($date_from) {
+            $db->where('performed_at', $date_from . ' 00:00:00', '>=');
+        }
+        if ($date_to) {
+            $db->where('performed_at', $date_to . ' 23:59:59', '<=');
+        }
+
+        $db->orderBy('performed_at', 'DESC');
+        
+        $logs = $db->orderBy('performed_at', 'DESC')
+            ->get('crm_audit_trail', [$offset, $limit]);
 
         $result = [];
         if (!empty($logs)) {
             foreach ($logs as $log) {
                 $result[] = [
                     'id' => $log->id,
-                    'action_type' => $log->action_type,
-                    'category' => $log->action_category,
-                    'description' => $log->description,
-                    'timestamp' => $log->timestamp,
-                    'performed_by' => $log->performed_by,
-                    'before_value' => $log->before_value,
-                    'after_value' => $log->after_value
+                    'action' => $log->action_type ?? '',
+                    'action_type' => $log->action_type ?? '',
+                    'category' => $log->action_category ?? '',
+                    'action_category' => $log->action_category ?? '',
+                    'description' => $log->action_description ?? '',
+                    'performed_at' => $log->performed_at ?? '',
+                    'created_at' => $log->performed_at ?? '',
+                    'timestamp' => $log->performed_at ?? '',
+                    'performed_by' => $log->performed_by ?? 0,
+                    'performed_by_name' => 'User #' . ($log->performed_by ?? 0),
+                    'changed_by_name' => 'User #' . ($log->performed_by ?? 0),
+                    'before_values' => $log->before_values ?? '',
+                    'after_values' => $log->after_values ?? '',
+                    'purchase_id' => $log->purchase_id ?? 0
                 ];
             }
         }

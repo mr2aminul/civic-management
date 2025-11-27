@@ -1,5 +1,5 @@
 <?php
-// update_installment_modal.phtml
+// update_installment_modal.phtml (fixed - balanced tags)
 $schedule_config = [
   'mode' => 'normal',
   'per-row' => 'normal',
@@ -11,172 +11,304 @@ $schedule_config = [
   'interest_default' => 3
 ];
 ?>
-<!-- /home/civicbd/civicgroup/manage/pages/clients/update_installment_modal.phtml -->
+<!-- /home/civicbd/civicgroup/manage/pages/clients/update_installment_modal.phtml (fixed) -->
 <div class="modal fade full_screen always" id="updateInstallmentModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-centered">
     <div class="modal-content border-0 shadow-lg">
-      <div class="modal-header bg-gradient-success text-white border-0 d-flex align-items-center">
-        <h5 class="modal-title mb-0">
-          <i class="lni lni-dollar me-2"></i>Payment Schedule — <span id="ui_project_name"></span>
-        </h5>
-        <div class="ms-3" id="ui_pending_badge_container" style="display:none;">
-          <span id="ui_pending_badge" class="badge bg-warning text-dark" style="cursor:pointer;" title="Click to view pending changes">
-            <i class="lni lni-hourglass me-1"></i>
-            <span id="ui_pending_count">0</span> Pending
-          </span>
+
+      <!-- Modal Header with Tabs -->
+      <div class="modal-header bg-gradient-success text-white border-0 p-0 d-block">
+        <div class="d-flex align-items-center p-3">
+          <h5 class="modal-title mb-0">
+            <i class="lni lni-dollar me-2"></i>Payment Schedule — <span id="ui_project_name"></span>
+          </h5>
+          <div class="ms-3" id="ui_pending_badge_container" style="display:none;">
+            <span id="ui_pending_badge" class="badge bg-warning text-dark" style="cursor:pointer;" title="Click to view pending changes">
+              <i class="lni lni-hourglass me-1"></i>
+              <span id="ui_pending_count">0</span> Pending
+            </span>
+          </div>
+          <div class="ms-auto d-flex gap-2">
+            <button id="ui_help_btn" type="button" class="btn btn-sm btn-outline-light" title="Help">?</button>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
         </div>
-        <div class="ms-3">
-          <button id="ui_help_btn" type="button" class="btn btn-sm btn-outline-light" title="Help">?</button>
-        </div>
-        <div class="ms-auto">
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+
+        <!-- Tab Navigation -->
+        <div class="nav nav-tabs border-bottom-0 px-3" role="tablist" style="background:rgba(255,255,255,0.1);">
+          <button class="nav-link active text-white" id="tab-schedule-btn" data-bs-toggle="tab" data-bs-target="#tab-schedule" type="button" role="tab" style="border:none; background:transparent; opacity:0.9;">
+            <i class="lni lni-calendar me-1"></i>Schedule
+          </button>
+          <button class="nav-link text-white" id="tab-reschedule-btn" data-bs-toggle="tab" data-bs-target="#tab-reschedule" type="button" role="tab" style="border:none; background:transparent; opacity:0.8;">
+            <i class="lni lni-reload me-1"></i>Reschedule
+          </button>
+          <button class="nav-link text-white" id="tab-pending-btn" data-bs-toggle="tab" data-bs-target="#tab-pending" type="button" role="tab" style="border:none; background:transparent; opacity:0.8;">
+            <i class="lni lni-hourglass me-1"></i>Pending
+            <span id="pending-count-badge" class="badge bg-warning text-dark ms-1" style="display:none;">0</span>
+          </button>
+          <button class="nav-link text-white" id="tab-invoices-btn" data-bs-toggle="tab" data-bs-target="#tab-invoices" type="button" role="tab" style="border:none; background:transparent; opacity:0.8;">
+            <i class="lni lni-document me-1"></i>Invoices
+          </button>
+          <button class="nav-link text-white" id="tab-emails-btn" data-bs-toggle="tab" data-bs-target="#tab-emails" type="button" role="tab" style="border:none; background:transparent; opacity:0.8;">
+            <i class="lni lni-email me-1"></i>Emails
+            <span id="email-pending-badge" class="badge bg-danger ms-1" style="display:none;">0</span>
+          </button>
+          <button class="nav-link text-white" id="tab-audit-btn" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button" role="tab" style="border:none; background:transparent; opacity:0.8;">
+            <i class="lni lni-list me-1"></i>Audit
+          </button>
         </div>
       </div>
 
-      <div class="modal-body p-4">
-        <input type="hidden" id="ui_purchase_id" value="">
-        <input type="hidden" id="ui_unsaved_changes" value="0">
+      <!-- TAB CONTENT: sibling of modal-header -->
+      <div class="tab-content">
 
-        <!-- Summary -->
-        <div class="row g-3 mb-4">
-          <div class="col-md-2"><div class="card bg-primary text-white h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Total Price</small><div class="h6 mb-0">৳<span id="ui_total_price">0</span></div></div></div></div>
-          <div class="col-md-2"><div class="card bg-info text-white h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Booking Money</small><div class="h6 mb-0">৳<span id="ui_booking_money">0</span></div></div></div></div>
-          <div class="col-md-2"><div class="card bg-warning text-white h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Down Payment</small><div class="h6 mb-0">৳<span id="ui_down_payment">0</span></div></div></div></div>
-          <div class="col-md-2"><div class="card bg-secondary text-white h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Remaining</small><div class="h6 mb-0">৳<span id="ui_remaining">0</span></div></div></div></div>
-          <div class="col-md-2"><div class="card bg-light text-dark h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Total Overdue</small><div class="h6 mb-0 text-danger">৳<span id="ui_total_overdue">0</span></div></div></div></div>
-          <div class="col-md-2"><div class="card bg-light text-dark h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Total Overpayment</small><div class="h6 mb-0 text-success">৳<span id="ui_total_overpayment">0</span></div></div></div></div>
-        </div>
+        <!-- TAB 1: Payment Schedule (Original Content) -->
+        <div class="tab-pane fade show active" id="tab-schedule" role="tabpanel">
+          <div class="modal-body p-4">
+            <input type="hidden" id="ui_purchase_id" value="">
+            <input type="hidden" id="ui_unsaved_changes" value="0">
 
-        <!-- Status + change toggle -->
-        <div class="row mb-4">
-          <div class="col-md-6 d-flex align-items-center gap-3">
-            <label class="form-label mb-0 fw-medium">Schedule Status:</label>
-            <div class="btn-group" role="group">
-              <input type="radio" class="btn-check" name="schedule_status" id="schedule_all" value="all" checked>
-              <label class="btn btn-outline-secondary btn-sm" for="schedule_all"><i class="lni lni-list me-1"></i>All</label>
-              <input type="radio" class="btn-check" name="schedule_status" id="schedule_unpaid" value="unpaid">
-              <label class="btn btn-outline-warning btn-sm" for="schedule_unpaid"><i class="lni lni-time me-1"></i>Unpaid</label>
-              <input type="radio" class="btn-check" name="schedule_status" id="schedule_paid" value="paid">
-              <label class="btn btn-outline-success btn-sm" for="schedule_paid"><i class="lni lni-checkmark me-1"></i>Paid</label>
+            <!-- Summary -->
+            <div class="row g-3 mb-4">
+              <div class="col-md-2"><div class="card bg-primary text-white h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Total Price</small><div class="h6 mb-0">৳<span id="ui_total_price">0</span></div></div></div></div>
+              <div class="col-md-2"><div class="card bg-info text-white h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Booking Money</small><div class="h6 mb-0">৳<span id="ui_booking_money">0</span></div></div></div></div>
+              <div class="col-md-2"><div class="card bg-warning text-white h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Down Payment</small><div class="h6 mb-0">৳<span id="ui_down_payment">0</span></div></div></div></div>
+              <div class="col-md-2"><div class="card bg-secondary text-white h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Remaining</small><div class="h6 mb-0">৳<span id="ui_remaining">0</span></div></div></div></div>
+              <div class="col-md-2"><div class="card bg-light text-dark h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Total Overdue</small><div class="h6 mb-0 text-danger">৳<span id="ui_total_overdue">0</span></div></div></div></div>
+              <div class="col-md-2"><div class="card bg-light text-dark h-100"><div class="card-body p-3 text-center"><small class="opacity-75">Total Overpayment</small><div class="h6 mb-0 text-success">৳<span id="ui_total_overpayment">0</span></div></div></div></div>
             </div>
-          </div>
-          <div class="col-md-6 text-end">
-            <button class="btn btn-outline-secondary btn-sm" id="ui_change_schedule" style="display:none;"><i class="lni lni-edit me-1"></i>Change Schedule</button>
-          </div>
-        </div>
 
-        <!-- Payment Configuration -->
-        <div id="ui_configuration_section" class="card border-0 shadow-sm mb-4">
-          <div class="card-header bg-light border-0"><h6 class="mb-0 fw-semibold">Payment Configuration (from booking helper)</h6></div>
-          <div class="card-body">
-            <div class="row g-3">
-              <div class="col-md-3">
-                <label class="form-label fw-medium">Mode of Payment</label>
-                <select id="ui_mode" class="form-control"><option value="1">Full Payment</option><option value="2">Installment</option></select>
+            <!-- Status + change toggle -->
+            <div class="row mb-4">
+              <div class="col-md-6 d-flex align-items-center gap-3">
+                <label class="form-label mb-0 fw-medium">Schedule Status:</label>
+                <div class="btn-group" role="group">
+                  <input type="radio" class="btn-check" name="schedule_status" id="schedule_all" value="all" checked>
+                  <label class="btn btn-outline-secondary btn-sm" for="schedule_all"><i class="lni lni-list me-1"></i>All</label>
+                  <input type="radio" class="btn-check" name="schedule_status" id="schedule_unpaid" value="unpaid">
+                  <label class="btn btn-outline-warning btn-sm" for="schedule_unpaid"><i class="lni lni-time me-1"></i>Unpaid</label>
+                  <input type="radio" class="btn-check" name="schedule_status" id="schedule_paid" value="paid">
+                  <label class="btn btn-outline-success btn-sm" for="schedule_paid"><i class="lni lni-checkmark me-1"></i>Paid</label>
+                </div>
               </div>
+              <div class="col-md-6 text-end">
+                <button class="btn btn-outline-secondary btn-sm" id="ui_change_schedule" style="display:none;"><i class="lni lni-edit me-1"></i>Change Schedule</button>
+              </div>
+            </div>
 
-              <div id="ui_installment_controls" class="col-md-9">
+            <!-- Payment Configuration -->
+            <div id="ui_configuration_section" class="card border-0 shadow-sm mb-4">
+              <div class="card-header bg-light border-0"><h6 class="mb-0 fw-semibold">Payment Configuration (from booking helper)</h6></div>
+              <div class="card-body">
                 <div class="row g-3">
-                  <div class="col-md-2"><label class="form-label fw-medium">Installments</label><input type="number" id="ui_installments" class="form-control" min="1" value="60" step="1"></div>
-                  <div class="col-md-3"><label class="form-label fw-medium">Adjustment Type</label><select id="ui_adjustment_type" class="form-control"><option value="year_start">Year — Start</option><option value="year_middle">Year — Middle</option><option value="year_end">Year — End</option><option value="year_quarterly">Year — Quaterly</option><option value="custom">Custom (no yearly auto)</option></select></div>
-                  <div class="col-md-3"><label class="form-label fw-medium">Monthly Amount <small class="text-muted">(optional)</small></label><input type="number" id="ui_monthly_amount" class="form-control" placeholder="Auto-calc if empty" step="1"></div>
-                  <div class="col-md-2"><label class="form-label fw-medium">Yearly Adjustment</label><input type="number" id="ui_yearly_adjustment" class="form-control" placeholder="e.g. 50000" step="1"></div>
-                  <div class="col-md-2 d-flex align-items-end"><div class="btn-group w-100" role="group"><button class="btn btn-primary" id="ui_generate_schedule"><i class="lni lni-plus me-1"></i>Generate Schedule</button><button class="btn btn-outline-secondary" id="ui_reset_schedule"><i class="lni lni-refresh me-1"></i>Reset</button></div></div>
+                  <div class="col-md-3">
+                    <label class="form-label fw-medium">Mode of Payment</label>
+                    <select id="ui_mode" class="form-control"><option value="1">Full Payment</option><option value="2">Installment</option></select>
+                  </div>
 
-                  <div class="col-md-3"><label class="form-label fw-medium">Installment Start Date</label><input type="text" id="ui_start_date" class="form-control" placeholder="dd-mm-yyyy"></div>
-                  <div class="col-md-2"><label class="form-label fw-medium">Start Option</label><select id="ui_start_option" class="form-control"><option value="start">Start of month (1st)</option><option value="middle">Middle (15th)</option><option value="end">End of month (last day)</option><option value="exact">Exact (keep chosen day)</option></select></div>
-                  <div class="col-md-2"><label class="form-label fw-medium">Interest %</label>
-                    <select id="ui_interest_percent" class="form-control">
-                      <?php foreach($schedule_config['interest_defaults'] as $opt): ?>
-                        <option value="<?php echo intval($opt); ?>" <?php echo (intval($opt) === intval($schedule_config['interest_default'])) ? 'selected' : ''; ?>><?php echo intval($opt); ?>%</option>
-                      <?php endforeach; ?>
-                    </select>
-                    <small class="text-muted d-block">Flat percent applied to overdue amount. Skipped when paid ≥ <?php echo intval($schedule_config['paid_threshold_value']); ?>%.</small>
+                  <div id="ui_installment_controls" class="col-md-9">
+                    <div class="row g-3">
+                      <div class="col-md-2"><label class="form-label fw-medium">Installments</label><input type="number" id="ui_installments" class="form-control" min="1" value="60" step="1"></div>
+                      <div class="col-md-3"><label class="form-label fw-medium">Adjustment Type</label><select id="ui_adjustment_type" class="form-control"><option value="year_start">Year — Start</option><option value="year_middle">Year — Middle</option><option value="year_end">Year — End</option><option value="year_quarterly">Year — Quaterly</option><option value="custom">Custom (no yearly auto)</option></select></div>
+                      <div class="col-md-3"><label class="form-label fw-medium">Monthly Amount <small class="text-muted">(optional)</small></label><input type="number" id="ui_monthly_amount" class="form-control" placeholder="Auto-calc if empty" step="1"></div>
+                      <div class="col-md-2"><label class="form-label fw-medium">Yearly Adjustment</label><input type="number" id="ui_yearly_adjustment" class="form-control" placeholder="e.g. 50000" step="1"></div>
+                      <div class="col-md-2 d-flex align-items-end"><div class="btn-group w-100" role="group"><button class="btn btn-primary" id="ui_generate_schedule"><i class="lni lni-plus me-1"></i>Generate Schedule</button><button class="btn btn-outline-secondary" id="ui_reset_schedule"><i class="lni lni-refresh me-1"></i>Reset</button></div></div>
+
+                      <div class="col-md-3"><label class="form-label fw-medium">Installment Start Date</label><input type="text" id="ui_start_date" class="form-control" placeholder="dd-mm-yyyy"></div>
+                      <div class="col-md-2"><label class="form-label fw-medium">Start Option</label><select id="ui_start_option" class="form-control"><option value="start">Start of month (1st)</option><option value="middle">Middle (15th)</option><option value="end">End of month (last day)</option><option value="exact">Exact (keep chosen day)</option></select></div>
+                      <div class="col-md-2"><label class="form-label fw-medium">Interest %</label>
+                        <select id="ui_interest_percent" class="form-control">
+                          <?php foreach($schedule_config['interest_defaults'] as $opt): ?>
+                            <option value="<?php echo intval($opt); ?>" <?php echo (intval($opt) === intval($schedule_config['interest_default'])) ? 'selected' : ''; ?>><?php echo intval($opt); ?>%</option>
+                          <?php endforeach; ?>
+                        </select>
+                        <small class="text-muted d-block">Flat percent applied to overdue amount. Skipped when paid ≥ <?php echo intval($schedule_config['paid_threshold_value']); ?>%.</small>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        <!-- Schedule Table -->
-        <div class="card border-0 shadow-sm">
-          <div class="card-header bg-light border-0 d-flex justify-content-between align-items-center">
-            <h6 class="mb-0 fw-semibold">Payment Schedule</h6>
-            <div class="btn-group btn-group-sm" role="group">
-              <button type="button" class="btn btn-outline-success" id="ui_mark_all_paid"><i class="lni lni-checkmark me-1"></i>Mark All Paid</button>
-              <button type="button" class="btn btn-outline-warning" id="ui_mark_all_unpaid"><i class="lni lni-time me-1"></i>Mark All Unpaid</button>
-            </div>
-          </div>
+            <!-- Schedule Table -->
+            <div class="card border-0 shadow-sm">
+              <div class="card-header bg-light border-0 d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 fw-semibold">Payment Schedule</h6>
+                <div class="btn-group btn-group-sm" role="group">
+                  <button type="button" class="btn btn-outline-success" id="ui_mark_all_paid"><i class="lni lni-checkmark me-1"></i>Mark All Paid</button>
+                  <button type="button" class="btn btn-outline-warning" id="ui_mark_all_unpaid"><i class="lni lni-time me-1"></i>Mark All Unpaid</button>
+                </div>
+              </div>
 
-          <div class="card-body p-0">
-            <div class="table-responsive" style="overflow:auto;">
-              <table class="table table-hover mb-0" id="ui_schedule_table" style="min-width:1600px">
-                <thead class="table-light sticky-top">
-                  <tr>
-                    <th style="width:45px">#</th>
-                    <th style="min-width:160px">Particular</th>
-                    <th style="width:120px">Due Date</th>
-                    <th style="width:120px">Payment Date</th>
-                    <th style="width:140px">Payment Method</th>
-                    <th style="width:160px">Installment Amount (৳)</th>
-                    <th style="width:140px">Paid Amount (৳)</th>
-                    <th style="width:120px">Balance (৳)</th>
-                    <th style="width:120px">Over Due (৳)</th>
-                    <th style="width:120px">Overpayment (৳)</th>
-                    <th style="width:120px">Interest (৳)</th>
-                    <th style="width:140px">Money Receipt No</th>
-                    <th style="width:220px">Remarks</th>
-                    <th style="width:100px">Status</th>
-                    <th style="width:120px">Action</th>
-                  </tr>
-                </thead>
+              <div class="card-body p-0">
+                <div class="table-responsive" style="overflow:auto;">
+                  <table class="table table-hover mb-0" id="ui_schedule_table" style="min-width:1600px">
+                    <thead class="table-light sticky-top">
+                      <tr>
+                        <th style="width:45px">#</th>
+                        <th style="min-width:160px">Particular</th>
+                        <th style="width:120px">Due Date</th>
+                        <th style="width:120px">Payment Date</th>
+                        <th style="width:140px">Payment Method</th>
+                        <th style="width:160px">Installment Amount (৳)</th>
+                        <th style="width:140px">Paid Amount (৳)</th>
+                        <th style="width:120px">Balance (৳)</th>
+                        <th style="width:120px">Over Due (৳)</th>
+                        <th style="width:120px">Overpayment (৳)</th>
+                        <th style="width:120px">Interest (৳)</th>
+                        <th style="width:140px">Money Receipt No</th>
+                        <th style="width:220px">Remarks</th>
+                        <th style="width:100px">Status</th>
+                        <th style="width:120px">Action</th>
+                      </tr>
+                    </thead>
 
-                <tbody></tbody>
+                    <tbody></tbody>
 
-                <tfoot class="table-light">
-                  <tr class="fw-semibold">
-                    <td colspan="5">Total</td>
-                    <td>৳<span id="ui_total_amount">0</span></td>
-                    <td colspan="9"></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+                    <tfoot class="table-light">
+                      <tr class="fw-semibold">
+                        <td colspan="5">Total</td>
+                        <td>৳<span id="ui_total_amount">0</span></td>
+                        <td colspan="9"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
 
-            <!-- Interest summary -->
-            <div class="p-3 border-top bg-light d-flex justify-content-between align-items-center">
-              <div class="small text-muted">Interest is a flat percent applied to overdue amount. Grace period: <?php echo intval($schedule_config['grace_days']); ?> days. Interest skipped if paid ≥ <?php echo intval($schedule_config['paid_threshold_value']); ?>%.</div>
-              <div class="fw-semibold">Total Interest (upto today): ৳<span id="ui_total_interest">0</span></div>
-            </div>
+                <!-- Interest summary -->
+                <div class="p-3 border-top bg-light d-flex justify-content-between align-items-center">
+                  <div class="small text-muted">Interest is a flat percent applied to overdue amount. Grace period: <?php echo intval($schedule_config['grace_days']); ?> days. Interest skipped if paid ≥ <?php echo intval($schedule_config['paid_threshold_value']); ?>%.</div>
+                  <div class="fw-semibold">Total Interest (upto today): ৳<span id="ui_total_interest">0</span></div>
+                </div>
 
-            <!-- Totals row with separated columns -->
-            <div class="p-3 border-top bg-white d-flex gap-3">
-              <div class="flex-grow-1 small text-muted">Column totals:</div>
-              <div class="text-end me-3"><div class="small text-muted">Column Overdue</div><div class="fw-semibold text-danger">৳<span id="ui_total_overdue_footer">0</span></div></div>
-              <div class="text-end me-3"><div class="small text-muted">Column Overpayment</div><div class="fw-semibold text-success">৳<span id="ui_total_overpayment_footer">0</span></div></div>
-              <div class="text-end me-3"><div class="small text-muted">Total Paid</div><div class="fw-semibold">৳<span id="ui_paid_amount_footer">0</span></div></div>
-              <div class="text-end"><div class="small text-muted">Remaining after all</div><div class="fw-semibold">৳<span id="ui_remaining_footer">0</span></div></div>
-            </div>
+                <!-- Totals row with separated columns -->
+                <div class="p-3 border-top bg-white d-flex gap-3">
+                  <div class="flex-grow-1 small text-muted">Column totals:</div>
+                  <div class="text-end me-3"><div class="small text-muted">Column Overdue</div><div class="fw-semibold text-danger">৳<span id="ui_total_overdue_footer">0</span></div></div>
+                  <div class="text-end me-3"><div class="small text-muted">Column Overpayment</div><div class="fw-semibold text-success">৳<span id="ui_total_overpayment_footer">0</span></div></div>
+                  <div class="text-end me-3"><div class="small text-muted">Total Paid</div><div class="fw-semibold">৳<span id="ui_paid_amount_footer">0</span></div></div>
+                  <div class="text-end"><div class="small text-muted">Remaining after all</div><div class="fw-semibold">৳<span id="ui_remaining_footer">0</span></div></div>
+                </div>
 
-        <!-- Add Reschedule History Section after schedule table -->
-        <div class="card border-0 shadow-sm mt-4">
-          <div class="card-header bg-light border-0 d-flex justify-content-between align-items-center">
-            <h6 class="mb-0 fw-semibold"><i class="lni lni-history me-2"></i>Reschedule History</h6>
-            <small class="text-muted">Previous payment reschedules for this purchase</small>
-          </div>
+              </div> <!-- /.card-body -->
+            </div> <!-- /.card -->
 
-          <div class="card-body p-0">
-            <div id="ui_reschedule_history_container" class="position-relative" style="min-height: 100px;">
-              <div class="text-center text-muted py-4">
-                <i class="lni lni-inbox me-2"></i>
-                <span>Loading history...</span>
+            <!-- Add Reschedule History Section after schedule table -->
+            <div class="card border-0 shadow-sm mt-4">
+              <div class="card-header bg-light border-0 d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 fw-semibold"><i class="lni lni-history me-2"></i>Reschedule History</h6>
+                <small class="text-muted">Previous payment reschedules for this purchase</small>
+              </div>
+
+              <div class="card-body p-0">
+                <div id="ui_reschedule_history_container" class="position-relative" style="min-height: 100px;">
+                  <div class="text-center text-muted py-4">
+                    <i class="lni lni-inbox me-2"></i>
+                    <span>Loading history...</span>
+                  </div>
+                </div>
               </div>
             </div>
+
+          </div> <!-- /.modal-body for tab-schedule -->
+        </div> <!-- /.tab-pane #tab-schedule -->
+
+        <!-- TAB 2: Reschedule Feature -->
+        <div class="tab-pane fade" id="tab-reschedule" role="tabpanel">
+          <div class="modal-body p-4">
+            <h6 class="fw-bold mb-4"><i class="lni lni-reload me-2"></i>Reschedule Payment</h6>
+            <div class="row g-3 mb-4">
+              <div class="col-md-3"><div class="card bg-light"><div class="card-body text-center p-2"><small class="text-muted">Current Monthly</small><div class="h6 mb-0">৳<span id="reschedule_current_monthly">0</span></div></div></div></div>
+              <div class="col-md-3"><div class="card bg-light"><div class="card-body text-center p-2"><small class="text-muted">Remaining Balance</small><div class="h6 mb-0">৳<span id="reschedule_remaining">0</span></div></div></div></div>
+              <div class="col-md-3"><div class="card bg-light"><div class="card-body text-center p-2"><small class="text-muted">Unpaid Rows</small><div class="h6 mb-0"><span id="reschedule_unpaid_count">0</span></div></div></div></div>
+              <div class="col-md-3"><div class="card bg-light"><div class="card-body text-center p-2"><small class="text-muted">Last Paid</small><div class="h6 mb-0 text-truncate" id="reschedule_last_paid">-</div></div></div></div>
+            </div>
+            <div class="card border-0 shadow-sm">
+              <div class="card-body">
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label class="form-label fw-medium">New Monthly Amount (৳)</label>
+                    <input type="number" id="reschedule_new_monthly" class="form-control" placeholder="e.g., 45000" min="1" step="1">
+                    <small class="text-muted d-block mt-1">Must be greater than current amount</small>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-medium">Adjustment Mode</label>
+                    <select id="reschedule_adjustment_mode" class="form-select">
+                      <option value="last_installment">Adjust Last Installment</option>
+                      <option value="yearly_adjustment">Spread to Yearly Adjustments</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row g-3 mt-2">
+                  <div class="col-12">
+                    <label class="form-label fw-medium">Reason for Reschedule</label>
+                    <textarea id="reschedule_reason" class="form-control" rows="2" placeholder="Optional: Why is this reschedule needed?"></textarea>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="card border-0 shadow-sm mt-3">
+              <div class="card-header bg-light"><h6 class="mb-0 fw-semibold">Preview New Schedule</h6></div>
+              <div class="card-body" id="reschedule_preview_container">
+                <p class="text-muted text-center py-3">Enter new amount and click Preview to see changes</p>
+              </div>
+            </div>
+            <div class="mt-3 text-end">
+                <button class="btn btn-outline-secondary" id="reschedule_preview_btn"><i class="lni lni-eye me-1"></i>Preview</button>
+                <button class="btn btn-primary" id="reschedule_submit_btn"><i class="lni lni-check me-1"></i>Submit Reschedule</button>
+            </div>
           </div>
         </div>
 
-      </div>
+        <!-- TAB 3: Pending Actions -->
+        <div class="tab-pane fade" id="tab-pending" role="tabpanel">
+          <div class="modal-body p-4">
+            <h6 class="fw-bold mb-3"><i class="lni lni-hourglass me-2"></i>Pending Actions Requiring Approval</h6>
+            <div id="pending_actions_container">
+              <p class="text-muted text-center py-4"><i class="lni lni-inbox me-2"></i>No pending actions</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 4: Invoices -->
+        <div class="tab-pane fade" id="tab-invoices" role="tabpanel">
+          <div class="modal-body p-4">
+            <h6 class="fw-bold mb-3"><i class="lni lni-document me-2"></i>Invoices</h6>
+            <div id="invoices_list_container">
+              <p class="text-muted text-center py-4">No invoices found</p>
+            </div>
+            <button class="btn btn-primary mt-3 w-100" id="create_invoice_btn"><i class="lni lni-plus me-1"></i>Create New Invoice</button>
+          </div>
+        </div>
+
+        <!-- TAB 5: Emails -->
+        <div class="tab-pane fade" id="tab-emails" role="tabpanel">
+          <div class="modal-body p-4">
+            <ul class="nav nav-pills gap-2 mb-3" role="tablist">
+              <li class="nav-item"><button class="nav-link active" id="email-receipts-tab" data-bs-toggle="pill" data-bs-target="#email-receipts" type="button">Money Receipts</button></li>
+              <li class="nav-item"><button class="nav-link" id="email-schedules-tab" data-bs-toggle="pill" data-bs-target="#email-schedules" type="button">Payment Schedules</button></li>
+            </ul>
+            <div class="tab-content">
+              <div class="tab-pane fade show active" id="email-receipts"><div id="pending_receipts_container"><p class="text-muted text-center py-4">No pending money receipts</p></div></div>
+              <div class="tab-pane fade" id="email-schedules"><div id="pending_schedules_container"><p class="text-muted text-center py-4">No pending schedules to send</p></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 6: Audit -->
+        <div class="tab-pane fade" id="tab-audit" role="tabpanel">
+          <div class="modal-body p-4">
+            <h6 class="fw-bold mb-3"><i class="lni lni-list me-2"></i>Audit Trail</h6>
+            <div class="row g-2 mb-3">
+              <div class="col-md-4"><select id="audit_category_filter" class="form-select form-select-sm"><option value="">All Categories</option><option value="payment">Payments</option><option value="reschedule">Reschedules</option><option value="invoice">Invoices</option></select></div>
+              <div class="col-md-4"><input type="date" id="audit_date_from" class="form-control form-control-sm"></div>
+              <div class="col-md-4"><input type="date" id="audit_date_to" class="form-control form-control-sm"></div>
+            </div>
+            <div id="audit_trail_container" style="max-height:400px; overflow-y:auto;"><p class="text-muted text-center py-4">No audit records</p></div>
+          </div>
+        </div>
+
+      </div> <!-- /.tab-content -->
 
       <div class="modal-footer border-0 bg-light d-flex justify-content-between">
         <div class="text-muted small"><strong>Note:</strong> All amounts are integer Taka (৳). Dates normalize to dd-mm-yyyy. Changing Interest % recalculates interest across rows.</div>
@@ -187,9 +319,10 @@ $schedule_config = [
         </div>
       </div>
 
-    </div>
-  </div>
-</div>
+    </div> <!-- /.modal-content -->
+  </div> <!-- /.modal-dialog -->
+</div> <!-- /.modal -->
+
 
 <!-- Help Modal -->
 <div class="modal fade" id="ui_help_modal" tabindex="-1" aria-hidden="true">
@@ -458,7 +591,9 @@ jQuery(function($){
 
   /* State */
   var currentPurchaseData = null;
-  var currentSchedule = [];
+  // Global variable for schedule data
+  window.currentSchedule = [];
+
   var originalScheduleConfig = null;
   var installmentColumnEditable = false;
   var GRACE_DAYS = parseInt(SCHEDULE_CONFIG.grace_days || 5, 10);
@@ -793,8 +928,8 @@ jQuery(function($){
     var adjustment = d.adjustment_type || d.adjustmentType || 'year_end';
     var monthly = intval(d.monthly_amount || d.monthly || 0);
     var yearly = intval(d.yearly_adjustment || d.yearly || 0);
-    var start_date = d.installment_start_date || d.default_start_date || new Date().toISOString().slice(0,10);
-    var start_option = d.start_option || d.startOption || 'exact';
+    var start_date = d.start_date || d.default_start_date || new Date().toISOString().slice(0,10);
+    var start_option = d.installment_start_option || d.startOption || 'exact';
     var interest_percent = d.interest_percent !== undefined && d.interest_percent !== null ? intval(d.interest_percent) : intval(SCHEDULE_CONFIG.interest_default || 3);
 
     $('#ui_mode').val(mode);
@@ -1543,22 +1678,17 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
     $('#ui_reschedule_history_container').html(html);
   }
 
-  /* Boot */
-  function initModal(){
-    initUpdateInstallment();
-  }
+  /* Boot - Initialize on DOM ready */
+  initUpdateInstallment();
 
-  /* 9.8: Add reschedule button styling in modal header */
-  $(function(){
-    // Add reschedule button to modal header after the change schedule button
-    var $modalHeader = $('#updateInstallmentModal .modal-header');
-    if ($modalHeader.length > 0 && !$modalHeader.find('.reschedule-quick-access').length){
-      var $changeBtn = $modalHeader.find('#ui_change_schedule');
-      if ($changeBtn.length){
-        $changeBtn.after(' <button class="btn btn-outline-info btn-sm reschedule-quick-access" title="Quickly open reschedule modal"><i class="lni lni-reload me-1"></i>Quick Reschedule</button>');
-      }
+  /* Add reschedule quick access button */
+  var $modalHeader = $('#updateInstallmentModal .modal-header');
+  if ($modalHeader.length > 0 && !$modalHeader.find('.reschedule-quick-access').length){
+    var $changeBtn = $modalHeader.find('#ui_change_schedule');
+    if ($changeBtn.length){
+      $changeBtn.after(' <button class="btn btn-outline-info btn-sm reschedule-quick-access" title="Quickly open reschedule modal"><i class="lni lni-reload me-1"></i>Quick Reschedule</button>');
     }
-  });
+  }
 
   $(document).off('click', '.reschedule-quick-access').on('click', '.reschedule-quick-access', function(e){
     e.preventDefault();
@@ -1567,11 +1697,7 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
       alert('Purchase ID is not available');
       return;
     }
-    
-    // Close current payment schedule modal
     $('#updateInstallmentModal').modal('hide');
-    
-    // Brief delay then open reschedule modal
     setTimeout(function(){
       if (typeof window.openRescheduleModal === 'function'){
         window.openRescheduleModal(purchaseId);
@@ -1581,13 +1707,397 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
     }, 300);
   });
 
+  // Tab 2: Reschedule
+  $('#tab-reschedule-btn').on('shown.bs.tab', function() {
+    updateRescheduleTab();
+  });
 
-  // Initial call to initialize the modal when the DOM is ready
-  $(document).ready(function(){
-    initModal();
+  // Tab 3: Pending Actions
+  $('#tab-pending-btn').on('shown.bs.tab', function() {
+    loadPendingActions();
+  });
+
+  function updateRescheduleTab() {
+    if (!window.currentSchedule || window.currentSchedule.length === 0) {
+      $('#reschedule_current_monthly').text('0');
+      $('#reschedule_remaining').text('0');
+      $('#reschedule_unpaid_count').text('0');
+      $('#reschedule_last_paid').text('-');
+      return;
+    }
+
+    var unpaidCount = 0;
+    var remainingBalance = 0;
+    var lastPaidDate = '-';
+    var currentMonthly = 0;
+    var firstUnpaidFound = false;
+
+    for (var i = 0; i < window.currentSchedule.length; i++) {
+      var item = window.currentSchedule[i];
+      var instAmount = parseFloat(item.installment_amount || 0);
+      var paidAmount = parseFloat(item.paid_amount || 0);
+      var isPaid = paidAmount >= instAmount;
+
+      if (!isPaid) {
+        unpaidCount++;
+        remainingBalance += (instAmount - paidAmount);
+        if (!firstUnpaidFound) {
+          currentMonthly = instAmount;
+          firstUnpaidFound = true;
+        }
+      } else {
+        if (item.payment_date) {
+            lastPaidDate = item.payment_date;
+        } else if (item.due_date) {
+            lastPaidDate = item.due_date; 
+        }
+      }
+    }
+
+    $('#reschedule_current_monthly').text(currentMonthly.toLocaleString());
+    $('#reschedule_remaining').text(remainingBalance.toLocaleString());
+    $('#reschedule_unpaid_count').text(unpaidCount);
+    $('#reschedule_last_paid').text(lastPaidDate);
+    
+    if ($('#reschedule_new_monthly').val() == '') {
+        $('#reschedule_new_monthly').val(currentMonthly);
+    }
+
+    // Load history
+    loadRescheduleHistory();
+  }
+
+  function loadRescheduleHistory() {
+    var purchaseId = $('#ui_purchase_id').val();
+    if (!purchaseId) return;
+
+    $('#ui_reschedule_history_container').html('<div class="text-center text-muted py-4"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading history...</div>');
+
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_changes&purchase_id=' + purchaseId)
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.changes && data.changes.length > 0) {
+            // Filter for reschedule type
+            var history = data.changes.filter(function(c) { return c.change_type === 'reschedule'; });
+            
+            if (history.length > 0) {
+                var html = '<div class="list-group list-group-flush">';
+                history.forEach(function(item) {
+                    var statusClass = item.status === 'approved' ? 'success' : (item.status === 'rejected' ? 'danger' : 'warning');
+                    html += '<div class="list-group-item">';
+                    html += '<div class="d-flex justify-content-between align-items-center">';
+                    html += '<div><small class="text-muted">' + (item.request_date || '') + '</small><br><strong>' + (item.request_reason || 'Reschedule') + '</strong></div>';
+                    html += '<span class="badge bg-' + statusClass + '">' + (item.status || 'pending') + '</span>';
+                    html += '</div></div>';
+                });
+                html += '</div>';
+                $('#ui_reschedule_history_container').html(html);
+            } else {
+                $('#ui_reschedule_history_container').html('<div class="text-center text-muted py-4">No reschedule history found</div>');
+            }
+        } else {
+            $('#ui_reschedule_history_container').html('<div class="text-center text-muted py-4">No reschedule history found</div>');
+        }
+      })
+      .fail(function() {
+        $('#ui_reschedule_history_container').html('<div class="text-center text-danger py-4">Failed to load history</div>');
+      });
+  }
+  
+  // Tab 4: Invoices
+  $('#tab-invoices-btn').on('shown.bs.tab', function() {
+    loadInvoices();
+  });
+  
+  // Tab 5: Emails
+  $('#tab-emails-btn').on('shown.bs.tab', function() {
+    loadPendingEmails();
+  });
+  
+  // Tab 6: Audit
+  $('#tab-audit-btn').on('shown.bs.tab', function() {
+    loadAuditTrail();
+  });
+
+  // Audit filter event listeners
+  $('#audit_category_filter, #audit_date_from, #audit_date_to').on('change', function() {
+    loadAuditTrail();
+  });
+
+  // Load Pending Actions
+  function loadPendingActions() {
+    var purchaseId = $('#ui_purchase_id').val();
+    if (!purchaseId) return;
+    
+    $('#pending_actions_container').html('<p class="text-center text-muted py-4"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading...</p>');
+    
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_changes&purchase_id=' + purchaseId)
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.changes && data.changes.length > 0) {
+          renderPendingActions(data.changes);
+        } else {
+          $('#pending_actions_container').html('<p class="text-muted text-center py-4"><i class="lni lni-inbox me-2"></i>No pending actions</p>');
+        }
+      })
+      .fail(function() {
+        $('#pending_actions_container').html('<p class="text-danger text-center py-4"><i class="lni lni-warning me-2"></i>Failed to load pending actions</p>');
+      });
+  }
+
+  function renderPendingActions(changes) {
+    var html = '<div class="list-group">';
+    changes.forEach(function(change) {
+      var statusBadge = change.status === 'pending' ? 'bg-warning' : (change.status === 'approved' ? 'bg-success' : 'bg-danger');
+      html += '<div class="list-group-item">';
+      html += '  <div class="d-flex justify-content-between align-items-start">';
+      html += '    <div>';
+      html += '      <h6 class="mb-1">' + (change.change_type || 'Change') + '</h6>';
+      html += '      <p class="mb-1 small">' + (change.reason || 'No reason provided') + '</p>';
+      html += '      <small class="text-muted">Requested: ' + (change.created_at || 'Unknown') + '</small>';
+      html += '    </div>';
+      html += '    <span class="badge ' + statusBadge + '">' + (change.status || 'pending') + '</span>';
+      html += '  </div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    $('#pending_actions_container').html(html);
+  }
+
+  // Load Invoices
+  function loadInvoices() {
+    var purchaseId = $('#ui_purchase_id').val();
+    if (!purchaseId) return;
+    
+    $('#invoices_list_container').html('<p class="text-center text-muted py-4"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading...</p>');
+    
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_invoices&purchase_id=' + purchaseId)
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.invoices && data.invoices.length > 0) {
+          renderInvoices(data.invoices);
+        } else {
+          $('#invoices_list_container').html('<p class="text-muted text-center py-4">No invoices found</p>');
+        }
+      })
+      .fail(function() {
+        $('#invoices_list_container').html('<p class="text-danger text-center py-4"><i class="lni lni-warning me-2"></i>Failed to load invoices</p>');
+      });
+  }
+
+  function renderInvoices(invoices) {
+    var html = '<div class="table-responsive"><table class="table table-sm table-hover">';
+    html += '<thead><tr><th>Invoice #</th><th>Type</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>';
+    invoices.forEach(function(inv) {
+      var statusClass = inv.status === 'paid' ? 'success' : (inv.status === 'partial' ? 'warning' : 'danger');
+      html += '<tr>';
+      html += '  <td>' + (inv.invoice_number || '-') + '</td>';
+      html += '  <td>' + (inv.invoice_type || '-') + '</td>';
+      html += '  <td>৳' + (parseFloat(inv.amount || 0).toLocaleString()) + '</td>';
+      html += '  <td><span class="badge bg-' + statusClass + '">' + (inv.status || 'pending') + '</span></td>';
+      html += '  <td>' + (inv.invoice_date || '-') + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    $('#invoices_list_container').html(html);
+  }
+
+  // Load Pending Emails
+  function loadPendingEmails() {
+    var purchaseId = $('#ui_purchase_id').val();
+    if (!purchaseId) return;
+    
+    $('#pending_receipts_container').html('<p class="text-center text-muted py-4"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading...</p>');
+    
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_emails&purchase_id=' + purchaseId)
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.emails && data.emails.length > 0) {
+          renderPendingEmails(data.emails);
+        } else {
+          $('#pending_receipts_container').html('<p class="text-muted text-center py-4">No pending emails</p>');
+        }
+      })
+      .fail(function() {
+        $('#pending_receipts_container').html('<p class="text-muted text-center py-4">No pending emails</p>');
+      });
+  }
+
+  function renderPendingEmails(emails) {
+    var html = '<div class="list-group">';
+    emails.forEach(function(email) {
+      html += '<div class="list-group-item">';
+      html += '  <div class="d-flex justify-content-between">';
+      html += '    <div><strong>' + (email.template_type || 'Email') + '</strong><br><small>' + (email.recipient_email || '') + '</small></div>';
+      html += '    <span class="badge bg-' + (email.status === 'sent' ? 'success' : 'warning') + '">' + (email.status || 'queued') + '</span>';
+      html += '  </div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    $('#pending_receipts_container').html(html);
+  }
+
+  // Load Audit Trail
+  function loadAuditTrail() {
+    var purchaseId = $('#ui_purchase_id').val();
+    if (!purchaseId) return;
+    
+    var category = $('#audit_category_filter').val();
+    var dateFrom = $('#audit_date_from').val();
+    var dateTo = $('#audit_date_to').val();
+    
+    $('#audit_trail_container').html('<p class="text-center text-muted py-4"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading...</p>');
+    
+    var params = {
+      f: 'manage_inventory',
+      s: 'get_audit_trail',
+      purchase_id: purchaseId
+    };
+    
+    if (category) params.category = category;
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
+    
+    $.get(Wo_Ajax_Requests_File(), params)
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.logs && data.logs.length > 0) {
+          renderAuditTrail(data.logs);
+        } else {
+          $('#audit_trail_container').html('<p class="text-muted text-center py-4">No audit logs found</p>');
+        }
+      })
+      .fail(function() {
+        $('#audit_trail_container').html('<p class="text-muted text-center py-4">No audit logs found</p>');
+      });
+  }
+
+  function renderAuditTrail(logs) {
+    var html = '<div class="timeline">';
+    logs.forEach(function(log) {
+      html += '<div class="border-start border-2 border-primary ps-3 pb-3">';
+      html += '  <div class="small text-muted">' + (log.timestamp || log.created_at || '') + '</div>';
+      html += '  <div class="fw-bold">' + (log.action || log.action_type || 'Action') + '</div>';
+      html += '  <div class="small">' + (log.description || '') + '</div>';
+      html += '  <div class="small text-muted">By: ' + (log.performed_by_name || log.changed_by_name || 'System') + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    $('#audit_trail_container').html(html);
+  }
+
+  // Create Invoice button
+  $('#create_invoice_btn').on('click', function() {
+    var purchaseId = $('#ui_purchase_id').val();
+    var clientId = $('#client_id').val() || $('#ui_client_id').val(); // Try to get from hidden field or main page
+    
+    // If we have purchase data, use it
+    if (purchaseId) {
+        // Set purchase ID in invoice modal
+        $('#invoice_purchase_id').val(purchaseId).trigger('change');
+        
+        // If we have client ID, set it too
+        if (clientId) {
+            $('#invoice_client_id').val(clientId).trigger('change');
+        }
+        
+        // If we have current purchase data, we can also pre-fill amount if needed
+        // But usually invoice creation is manual or based on selection
+    }
+    
+    $('#createInvoiceModal').modal('show');
+  });
+
+  $('#reschedule_preview_btn').on('click', function(){
+      var newMonthly = intval($('#reschedule_new_monthly').val());
+      if(newMonthly <= 0){ alert('Please enter a valid monthly amount'); return; }
+
+      // Generate preview
+      var previewHtml = '<table class="table table-sm table-bordered"><thead><tr><th>#</th><th>Particular</th><th>Due Date</th><th class="text-end">Amount</th></tr></thead><tbody>';
+      
+      // Logic: Keep paid rows, regenerate unpaid
+      var paidRows = window.currentSchedule.filter(r => r.paid);
+      var unpaidTotal = window.currentSchedule.filter(r => !r.paid).reduce((sum, r) => sum + (r.installment_amount - (r.paid_amount||0)), 0);
+      
+      var newRows = [];
+      var rem = unpaidTotal;
+      var idx = paidRows.length + 1;
+      var lastDate = paidRows.length > 0 ? new Date(paidRows[paidRows.length-1].date) : new Date();
+      
+      while(rem > 0){
+          var amt = Math.min(rem, newMonthly);
+          // Simple monthly increment
+          lastDate.setMonth(lastDate.getMonth() + 1);
+          var dateStr = lastDate.toISOString().slice(0,10);
+          
+          newRows.push({
+              installment: idx++,
+              particular: 'Installment (Rescheduled)',
+              date: dateStr,
+              installment_amount: amt
+          });
+          rem -= amt;
+          
+          previewHtml += '<tr><td>' + (idx-1) + '</td><td>Installment (Rescheduled)</td><td>' + dateStr + '</td><td class="text-end">৳' + fmtMoneyInt(amt) + '</td></tr>';
+      }
+      previewHtml += '</tbody></table>';
+      $('#reschedule_preview_container').html(previewHtml);
+      
+      // Store for submit
+      window.reschedulePreviewRows = newRows;
+  });
+
+  // Reschedule Submit Handler
+  $('#reschedule_submit_btn').on('click', function() {
+    var newMonthly = parseFloat($('#reschedule_new_monthly').val() || 0);
+    var reason = $('#reschedule_reason').val();
+    var adjustmentMode = $('#reschedule_adjustment_mode').val();
+    var purchaseId = $('#ui_purchase_id').val();
+
+    if (newMonthly <= 0) {
+        alert('Please enter a valid monthly amount');
+        return;
+    }
+    if (!reason || reason.trim() === '') {
+        alert('Please enter a reason for rescheduling');
+        return;
+    }
+
+    var $btn = $(this);
+    $btn.prop('disabled', true).html('<i class="lni lni-spinner-arrow lni-spin me-1"></i>Submitting...');
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=submit_pending_change', {
+        purchase_id: purchaseId,
+        change_type: 'reschedule',
+        change_data: JSON.stringify({
+            new_monthly: newMonthly,
+            adjustment_mode: adjustmentMode
+        }),
+        request_reason: reason
+    })
+    .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+            alert('Reschedule request submitted for approval!');
+            $('#reschedule_reason').val('');
+            $('#reschedule_new_monthly').val('');
+            $('#reschedule_preview_container').html('<p class="text-muted text-center py-3">Enter new amount and click Preview to see changes</p>');
+            loadRescheduleHistory();
+            loadPendingActions();
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .fail(function() {
+        alert('Failed to submit request');
+    })
+    .always(function() {
+        $btn.prop('disabled', false).html('<i class="lni lni-check me-1"></i>Submit Reschedule');
+    });
   });
 
 });
+
 </script>
 </div>
 </div>

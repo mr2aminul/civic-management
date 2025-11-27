@@ -318,20 +318,20 @@ Result: Consolidated single file
 
 ### Tab Pages Location: `/manage/pages/clients/tabs/`
 
-#### 1. **payment_schedules_complete.phtml**
-- View all payment schedules
+#### 1. **schedules.phtml** (formerly payment_schedules_complete.phtml)
+- View all payment schedules / purchases
 - Filter by: status, type, date range
-- Quick actions: view details, create invoice, record payment
+- Quick actions: view details (opens payment_schedule_modal), create invoice
 - Summary dashboard: total due, paid, pending, overdue
 
-#### 2. **invoices_complete.phtml**
+#### 2. **invoices.phtml** (formerly invoices_complete.phtml)
 - Invoice listing with advanced filtering
 - Multi-tab interface: Invoices | Receipts | Credits
 - Invoice detail view with payment history
 - Money receipt generation
 - Overpayment credit tracking
 
-#### 3. **pending_emails_complete.phtml**
+#### 3. **pending_emails.phtml** (formerly pending_emails_complete.phtml)
 - Email queue management
 - Filter by: type, status, recipient type
 - Preview before sending
@@ -339,7 +339,7 @@ Result: Consolidated single file
 - Bulk send functionality
 - Retry failed emails
 
-#### 4. **audit_trail_complete.phtml**
+#### 4. **audit_trail.phtml** (formerly audit_trail_complete.phtml)
 - Timeline-based audit log view
 - Filter by: category, action type, date, user
 - Color-coded by category
@@ -349,10 +349,18 @@ Result: Consolidated single file
 
 ### Modal Files Location: `/manage/pages/clients/modals/`
 
-- **payment_schedule_modal.phtml** - Main schedule interaction modal
-- **payment_schedule_modal_invoices.js** - Invoice operations JavaScript
-- **payment_schedule_modal_emails.js** - Email operations JavaScript
-- **payment_schedule_modal_audit.js** - Audit operations JavaScript
+- **payment_schedule_modal.phtml** - Main schedule interaction modal.
+  - **Integrated Features**:
+    - **Schedule**: View/Edit payment schedule, generate installments.
+    - **Reschedule**: Calculate and submit schedule changes.
+    - **Invoices**: View invoices, create new ones.
+    - **Emails**: Manage pending emails (receipts/schedules).
+    - **Audit**: View audit trail for the specific purchase.
+    - **Pending**: View pending approval requests.
+- **create-invoice.phtml** - Modal for creating new invoices.
+- **reschedule_modal.phtml** - Standalone reschedule modal (legacy/alternative).
+- **transfer_modal.phtml** - Purchase transfer management.
+- **merge_purchase_modal.phtml** - Purchase merge management.
 
 ### Email Templates Location: `/manage/pages/clients/emails/`
 
@@ -368,10 +376,34 @@ Result: Consolidated single file
 
 ## Backend API Reference
 
-### Base Path: `/xhr/manage_inventory_invoice_system.php`
+### Base Path: `/xhr/manage_inventory/`
 
-#### GET_SCHEDULES_LIST
-\`\`\`json
+The system uses a modular API structure within the `xhr/manage_inventory/` directory.
+
+#### 1. **purchases.php**
+- `get_purchases_list`: List all purchases with summary (paid, due).
+- `get_purchase_details`: Get full details of a purchase including schedule.
+- `search_purchases`: Search for purchases by client/file/plot.
+
+#### 2. **invoices.php**
+- `get_invoices`: List invoices for a purchase/client.
+- `create_invoice`: Generate a new invoice.
+- `record_payment`: Record payment against an invoice (handles overpayments).
+
+#### 3. **schedules.php**
+- `get_payment_schedule`: Get schedule rows.
+- `update_installment`: Save/Update payment schedule.
+- `recalculate_schedule`: Recalculate dues/interest.
+
+#### 4. **audit.php**
+- `get_audit_trail`: Fetch audit logs.
+
+#### 5. **emails.php**
+- `get_pending_emails`: List queued emails.
+- `send_email`: Execute email sending.
+
+#### GET_SCHEDULES_LIST (via purchases.php)
+```json
 POST Parameters:
 - purchase_id (integer)
 - client_id (integer)
@@ -393,10 +425,10 @@ Response:
     "total_late_fees": 5000
   }
 }
-\`\`\`
+```
 
-#### GET_INVOICES_LIST
-\`\`\`json
+#### GET_INVOICES_LIST (via invoices.php)
+```json
 POST Parameters:
 - purchase_id (integer)
 - client_id (integer)
@@ -428,10 +460,10 @@ Response:
     }
   ]
 }
-\`\`\`
+```
 
-#### RECORD_INVOICE_PAYMENT
-\`\`\`json
+#### RECORD_INVOICE_PAYMENT (via invoices.php)
+```json
 POST Parameters:
 - invoice_id (integer)
 - payment_amount (decimal)
@@ -450,10 +482,10 @@ Response:
   "applied_to_schedule_id": 2,
   "audit_trail_id": 1234
 }
-\`\`\`
+```
 
-#### CREATE_INVOICE
-\`\`\`json
+#### CREATE_INVOICE (via invoices.php)
+```json
 POST Parameters:
 - purchase_id (integer)
 - client_id (integer)
@@ -470,10 +502,10 @@ Response:
   "invoice_number": "INV-2025-005",
   "message": "Invoice created successfully"
 }
-\`\`\`
+```
 
-#### GET_PAYMENT_CREDITS
-\`\`\`json
+#### GET_PAYMENT_CREDITS (via invoices.php)
+```json
 POST Parameters:
 - purchase_id (integer)
 - client_id (integer)
@@ -493,12 +525,10 @@ Response:
     }
   ]
 }
-\`\`\`
+```
 
-### Base Path: `/xhr/manage_inventory_audit_email.php`
-
-#### GET_AUDIT_TRAIL
-\`\`\`json
+#### GET_AUDIT_TRAIL (via audit.php)
+```json
 POST Parameters:
 - purchase_id (integer, optional)
 - client_id (integer)
@@ -529,10 +559,10 @@ Response:
   ],
   "total_count": 125
 }
-\`\`\`
+```
 
-#### GET_EMAIL_LOGS
-\`\`\`json
+#### GET_EMAIL_LOGS (via emails.php)
+```json
 POST Parameters:
 - client_id (integer)
 - purchase_id (integer, optional)

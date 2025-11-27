@@ -123,7 +123,7 @@ jQuery(function($){
     $('#refundModal').data('purchaseId', purchaseId);
     $('#refundTransactionDate').val(new Date().toISOString().split('T')[0]);
 
-    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=get_refund_status',
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_refund_status',
       { purchase_id: purchaseId },
       function(resp) {
         var data = typeof resp === 'string' ? JSON.parse(resp) : resp;

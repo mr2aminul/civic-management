@@ -252,7 +252,7 @@ jQuery(function($){
   'use strict';
 
   // Global function to open pending change detail modal
-  window.openPendingChangeDetail = function(changeId, isAdmin) {
+  window.openPendingChangeDetail = function(changeId, isAdmin, changeType) {
     if (!changeId) {
       alert('Change ID is required');
       return;
@@ -269,7 +269,8 @@ jQuery(function($){
 
     // Fetch change details
     $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_change_detail', {
-      pending_change_id: changeId
+      pending_change_id: changeId,
+      change_type: changeType
     })
       .done(function(resp) {
         var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
@@ -298,6 +299,9 @@ jQuery(function($){
     var changeTypeLabel = getChangeTypeLabel(change.change_type);
     $('#detailChangeTypeLabel').text(changeTypeLabel + ' - Detail');
     $('#detailChangeType').text(changeTypeLabel);
+    
+    // Store change type for actions
+    $('#pendingChangeDetailModal').data('change-type', change.change_type);
 
     // Status badge
     var statusClass = 'status-' + change.status;
@@ -418,6 +422,17 @@ jQuery(function($){
       html += '</div>';
       $container.html(html);
 
+    } else if (changeType === 'merge') {
+      var html = '<div class="alert alert-info">';
+      html += '<strong><i class="lni lni-merge me-1"></i>Merge Request:</strong> Merging this purchase into Purchase #' + (preview.target_purchase_id || 'N/A') + '.';
+      html += '<ul class="mt-2 mb-0">';
+      html += '<li><strong>Combine Payments:</strong> ' + (preview.merge_paid_amount == 1 ? 'Yes' : 'No') + '</li>';
+      html += '<li><strong>Consolidate Schedule:</strong> ' + (preview.merge_payment_schedule == 1 ? 'Yes' : 'No') + '</li>';
+      html += '<li><strong>Merge Credits/Invoices:</strong> ' + (preview.merge_credits == 1 ? 'Yes' : 'No') + '</li>';
+      html += '</ul>';
+      html += '</div>';
+      $container.html(html);
+
     } else if (changeType === 'cancel') {
       var html = '<div class="alert alert-danger">';
       html += '<i class="lni lni-warning me-2"></i>';
@@ -469,6 +484,7 @@ jQuery(function($){
 
     $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=approve_pending_change', {
       pending_change_id: changeId,
+      change_type: $('#pendingChangeDetailModal').data('change-type'),
       notes: notes || ''
     })
       .done(function(resp) {
@@ -512,6 +528,7 @@ jQuery(function($){
 
     $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=deny_pending_change', {
       pending_change_id: changeId,
+      change_type: $('#pendingChangeDetailModal').data('change-type'),
       reason: reason
     })
       .done(function(resp) {

@@ -11,6 +11,25 @@ error_reporting(E_ALL);
 // Fetch users
 $get_users = $db->orderBy('position', 'ASC')->where('active', '1')->where('banned', '0')->get(T_USERS);
 
+// Helper function for refund summary
+if (!function_exists('get_refund_summary_v2')) {
+    function get_refund_summary_v2($purchase_id) {
+        global $db;
+        $summary = $db->where('purchase_id', $purchase_id)->getOne('crm_refund_schedule');
+        if ($summary) {
+            // Calculate total refunded from transactions if needed, or use column if exists
+            // For now, assuming columns exist as per usage
+            return [
+                'total_paid_amount' => $summary['total_paid_amount'] ?? 0,
+                'deduction_amount' => $summary['deduction_amount'] ?? 0,
+                'refundable_amount' => $summary['refundable_amount'] ?? 0,
+                'total_refunded' => $summary['total_refunded'] ?? 0
+            ];
+        }
+        return null;
+    }
+}
+
 // Totals - Fixed calculations
 $clientId = $wo['client']['id'];
 
@@ -20,8 +39,8 @@ $total_purchase = 0;
 try {
     $helpers = $db->rawQuery("
         SELECT bh.per_katha, b.katha 
-        FROM `" . T_BOOKING_HELPER . "` bh
-        JOIN `" . T_BOOKING . "` b ON b.id = bh.booking_id
+        FROM `wo_booking_helper` bh
+        JOIN `wo_booking` b ON b.id = bh.booking_id
         WHERE bh.client_id = ? AND bh.status != '4'
     ", [$clientId]);
     
@@ -36,9 +55,9 @@ try {
     $total_purchase = 0;
 }
 
-$total_paid    = (float) $db->where('client_id', $clientId)->getValue(T_INVOICE, 'SUM(paid_amount)') ?: 0;
+$total_paid    = (float) $db->where('client_id', $clientId)->getValue('crm_invoices', 'SUM(paid_amount)') ?: 0;
 $total_due     = $total_amount - $total_paid;
-$total_invoice = (int)   $db->where('client_id', $clientId)->getValue(T_INVOICE, 'COUNT(*)');
+$total_invoice = (int)   $db->where('client_id', $clientId)->getValue('crm_invoices', 'COUNT(*)');
 
 $get_nominees = $db->where('customer_id', $clientId)->orderBy('name', 'ASC')->get(T_CRM_NOMINEES);
 ?>
@@ -81,6 +100,24 @@ $get_nominees = $db->where('customer_id', $clientId)->orderBy('name', 'ASC')->ge
 #changePlotModal .select2-dropdown {
   z-index: 2080 !important;
   position: absolute !important;
+}
+
+/* Add Purchase Modal (nested in view_client) */
+#addPurchaseModal {
+  z-index: 2060 !important;
+}
+
+#addPurchaseModal .modal-backdrop {
+  z-index: 2055 !important;
+}
+
+#addPurchaseModal .select2-container {
+  z-index: 2070 !important;
+}
+
+#addPurchaseModal .select2-dropdown {
+  z-index: 2070 !important;
+  position: fixed !important;
 }
 
 /* Ensure Select2 dropdowns stay within viewport */
@@ -384,512 +421,8 @@ ion-icon {
       <div class="view-container form-toggle">
         <!-- Summary Cards with modern design -->
         <section id="client_details" class="no-print mt-4 px-4">
-          <div class="row g-3 mb-4">
-            <?php foreach ([['Plots', number_format($total_purchase), 'cart', 'info'], ['Total', "৳".number_format($total_amount), 'bag-handle-sharp', 'primary'], ['Paid', "৳".number_format($total_paid), 'checkmark-circle', 'success'], ['Due', "৳".number_format($total_due), 'time', 'danger']] as [$title, $value, $icon, $variant]): ?>
-              <div class="col-6 col-md-4 col-lg">
-                <div class="card h-100 border-0 shadow-sm">
-                  <div class="card-body d-flex align-items-center p-3">
-                    <div class="flex-grow-1">
-                      <p class="text-muted mb-1 small fw-medium"><?= htmlspecialchars($title) ?></p>
-                      <h5 class="mb-0 fw-bold"><?= htmlspecialchars($value) ?></h5>
-                    </div>
-                    <div class="fs-2 text-<?= $variant ?>">
-                      <ion-icon name="<?= htmlspecialchars($icon) ?>"></ion-icon>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            <?php endforeach; ?>
-          </div>
+          <!-- Unified Purchase Cards will be rendered here -->
 
-          <!-- Purchase Table with modern styling -->
-          <div class="card border-0 shadow-sm">
-            <div class="card-header bg-light border-0 py-3">
-              <h6 class="mb-0 fw-semibold text-dark">Purchase Details</h6>
-            </div>
-            <div class="card-body p-0">
-              <div class="table-responsive" style="overflow: visible;">
-                <table class="table table-hover mb-0" id="purchaseTable">
-                  <thead class="table-light">
-                    <tr>
-                      <th class="fw-semibold">Project</th>
-                      <th class="fw-semibold">Block</th>
-                      <th class="fw-semibold">Katha</th>
-                      <th class="fw-semibold">Plot</th>
-                      <th class="fw-semibold">Road</th>
-                      <th class="fw-semibold">File</th>
-                      <th class="fw-semibold">Date</th>
-                      <th class="fw-semibold">Status</th>
-                      <th class="fw-semibold text-center">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <?php
-                    // Ensure $wo['booking_helper'] exists and is iterable
-                    if (!empty($wo['booking_helper']) && is_array($wo['booking_helper'])):
-                        foreach ($wo['booking_helper'] as $index => $p):
-                            $client  = $p['client'] ?? [];
-                            $booking = $p['booking'] ?? [];
-                    
-                            // --- parse nominee_ids (supports JSON array, CSV, pipe, or bracketed lists) ---
-                            $nominee_ids = [];
-                            $raw_nom_ids = $p['nominee_ids'] ?? ($booking['nominee_ids'] ?? null);
-                            if (!empty($raw_nom_ids)) {
-                                // try JSON
-                                $decoded = json_decode($raw_nom_ids, true);
-                                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                                    $nominee_ids = array_map('intval', $decoded);
-                                } else {
-                                    // normalize string: trim brackets then split by comma or pipe
-                                    $s = trim((string)$raw_nom_ids);
-                                    $s = trim($s, "[] \t\n\r\0\x0B");
-                                    if ($s !== '') {
-                                        $sep = (strpos($s, '|') !== false) ? '|' : ',';
-                                        $parts = array_filter(array_map('trim', explode($sep, $s)), function($v){ return $v !== ''; });
-                                        $nominee_ids = array_map('intval', $parts);
-                                    }
-                                }
-                            }
-                    
-                            // --- fetch nominee rows (only if we have ids) ---
-                            $i_nominee = [];
-                            $ii_nominee = [];
-                            if (!empty($nominee_ids) && isset($db) && method_exists($db, 'where')) {
-                                $rows = $db->where('id', $nominee_ids, 'IN')->get('crm_nominees', null, 'id, name, address, birthday, share_parcent, relation, phone');
-                    
-                                // normalize rows to associative by id
-                                $rows_by_id = [];
-                                foreach ($rows as $r) {
-                                    $row = is_object($r) ? (array)$r : (array)$r;
-                                    $rows_by_id[(int)$row['id']] = $row;
-                                }
-                    
-                                // preserve order from $nominee_ids and take first two
-                                $count = 0;
-                                foreach ($nominee_ids as $nid) {
-                                    $nid = (int)$nid;
-                                    if (!isset($rows_by_id[$nid])) continue;
-                                    if ($count === 0) {
-                                        $i_nominee = $rows_by_id[$nid];
-                                    } elseif ($count === 1) {
-                                        $ii_nominee = $rows_by_id[$nid];
-                                        break; // we only need two
-                                    }
-                                    $count++;
-                                }
-                            }
-                            // ensure arrays
-                            if (!is_array($i_nominee)) $i_nominee = [];
-                            if (!is_array($ii_nominee)) $ii_nominee = [];
-                    
-                            // --- parse installments (supports JSON, serialize, array, CSV) ---
-                            $installments = [];
-                            $rawInst = $p['installment'] ?? ($p['installments'] ?? ($booking['installments'] ?? null));
-                            if (!empty($rawInst) || $rawInst === '0') {
-                                // try JSON
-                                $dec = json_decode($rawInst, true);
-                                if (json_last_error() === JSON_ERROR_NONE && (is_array($dec) || is_object($dec))) {
-                                    $installments = (array)$dec;
-                                } else {
-                                    // try unserialize (legacy)
-                                    $un = @unserialize($rawInst);
-                                    if ($un !== false && (is_array($un) || is_object($un))) {
-                                        $installments = (array)$un;
-                                    } elseif (is_array($rawInst)) {
-                                        $installments = $rawInst;
-                                    } else {
-                                        // fallback: CSV or pipe-separated simple list
-                                        $s = trim((string)$rawInst);
-                                        if ($s !== '') {
-                                            $sep = (strpos($s, '|') !== false) ? '|' : ',';
-                                            $parts = array_map('trim', explode($sep, $s));
-                                            $installments = array_filter($parts, function($v){ return $v !== ''; });
-                                            // re-index
-                                            $installments = array_values($installments);
-                                        }
-                                    }
-                                }
-                            }
-                    
-                            // --- project name / html as before ---
-                            $proj_raw = isset($booking['project']) ? $booking['project'] : '';
-                            $proj_raw = str_replace('-', ' ', $proj_raw);
-                            $proj_raw = ucwords($proj_raw);
-                            $proj_html = htmlspecialchars($proj_raw, ENT_QUOTES);
-                            if ($proj_html === '') $proj_html = '-';
-                            
-                            $project_id = null;
-                            if (!empty($project_mapping) && !empty($booking['project']) && isset($project_mapping[$booking['project']])) {
-                                $project_id = $project_mapping[$booking['project']];
-                            }
-
-                            // --- fetch transfer history for this purchase ---
-                            $transfer_history = [];
-                            $latest_transfer = null;
-                            try {
-                                $transfers = $db->where('original_purchase_id', (int)$p['id'])
-                                               ->orderBy('transfer_date', 'DESC')
-                                               ->get('crm_purchase_transfer_history');
-                                if (!empty($transfers)) {
-                                    $transfer_history = $transfers;
-                                    $latest_transfer = $transfers[0];
-                                }
-                            } catch (Exception $e) {
-                                $transfer_history = [];
-                                $latest_transfer = null;
-                            }
-
-                            // --- pass everything into the template ---
-                            echo Wo_LoadManagePage('clients/booking_form_template', [
-                                'p' => $p,
-                                'index' => $index,
-                                'client' => $client,
-                                'booking' => $booking,
-                                'proj_html' => $proj_html,
-                                'i_nominee' => $i_nominee,
-                                'ii_nominee' => $ii_nominee,
-                                'installments' => $installments
-                            ]);
-                    ?>
-
-
-
-                    <!-- Purchase Row -->
-                    <tr id="purchaseRow_<?= (int)$p['id'] ?>">
-                      <td><?= $proj_html ?></td>
-                      <td><?= ($booking['project'] == 'hill-town') ? htmlspecialchars(ucwords($booking['block'])) : 'N/A' ?></td>
-                      <td><?= htmlspecialchars($booking['katha']) ?></td>
-                      <td><?= htmlspecialchars($booking['plot']) ?></td>
-                      <td><?= htmlspecialchars($booking['road']) ?></td>
-                      <td><?= htmlspecialchars($p['file_num']) ?></td>
-                      <td><?= htmlspecialchars(date('d M Y', $p['time'])) ?></td>
-                        <td>
-                          <?php
-                            // status may be present on $p or $booking — check both
-                            $status = (string)( $p['status'] ?? ($booking['status'] ?? '') );
-                            // cancel date may be a timestamp or a string; check both sources
-                            $raw_cancel = $p['cancel_date'] ?? ($booking['cancel_date'] ?? '');
-                        
-                            // helper to format cancel date (handles timestamp or parseable string)
-                            $formatted_cancel = '';
-                            if ($raw_cancel !== '' && $raw_cancel !== null) {
-                                if (is_numeric($raw_cancel)) {
-                                    $ts = (int)$raw_cancel;
-                                    // skip zero/invalid timestamps
-                                    if ($ts > 0) $formatted_cancel = date('d M Y', $ts);
-                                } else {
-                                    $ts2 = strtotime($raw_cancel);
-                                    if ($ts2 !== false && $ts2 > 0) $formatted_cancel = date('d M Y', $ts2);
-                                }
-                            }
-                        
-                            if ($status === '1') {
-                                echo '<span class="badge bg-info"> Available </span>';
-                            } elseif ($status === '2') {
-                                echo '<span class="badge bg-success"> Sold </span>';
-                            } elseif ($status === '3') {
-                                echo '<span class="badge bg-success"> Complete </span>';
-                            } elseif ($status === '4') {
-                                echo '<span class="badge bg-danger"> Canceled </span>';
-                                if ($formatted_cancel !== '') {
-                                    echo '<br><small class="text-muted">Cancelled on: ' . htmlspecialchars($formatted_cancel) . '</small>';
-                                }
-                            } else {
-                                echo '<span class="badge bg-info"> Available </span>';
-                            }
-
-                            // --- display transfer history badge if exists ---
-                            if (!empty($latest_transfer)):
-                                $transfer_type = $latest_transfer->transfer_type ?? '';
-                                $transfer_date = $latest_transfer->transfer_date ?? '';
-                                $formatted_transfer_date = '';
-                                if ($transfer_date) {
-                                    $ts = strtotime($transfer_date);
-                                    if ($ts !== false && $ts > 0) $formatted_transfer_date = date('d M Y', $ts);
-                                }
-
-                                if ($transfer_type === 'name_transfer') {
-                                    $new_client_name = htmlspecialchars($latest_transfer->new_client_name ?? 'New Owner');
-                                    echo '<br><span class="badge bg-warning mt-1" title="Ownership transferred">';
-                                    echo '<i class="lni lni-user"></i> Transferred to: ' . $new_client_name;
-                                    echo '</span>';
-                                    if ($formatted_transfer_date) {
-                                        echo '<br><small class="text-muted">Transfer date: ' . $formatted_transfer_date . '</small>';
-                                    }
-                                  } else if ($transfer_type === 'plot_transfer') {
-                                    $new_plot = htmlspecialchars($latest_transfer->new_plot ?? '');
-                                    $new_block = htmlspecialchars($latest_transfer->new_block ?? '');
-                                    echo '<br><span class="badge bg-info mt-1" title="Plot changed">';
-                                    echo '<i class="lni lni-map"></i> Changed to: Block ' . $new_block . ', Plot ' . $new_plot;
-                                    echo '</span>';
-                                    if ($formatted_transfer_date) {
-                                        echo '<br><small class="text-muted">Transfer date: ' . $formatted_transfer_date . '</small>';
-                                    }
-                                  }
-
-                                // Add view history link
-                                $history_count = count($transfer_history);
-                                echo '<br><a href="javascript:;" class="badge bg-secondary mt-1 text-decoration-none toggle-history" data-id="' . (int)$p['id'] . '" title="View complete transfer history">';
-                                echo '<i class="lni lni-eye"></i> View History (' . $history_count . ')';
-                                echo '</a>';
-                            endif;
-
-                            // Check for pending changes and display badge
-                            try {
-                              $pending_count = $db->where('purchase_id', (int)$p['id'])
-                                                 ->where('status', 'pending')
-                                                 ->getValue('crm_pending_changes', 'COUNT(*)') ?: 0;
-
-                              if ($pending_count > 0) {
-                                echo '<br><a href="javascript:;" class="badge bg-warning mt-1 text-decoration-none pending-change-badge" data-purchase-id="' . (int)$p['id'] . '" title="View pending changes">';
-                                echo '<i class="lni lni-hourglass"></i> ' . $pending_count . ' Pending Change' . ($pending_count > 1 ? 's' : '');
-                                echo '</a>';
-                              }
-                            } catch (Exception $e) {
-                              // Silently fail if table doesn't exist yet
-                            }
-                          ?>
-                        </td>
-
-                      <td class="text-center">
-                        <!-- Enhanced Dropdown Actions -->
-                        <div class="dropdown">
-                          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" 
-                                  id="dropdownMenuButton<?= (int)$p['id'] ?>" data-bs-toggle="dropdown" aria-expanded="false">
-                            <i class="lni lni-more-alt"></i> More
-                          </button>
-                          <ul class="dropdown-menu dropdown-menu-end shadow-sm" aria-labelledby="dropdownMenuButton<?= (int)$p['id'] ?>">
-                            <li>
-                              <a class="dropdown-item print-booking-form" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
-                                <i class="lni lni-printer me-2 text-primary"></i> Print Booking Form
-                              </a>
-                            </li>
-                            <li>
-                              <a class="dropdown-item manage-schedule" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
-                                <i class="lni lni-calendar me-2 text-primary"></i> Manage Payment Schedule
-                              </a>
-                            </li>
-                            <li>
-                              <a class="dropdown-item print_installment" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
-                                <i class="lni lni-calendar me-2 text-primary"></i> Print Payment Schedule
-                              </a>
-                            </li>
-                            <li>
-                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="name">
-                                <i class="lni lni-shuffle me-2 text-warning"></i> Transfer Ownership
-                              </a>
-                            </li>
-                            <li>
-                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="plot">
-                                <i class="lni lni-shuffle me-2 text-warning"></i> Change Plot
-                              </a>
-                            </li>
-                            
-                            <li>
-                              <a class="dropdown-item manage-refund" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>">
-                                <i class="lni lni-money-location me-2 text-danger"></i> Manage Refund
-                              </a>
-                            </li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li>
-                              <a class="dropdown-item transfer-plot" href="javascript:;" data-id="<?= (int)$p['id'] ?>" data-project="<?= $booking['project'] ?>" data-project-id="<?= $project_id ?>" data-tab="cancel">
-                                <i class="lni lni-close me-2 text-danger"></i> Cancel Purchase
-                              </a>
-                            </li>
-                          </ul>
-                        </div>
-                      </td>
-                    </tr>
-
-                    <!-- Collapsible Transfer History Details Row -->
-                    <?php if (!empty($transfer_history) && count($transfer_history) > 0): ?>
-                    <tr class="transfer-history-row" id="transferHistoryRow_<?= (int)$p['id'] ?>" style="display: none;">
-                      <td colspan="9" class="p-0">
-                        <div class="card border-0 m-2 shadow-sm">
-                          <div class="card-header bg-light border-0 d-flex justify-content-between align-items-center">
-                            <h6 class="mb-0 fw-semibold">
-                              <i class="lni lni-history me-2 text-primary"></i>Transfer History
-                            </h6>
-                            <button class="btn btn-sm btn-outline-secondary toggle-history" data-id="<?= (int)$p['id'] ?>">
-                              <i class="lni lni-chevron-up"></i> Hide
-                            </button>
-                          </div>
-                          <div class="card-body">
-                            <div class="timeline">
-                              <?php foreach ($transfer_history as $t_idx => $transfer):
-                                $t_type = $transfer->transfer_type ?? '';
-                                $t_date = $transfer->transfer_date ?? '';
-                                $formatted_t_date = '';
-                                if ($t_date) {
-                                  $ts = strtotime($t_date);
-                                  if ($ts !== false && $ts > 0) $formatted_t_date = date('d M Y H:i', $ts);
-                                }
-
-                                $is_first = ($t_idx === 0);
-                              ?>
-                              <div class="timeline-item <?= $is_first ? 'latest' : '' ?> mb-4">
-                                <div class="d-flex gap-3">
-                                  <div class="timeline-marker">
-                                    <?php if ($t_type === 'name_transfer'): ?>
-                                      <div class="marker-icon bg-warning text-white rounded-circle d-flex align-items-center justify-content-center" style="width:40px;height:40px;">
-                                        <i class="lni lni-user fs-5"></i>
-                                      </div>
-                                    <?php elseif ($t_type === 'plot_transfer'): ?>
-                                      <div class="marker-icon bg-info text-white rounded-circle d-flex align-items-center justify-content-center" style="width:40px;height:40px;">
-                                        <i class="lni lni-map fs-5"></i>
-                                      </div>
-                                    <?php elseif ($t_type === 'cancel_plot'): ?>
-                                      <div class="marker-icon bg-danger text-white rounded-circle d-flex align-items-center justify-content-center" style="width:40px;height:40px;">
-                                        <i class="lni lni-close fs-5"></i>
-                                      </div>
-                                    <?php endif; ?>
-                                  </div>
-
-                                  <div class="flex-grow-1">
-                                    <div class="d-flex justify-content-between align-items-start mb-2">
-                                      <div>
-                                        <h6 class="mb-1 fw-bold">
-                                          <?php if ($t_type === 'name_transfer'): ?>
-                                            Ownership Transfer
-                                          <?php elseif ($t_type === 'plot_transfer'): ?>
-                                            Plot Change
-                                          <?php elseif ($t_type === 'cancel_plot'): ?>
-                                            Plot Cancellation
-                                          <?php endif; ?>
-                                          <?= $is_first ? '<span class="badge bg-success ms-2">Latest</span>' : '' ?>
-                                        </h6>
-                                        <small class="text-muted">
-                                          <i class="lni lni-calendar me-1"></i><?= htmlspecialchars($formatted_t_date) ?>
-                                        </small>
-                                      </div>
-                                    </div>
-
-                                    <?php if ($t_type === 'name_transfer'): ?>
-                                      <!-- Name Transfer Details -->
-                                      <div class="card border-0 bg-light p-3">
-                                        <div class="row g-3">
-                                          <div class="col-md-6">
-                                            <strong class="text-muted small d-block mb-1">Previous Owner</strong>
-                                            <div class="fw-medium"><?= htmlspecialchars($transfer->previous_client_name ?? 'N/A') ?></div>
-                                          </div>
-                                          <div class="col-md-6">
-                                            <strong class="text-muted small d-block mb-1">New Owner</strong>
-                                            <div class="fw-medium text-success"><?= htmlspecialchars($transfer->new_client_name ?? 'N/A') ?></div>
-                                          </div>
-                                          <?php if (!empty($transfer->reason)): ?>
-                                          <div class="col-12">
-                                            <strong class="text-muted small d-block mb-1">Reason</strong>
-                                            <div class="fw-medium"><?= htmlspecialchars($transfer->reason) ?></div>
-                                          </div>
-                                          <?php endif; ?>
-                                          <?php if (!empty($transfer->transfer_fee_amount) && $transfer->transfer_fee_amount > 0): ?>
-                                          <div class="col-12">
-                                            <strong class="text-muted small d-block mb-1">Transfer Fee</strong>
-                                            <div class="fw-medium">৳<?= number_format($transfer->transfer_fee_amount, 2) ?></div>
-                                          </div>
-                                          <?php endif; ?>
-                                        </div>
-                                      </div>
-
-                                    <?php elseif ($t_type === 'plot_transfer'): ?>
-                                      <!-- Plot Transfer Details -->
-                                      <div class="card border-0 bg-light p-3">
-                                        <div class="row g-3">
-                                          <div class="col-md-6">
-                                            <strong class="text-muted small d-block mb-2">Previous Plot</strong>
-                                            <div class="d-flex flex-column gap-1">
-                                              <div><span class="text-muted">Project:</span> <strong><?= htmlspecialchars($transfer->previous_project ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Block:</span> <strong><?= htmlspecialchars($transfer->previous_block ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Plot:</span> <strong><?= htmlspecialchars($transfer->previous_plot ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Road:</span> <strong><?= htmlspecialchars($transfer->previous_road ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Katha:</span> <strong><?= htmlspecialchars($transfer->previous_katha ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Rate:</span> <strong>৳<?= number_format($transfer->previous_per_katha ?? 0, 2) ?>/katha</strong></div>
-                                            </div>
-                                          </div>
-                                          <div class="col-md-6">
-                                            <strong class="text-muted small d-block mb-2">New Plot</strong>
-                                            <div class="d-flex flex-column gap-1">
-                                              <div><span class="text-muted">Project:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_project ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Block:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_block ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Plot:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_plot ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Road:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_road ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Katha:</span> <strong class="text-success"><?= htmlspecialchars($transfer->new_katha ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Rate:</span> <strong class="text-success">৳<?= number_format($transfer->new_per_katha ?? 0, 2) ?>/katha</strong></div>
-                                            </div>
-                                          </div>
-                                          <?php if (!empty($transfer->reason)): ?>
-                                          <div class="col-12 mt-2">
-                                            <strong class="text-muted small d-block mb-1">Reason</strong>
-                                            <div class="fw-medium"><?= htmlspecialchars($transfer->reason) ?></div>
-                                          </div>
-                                          <?php endif; ?>
-                                          <?php if (!empty($transfer->transfer_fee_amount) && $transfer->transfer_fee_amount > 0): ?>
-                                          <div class="col-12">
-                                            <strong class="text-muted small d-block mb-1">Transfer Fee</strong>
-                                            <div class="fw-medium">৳<?= number_format($transfer->transfer_fee_amount, 2) ?></div>
-                                          </div>
-                                          <?php endif; ?>
-                                        </div>
-                                      </div>
-
-                                    <?php elseif ($t_type === 'cancel_plot'): ?>
-                                      <!-- Cancellation Details -->
-                                      <div class="card border-0 bg-light p-3">
-                                        <div class="row g-3">
-                                          <div class="col-12">
-                                            <strong class="text-muted small d-block mb-2">Cancelled Plot</strong>
-                                            <div class="d-flex flex-column gap-1">
-                                              <div><span class="text-muted">Project:</span> <strong><?= htmlspecialchars($transfer->previous_project ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Block:</span> <strong><?= htmlspecialchars($transfer->previous_block ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Plot:</span> <strong><?= htmlspecialchars($transfer->previous_plot ?? 'N/A') ?></strong></div>
-                                              <div><span class="text-muted">Katha:</span> <strong><?= htmlspecialchars($transfer->previous_katha ?? 'N/A') ?></strong></div>
-                                            </div>
-                                          </div>
-                                          <?php if (!empty($transfer->reason)): ?>
-                                          <div class="col-12">
-                                            <strong class="text-muted small d-block mb-1">Cancellation Reason</strong>
-                                            <div class="fw-medium text-danger"><?= htmlspecialchars($transfer->reason) ?></div>
-                                          </div>
-                                          <?php endif; ?>
-                                          <?php if (!empty($transfer->transfer_fee_amount) && $transfer->transfer_fee_amount > 0): ?>
-                                          <div class="col-12">
-                                            <strong class="text-muted small d-block mb-1">Cancellation Fee</strong>
-                                            <div class="fw-medium">৳<?= number_format($transfer->transfer_fee_amount, 2) ?></div>
-                                          </div>
-                                          <?php endif; ?>
-                                        </div>
-                                      </div>
-                                    <?php endif; ?>
-
-                                    <?php if (!empty($transfer->notes)): ?>
-                                    <div class="mt-2">
-                                      <small class="text-muted">
-                                        <i class="lni lni-text-format me-1"></i>
-                                        <strong>Notes:</strong> <?= htmlspecialchars($transfer->notes) ?>
-                                      </small>
-                                    </div>
-                                    <?php endif; ?>
-                                  </div>
-                                </div>
-                              </div>
-                              <?php endforeach; ?>
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                    <?php endif; ?>
-
-                    <?php endforeach; ?>
-                    <?php endif; ?>
-                  </tbody>
-                </table>
-              </div>
-
-              <?= Wo_LoadManagePage('clients/add_purchase_form', ['get_nominees' => $get_nominees]) ?>
-
-            </div>
-          </div>
 
           <!-- Client Details Card -->
           <div class="card mt-4 border-0 shadow-sm">
@@ -968,114 +501,772 @@ ion-icon {
           </div>
         </section>
 
-        <!-- Analytics Cards Section -->
+        <!-- Analytics Cards Section - Per Purchase -->
         <section id="client_analytics" class="no-print mt-4 px-4 mb-4">
-          <h5 class="fw-bold mb-3">Client Analytics & Key Metrics</h5>
+          <h5 class="fw-bold mb-3">Purchase Analytics & Key Metrics</h5>
           
-          <div class="row g-3">
-            <!-- Total Investment -->
-            <div class="col-md-3 col-sm-6">
-              <div class="card h-100 border-0 shadow-sm analytics-card">
-                <div class="card-body">
-                  <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                      <p class="text-muted mb-1 small fw-medium">Total Investment</p>
-                      <h4 class="mb-0 fw-bold text-primary">৳<?php echo number_format($total_amount, 0); ?></h4>
-                      <small class="text-success">
-                        <i class="lni lni-trending-up"></i> 
-                        <?php echo count($wo['booking_helper'] ?? []); ?> plots
-                      </small>
-                    </div>
-                    <div class="fs-3 text-primary opacity-50">
-                      <ion-icon name="bag-handle-sharp"></ion-icon>
-                    </div>
+<?php
+                  
+// Pre-calculate purchase counts per project for merge logic
+$project_counts = [];
+$client_purchases = []; // Array to store all purchases for JS
+if (isset($wo['booking_helper']) && !empty($wo['booking_helper'])) {
+    foreach ($wo['booking_helper'] as $bh) {
+        if (!empty($bh['booking_id'])) {
+            $b_info = $db->where('id', $bh['booking_id'])->getOne('wo_booking', ['project']);
+            if ($b_info && !empty($b_info->project)) {
+                $p_name = $b_info->project;
+                if (!isset($project_counts[$p_name])) $project_counts[$p_name] = 0;
+                $project_counts[$p_name]++;
+            }
+        }
+    }
+}
+
+if (isset($wo['booking_helper']) && !empty($wo['booking_helper'])) {
+    foreach ($wo['booking_helper'] as $index => $bh) {
+        $purchase_id = $bh['id'];
+        $is_cancelled = ($bh['status'] == 4);
+        
+        // Fetch Booking Details
+        $booking = [];
+        $proj_html = 'N/A';
+        $current_project_name = '';
+        if (!empty($bh['booking_id'])) {
+            $booking_obj = $db->where('id', $bh['booking_id'])->getOne('wo_booking');
+            if ($booking_obj) {
+                // Convert object to array for easier usage if needed, or use object syntax
+                $booking = (array)$booking_obj; 
+                $proj_html = htmlspecialchars(ucwords(str_replace('-', ' ', $booking['project'])), ENT_QUOTES);
+                $current_project_name = $booking['project'];
+            }
+        }
+
+        // Fetch Nominees
+        $nominee_ids = [];
+        $raw_nom_ids = $bh['nominee_ids'] ?? ($booking['nominee_ids'] ?? null);
+        if (!empty($raw_nom_ids)) {
+            $decoded = json_decode($raw_nom_ids, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $nominee_ids = array_map('intval', $decoded);
+            } else {
+                $s = trim((string)$raw_nom_ids, "[] \t\n\r\0\x0B");
+                if ($s !== '') {
+                    $sep = (strpos($s, '|') !== false) ? '|' : ',';
+                    $nominee_ids = array_map('intval', array_filter(explode($sep, $s)));
+                }
+            }
+        }
+        
+        $i_nominee = [];
+        $ii_nominee = [];
+        if (!empty($nominee_ids)) {
+            $rows = $db->where('id', $nominee_ids, 'IN')->get('crm_nominees', null, 'id, name, address, birthday, share_parcent, relation, phone');
+            $rows_by_id = [];
+            foreach ($rows as $r) $rows_by_id[(int)$r->id] = (array)$r; // Convert to array here
+            
+            $count = 0;
+            foreach ($nominee_ids as $nid) {
+                if (!isset($rows_by_id[$nid])) continue;
+                if ($count === 0) $i_nominee = $rows_by_id[$nid];
+                elseif ($count === 1) $ii_nominee = $rows_by_id[$nid];
+                $count++;
+            }
+        }
+        
+        // Transfer History
+        $transfer_history = [];
+        $latest_transfer = null;
+        try {
+            $transfers = $db->where('original_purchase_id', $purchase_id)->orderBy('transfer_date', 'DESC')->get('crm_purchase_transfer_history');
+            if (!empty($transfers)) {
+                $transfer_history = $transfers;
+                $latest_transfer = $transfers[0];
+            }
+        } catch (Exception $e) {}
+        
+        // Installments (for print form)
+        $installments = [];
+        $rawInst = $bh['installment'] ?? ($booking['installments'] ?? null);
+        if (!empty($rawInst)) {
+            $dec = json_decode($rawInst, true);
+            if (json_last_error() === JSON_ERROR_NONE) $installments = (array)$dec;
+        }
+
+        // --- 2. Generate Hidden Print Form ---
+        echo Wo_LoadManagePage('clients/booking_form_template', [
+            'p' => $bh,
+            'index' => $index,
+            'client' => $wo['client'], // Use the main client data
+            'booking' => $booking,
+            'proj_html' => $proj_html,
+            'i_nominee' => $i_nominee,
+            'ii_nominee' => $ii_nominee,
+            'installments' => $installments
+        ]);
+
+        // --- 3. Metrics Calculation ---
+        // 1. Get Real-time Payment Data from crm_payment_schedule
+        $payment_stats = $db->where('purchase_id', $purchase_id)->where('status', '99', '!=')->getOne('crm_payment_schedule', 'SUM(installment_amount) as total_amount, SUM(paid_amount) as total_paid, COUNT(*) as total_installments');
+        $pending_count = $db->where('purchase_id', $purchase_id)->where('status', 0)->getValue('crm_payment_schedule', 'count(*)');
+        $overdue_count = $db->where('purchase_id', $purchase_id)->where('status', 3)->getValue('crm_payment_schedule', 'count(*)');
+        
+        // New Advanced Metrics
+        // Late Payments: Based on late_fee_amount (Interest)
+        // User Rule: "Late Payment History are actually interest basis"
+        // We sum late_fee_amount where it is > 0
+        $late_stats = $db->where('purchase_id', $purchase_id)
+                     ->where('late_fee_amount', 0, '>')
+                     ->getOne('crm_payment_schedule', 'SUM(late_fee_amount) as total_late_fee, COUNT(*) as late_count');
+
+        // --- 4. Pending Change Status Fetching ---
+        $pending_status = null;
+        $pending_details = [];
+        
+        // Check Merge Requests
+        if ($db->tableExists('crm_merge_requests')) {
+            $merge = $db->where('source_purchase_id', $purchase_id)
+                        ->orWhere('target_purchase_id', $purchase_id)
+                        ->orderBy('created_at', 'DESC')
+                        ->getOne('crm_merge_requests');
+            if ($merge) {
+                if ($merge->approval_status == 'pending') {
+                    $pending_status = 'merge_pending';
+                    $pending_details = ['type' => 'Merge', 'date' => $merge->created_at];
+                } elseif ($merge->approval_status == 'rejected' && strtotime($merge->updated_at) > strtotime('-7 days')) {
+                    $pending_status = 'merge_rejected';
+                    $pending_details = ['type' => 'Merge', 'reason' => $merge->rejection_reason, 'date' => $merge->updated_at];
+                } elseif ($merge->approval_status == 'approved' && strtotime($merge->updated_at) > strtotime('-7 days')) {
+                    $pending_status = 'merge_approved';
+                    $pending_details = ['type' => 'Merge', 'date' => $merge->updated_at];
+                }
+            }
+        }
+
+        // Check Transfer History (if no merge pending)
+        if (!$pending_status && $db->tableExists('crm_transfer_history')) {
+            $transfer = $db->where('purchase_id', $purchase_id)
+                           ->orderBy('created_at', 'DESC')
+                           ->getOne('crm_transfer_history');
+            if ($transfer) {
+                $t_type = ucwords(str_replace('_', ' ', $transfer->transfer_type ?? 'Transfer'));
+                if ($transfer->status == 'pending') {
+                    $pending_status = 'transfer_pending';
+                    $pending_details = ['type' => $t_type, 'date' => $transfer->created_at];
+                } elseif ($transfer->status == 'denied' && strtotime($transfer->updated_at) > strtotime('-7 days')) {
+                    $pending_status = 'transfer_rejected';
+                    $pending_details = ['type' => $t_type, 'reason' => $transfer->rejection_reason ?? 'No reason', 'date' => $transfer->updated_at];
+                }
+            }
+        }
+
+        // Check Generic Pending Changes (Reschedule etc)
+        if (!$pending_status && $db->tableExists('crm_pending_changes')) {
+            $change = $db->where('purchase_id', $purchase_id)
+                         ->orderBy('created_at', 'DESC')
+                         ->getOne('crm_pending_changes');
+            if ($change) {
+                $c_type = ucwords(str_replace('_', ' ', $change->change_type));
+                if ($change->status == 'pending') {
+                    $pending_status = $change->change_type . '_pending';
+                    $pending_details = ['type' => $c_type, 'date' => $change->created_at];
+                } elseif ($change->status == 'denied' && strtotime($change->updated_at) > strtotime('-7 days')) {
+                    $pending_status = $change->change_type . '_rejected';
+                    $pending_details = ['type' => $c_type, 'reason' => $change->reason ?? 'No reason', 'date' => $change->updated_at];
+                }
+            }
+        }
+
+        
+        $late_count = $late_stats->count ?? 0;
+        $late_value = $late_stats->total_late_fee ?? 0;
+
+        // Overdue Value: Due date passed and not fully paid
+        // We can sum (installment_amount - paid_amount) for overdue rows
+        // Or use overdue_fee_amount if that's what user implies, but usually "Overdue Value" means the principal overdue.
+        // User said: "over dues value (from last paid to this month) also if some installment has overdues or partially paid, that also will be count."
+        // So it is the remaining balance of overdue installments.
+        $overdue_stats = $db->where('purchase_id', $purchase_id)
+                            ->where('due_date < CURDATE()')
+                            ->where('status', 1, '!=') // Not fully paid
+                            ->getOne('crm_payment_schedule', 'COUNT(*) as count, SUM(installment_amount - paid_amount) as total_due');
+        
+        $overdue_metric_count = $overdue_stats->count ?? 0;
+        $overdue_value = $overdue_stats->total_due ?? 0;
+
+        // Basic amounts
+        $booking_money = floatval($bh['booking_money'] ?? 0);
+        $down_payment = floatval($bh['down_payment'] ?? 0);
+        $booking_paid = !empty($bh['booking_payment_date']);
+        $down_paid = !empty($bh['down_payment_date']);
+        
+        // Grand Totals
+        $total_installments_amount = floatval($payment_stats->total_amount ?? 0);
+        $total_installments_paid = floatval($payment_stats->total_paid ?? 0);
+        
+        $grand_total = $booking_money + $down_payment + $total_installments_amount;
+        $total_paid_overall = $total_installments_paid + ($booking_paid ? $booking_money : 0) + ($down_paid ? $down_payment : 0);
+        $remaining = $grand_total - $total_paid_overall;
+        $completion_pct = $grand_total > 0 ? ($total_paid_overall / $grand_total) * 100 : 0;
+        
+        // Refund Data
+        $refund_data = [];
+        if ($is_cancelled) {
+            $refund_info = get_refund_summary_v2($purchase_id);
+            if ($refund_info) {
+                $refund_data = [
+                    'total_paid' => floatval($refund_info['total_paid_amount']),
+                    'deduction' => floatval($refund_info['deduction_amount']),
+                    'refundable' => floatval($refund_info['refundable_amount']),
+                    'refunded' => floatval($refund_info['total_refunded']),
+                    'status' => ($refund_info['refundable_amount'] == 0) ? '1' : '0'
+                ];
+            } else {
+                $refund_data = ['total_paid' => $total_paid_overall, 'deduction' => 0, 'refundable' => $total_paid_overall, 'refunded' => 0, 'status' => 0];
+            }
+        }
+        
+        // Plot Info
+        $plot_info = '';
+        if (!empty($bh['booking_id'])) {
+            // Re-use the booking object fetched earlier
+            if ($booking) {
+                $plot_info = $booking['project'] . ' - Block ' . $booking['block'] . ', Plot ' . $booking['plot'] . ' (' . $booking['katha'] . ' Katha)';
+            }
+        }
+        
+        // Status badge
+        $status_badges = [
+            0 => '<span class="badge bg-secondary">Available</span>',
+            1 => '<span class="badge bg-info">Booked</span>',
+            2 => '<span class="badge bg-success">Sold</span>',
+            3 => '<span class="badge bg-primary">Complete</span>',
+            4 => '<span class="badge bg-danger">Cancelled</span>'
+        ];
+        $status_badge = $status_badges[$bh['status']] ?? '';
+        $pending_badge = !empty($bh['has_pending_changes']) ? '<span class="badge bg-warning ms-2"><i class="lni lni-hourglass"></i> Pending Approval</span>' : '';
+        
+        // Merge Eligibility
+        $can_merge = false;
+        if ($current_project_name && isset($project_counts[$current_project_name]) && $project_counts[$current_project_name] > 1) {
+            $can_merge = true;
+        }
+        
+        // Add to client purchases list for JS
+        $client_purchases[] = [
+            'id' => $purchase_id,
+            'client_id' => $wo['client']['id'],
+            'file_num' => $bh['file_num'] ?? 'N/A',
+            'project' => $booking['project'] ?? '',
+            'block' => $booking['block'] ?? '',
+            'plot' => $booking['plot'] ?? '',
+            'katha' => $booking['katha'] ?? '',
+            'client_name' => $wo['client']['name'],
+            'total_paid' => (float)($payment_stats->total_paid ?? 0),
+            'pending_status' => $pending_status
+        ];
+?>
+            
+            <!-- Status Badges -->
+            <?php if ($pending_status): ?>
+                <div class="mb-2">
+                    <?php if (strpos($pending_status, '_pending') !== false): ?>
+                        <span class="badge bg-warning text-dark">
+                            <i class="lni lni-timer me-1"></i><?= $pending_details['type'] ?> Request Pending
+                        </span>
+                    <?php elseif (strpos($pending_status, '_rejected') !== false): ?>
+                        <div class="alert alert-danger py-1 px-2 mb-0 small">
+                            <strong><i class="lni lni-close me-1"></i><?= $pending_details['type'] ?> Denied:</strong> 
+                            <?= htmlspecialchars($pending_details['reason']) ?>
+                        </div>
+                    <?php elseif (strpos($pending_status, '_approved') !== false): ?>
+                         <span class="badge bg-success">
+                            <i class="lni lni-checkmark-circle me-1"></i><?= $pending_details['type'] ?> Approved
+                        </span>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($bh['has_pending_changes'] == 1 && !$pending_status): ?>
+                <!-- Fallback if has_pending_changes is 1 but we didn't find specific record (e.g. old data) -->
+                <span class="badge bg-warning text-dark mb-2"><i class="lni lni-timer me-1"></i>Pending Action</span>
+            <?php endif; ?> 
+          <!-- Unified Purchase Card #<?php echo ($index + 1); ?> -->
+          <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-gradient-primary text-white py-3">
+              <div class="d-flex justify-content-between align-items-center">
+                <div>
+                  <h6 class="mb-1 fw-bold">
+                    <i class="lni lni-home"></i> Purchase #<?php echo ($index + 1); ?> - File: <?php echo $bh['file_num'] ?? 'N/A'; ?>
+                  </h6>
+                  <div class="small opacity-75">
+                    <?php 
+                      echo $plot_info; 
+                      echo ' | Purchase Date: ' . date('d M Y', $bh['time']); 
+                      
+                      if ($bh['status'] == 4) {
+                          $cancel_date = 'N/A';
+                          // Try to find cancel date from transfer history
+                          if (!empty($transfer_history)) {
+                              foreach ($transfer_history as $th) {
+                                  if (($th['transfer_type'] ?? '') == 'cancel' && $th['status'] == 'approved') {
+                                      $cancel_date = date('d M Y', strtotime($th['updated_at']));
+                                      break;
+                                  }
+                              }
+                          }
+                          // Fallback to booking helper cancel_date if available and not 0
+                          if ($cancel_date == 'N/A' && !empty($bh['cancel_date']) && $bh['cancel_date'] != '0' && $bh['cancel_date'] != '0000-00-00 00:00:00') {
+                              $cancel_date = date('d M Y', strtotime($bh['cancel_date']));
+                          }
+                          echo ' | <span class="text-warning">Cancelled: ' . $cancel_date . '</span>';
+                      }
+                    ?>
+                  </div>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                  <?php echo $status_badge . $pending_badge; ?>
+                  
+                  <!-- Actions Dropdown -->
+                  <div class="dropdown ms-2">
+                    <button class="btn btn-sm btn-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                      <i class="lni lni-cog"></i> Actions
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                      <?php 
+                        $is_pending_any = !empty($pending_status) && strpos($pending_status, '_pending') !== false;
+                        $is_merge_pending = $pending_status === 'merge_pending';
+                        $is_transfer_pending = $pending_status === 'transfer_pending';
+                        $is_reschedule_pending = $pending_status === 'reschedule_pending';
+                      ?>
+                      <li>
+                        <a class="dropdown-item print-booking-form" href="javascript:;" data-id="<?= $purchase_id ?>">
+                          <i class="lni lni-printer me-2 text-primary"></i> Print Booking Form
+                        </a>
+                      </li>
+                      <li>
+                        <a class="dropdown-item manage-schedule <?= $is_reschedule_pending ? 'disabled' : '' ?>" href="javascript:;" data-id="<?= $purchase_id ?>">
+                          <i class="lni lni-calendar me-2 text-primary"></i> Manage Schedule
+                        </a>
+                      </li>
+                      <li>
+                        <a class="dropdown-item preview-schedule" href="javascript:;" data-id="<?= $purchase_id ?>">
+                          <i class="lni lni-eye me-2 text-primary"></i> Preview Schedule
+                        </a>
+                      </li>
+                      <li>
+                        <a class="dropdown-item download-schedule" href="javascript:;" data-id="<?= $purchase_id ?>">
+                          <i class="lni lni-download me-2 text-success"></i> Download Schedule
+                        </a>
+                      </li>
+                      <li><hr class="dropdown-divider"></li>
+                      <li>
+                        <a class="dropdown-item transfer-plot <?= $is_transfer_pending ? 'disabled' : '' ?>" href="javascript:;" data-id="<?= $purchase_id ?>" data-tab="name">
+                          <i class="lni lni-shuffle me-2 text-warning"></i> Transfer Ownership
+                        </a>
+                      </li>
+                      <li>
+                        <a class="dropdown-item transfer-plot <?= $is_transfer_pending ? 'disabled' : '' ?>" href="javascript:;" data-id="<?= $purchase_id ?>" data-tab="plot">
+                          <i class="lni lni-map me-2 text-warning"></i> Change Plot
+                        </a>
+                      </li>
+                      <?php if ($can_merge): ?>
+                      <li>
+                        <a class="dropdown-item merge-purchase <?= ($is_merge_pending || $is_pending_any) ? 'disabled' : '' ?>" href="javascript:;" data-id="<?= $purchase_id ?>">
+                          <i class="lni lni-merge me-2 text-info"></i> Merge Purchase
+                        </a>
+                      </li>
+                      <?php endif; ?>
+                      <li><hr class="dropdown-divider"></li>
+                      <li>
+                        <a class="dropdown-item manage-refund" href="javascript:;" data-id="<?= $purchase_id ?>">
+                          <i class="lni lni-money-location me-2 text-danger"></i> Manage Refund
+                        </a>
+                      </li>
+                      <li>
+                        <a class="dropdown-item transfer-plot <?= ($is_transfer_pending || $is_pending_any) ? 'disabled' : '' ?>" href="javascript:;" data-id="<?= $purchase_id ?>" data-tab="cancel">
+                          <i class="lni lni-close me-2 text-danger"></i> Cancel Purchase
+                        </a>
+                      </li>
+                    </ul>
                   </div>
                 </div>
               </div>
             </div>
-
-            <!-- Total Paid -->
-            <div class="col-md-3 col-sm-6">
-              <div class="card h-100 border-0 shadow-sm analytics-card">
-                <div class="card-body">
-                  <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                      <p class="text-muted mb-1 small fw-medium">Total Paid</p>
-                      <h4 class="mb-0 fw-bold text-success">৳<?php echo number_format($total_paid, 0); ?></h4>
-                      <small class="text-info">
-                        <span class="badge bg-success"><?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%</span> Completed
-                      </small>
-                    </div>
-                    <div class="fs-3 text-success opacity-50">
-                      <ion-icon name="checkmark-circle"></ion-icon>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Remaining Due -->
-            <div class="col-md-3 col-sm-6">
-              <div class="card h-100 border-0 shadow-sm analytics-card">
-                <div class="card-body">
-                  <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                      <p class="text-muted mb-1 small fw-medium">Remaining Due</p>
-                      <h4 class="mb-0 fw-bold text-warning">৳<?php echo number_format($total_due, 0); ?></h4>
-                      <small class="text-muted">
-                        <?php echo round(($total_due / ($total_amount ?: 1)) * 100, 1); ?>% Remaining
-                      </small>
-                    </div>
-                    <div class="fs-3 text-warning opacity-50">
-                      <ion-icon name="time"></ion-icon>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Invoice Count -->
-            <div class="col-md-3 col-sm-6">
-              <div class="card h-100 border-0 shadow-sm analytics-card">
-                <div class="card-body">
-                  <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                      <p class="text-muted mb-1 small fw-medium">Invoices</p>
-                      <h4 class="mb-0 fw-bold text-info"><?php echo $total_invoice; ?></h4>
-                      <small class="text-muted">Total Transactions</small>
-                    </div>
-                    <div class="fs-3 text-info opacity-50">
-                      <ion-icon name="document"></ion-icon>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Progress Chart -->
-          <div class="card border-0 shadow-sm mt-3">
+            
             <div class="card-body">
-              <h6 class="fw-bold mb-3">Payment Progress</h6>
-              <div class="progress" style="height: 30px; border-radius: 8px;">
-                <div class="progress-bar bg-success" role="progressbar" style="width: <?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%">
-                  <small class="text-white fw-bold">Paid: <?php echo round(($total_paid / ($total_amount ?: 1)) * 100, 1); ?>%</small>
+              <!-- Purchase Details Grid -->
+              <div class="row g-3 mb-4 border-bottom pb-4">
+                <div class="col-md-3 col-6">
+                  <small class="text-muted d-block">Project</small>
+                  <span class="fw-medium"><?php echo $proj_html; ?></span>
+                </div>
+                <div class="col-md-2 col-6">
+                  <small class="text-muted d-block">Block/Road</small>
+                  <span class="fw-medium"><?php echo ($booking['block'] ?? '-') . ' / ' . ($booking['road'] ?? '-'); ?></span>
+                </div>
+                <div class="col-md-2 col-6">
+                  <small class="text-muted d-block">Plot No</small>
+                  <span class="fw-medium"><?php echo $booking['plot'] ?? '-'; ?></span>
+                </div>
+                <div class="col-md-2 col-6">
+                  <small class="text-muted d-block">Size</small>
+                  <span class="fw-medium"><?php echo ($booking['katha'] ?? '-') . ' Katha'; ?></span>
+                </div>
+                <div class="col-md-3 col-12">
+                  <small class="text-muted d-block">Nominees</small>
+                  <?php if (!empty($i_nominee)): ?>
+                    <span class="fw-medium d-block"><?php echo htmlspecialchars($i_nominee['name'] ?? ''); ?> <small class="text-muted">(<?php echo $i_nominee['relation'] ?? ''; ?>)</small></span>
+                  <?php endif; ?>
+                  <?php if (!empty($ii_nominee)): ?>
+                    <span class="fw-medium d-block"><?php echo htmlspecialchars($ii_nominee['name'] ?? ''); ?> <small class="text-muted">(<?php echo $ii_nominee['relation'] ?? ''; ?>)</small></span>
+                  <?php endif; ?>
+                  <?php if (empty($i_nominee) && empty($ii_nominee)) echo '<span class="text-muted">-</span>'; ?>
                 </div>
               </div>
-              <div class="row mt-3 text-center small">
-                <div class="col">
-                  <strong>৳<?php echo number_format($total_paid, 0); ?></strong><br><small class="text-muted">Paid Amount</small>
+            </div>
+            
+            <div class="card-body">
+              <!-- Key Metrics Row -->
+              <div class="row g-3 mb-4">
+                <div class="col-lg-3 col-md-6">
+                  <div class="card h-100 border-0 bg-light">
+                    <div class="card-body text-center">
+                      <i class="lni lni-money-protection fs-3 text-primary mb-2"></i>
+                      <p class="text-muted small mb-1">Total Investment</p>
+                      <h4 class="mb-0 fw-bold text-primary">৳<?php echo number_format($grand_total, 0); ?></h4>
+                    </div>
+                  </div>
                 </div>
-                <div class="col">
-                  <strong>৳<?php echo number_format($total_amount, 0); ?></strong><br><small class="text-muted">Total Amount</small>
+                <div class="col-lg-3 col-md-6">
+                  <div class="card h-100 border-0 bg-light">
+                    <div class="card-body text-center">
+                      <i class="lni lni-check-box fs-3 text-success mb-2"></i>
+                      <p class="text-muted small mb-1">Total Paid</p>
+                      <h4 class="mb-0 fw-bold text-success">৳<?php echo number_format($total_paid_overall, 0); ?></h4>
+                    </div>
+                  </div>
                 </div>
-                <div class="col">
-                  <strong>৳<?php echo number_format($total_due, 0); ?></strong><br><small class="text-muted">Remaining Due</small>
+                <div class="col-lg-3 col-md-6">
+                  <div class="card h-100 border-0 bg-light">
+                    <div class="card-body text-center">
+                      <i class="lni lni-warning fs-3 text-warning mb-2"></i>
+                      <p class="text-muted small mb-1">Balance Due</p>
+                      <h4 class="mb-0 fw-bold text-warning">৳<?php echo number_format($remaining, 0); ?></h4>
+                    </div>
+                  </div>
                 </div>
+                <div class="col-lg-3 col-md-6">
+                  <div class="card h-100 border-0 bg-light">
+                    <div class="card-body text-center">
+                      <i class="lni lni-pie-chart fs-3 text-info mb-2"></i>
+                      <p class="text-muted small mb-1">Completion</p>
+                      <h4 class="mb-0 fw-bold text-info"><?php echo number_format($completion_pct, 1); ?>%</h4>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Advanced Metrics Row (Late & Overdue) -->
+              <div class="row g-3 mb-4">
+                <div class="col-md-6">
+                  <div class="card h-100 border-0 bg-light">
+                    <div class="card-body d-flex align-items-center justify-content-between">
+                      <div>
+                        <h6 class="text-danger fw-bold mb-1">Overdue Payments</h6>
+                        <div class="small text-muted">
+                          <span class="fw-bold text-dark"><?php echo $overdue_metric_count; ?></span> installments overdue
+                        </div>
+                      </div>
+                      <div class="text-end">
+                        <h4 class="mb-0 fw-bold text-danger">৳<?php echo number_format($overdue_value, 0); ?></h4>
+                        <small class="text-danger">Total Overdue</small>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="card h-100 border-0 bg-light">
+                    <div class="card-body d-flex align-items-center justify-content-between">
+                      <div>
+                        <h6 class="text-warning fw-bold mb-1">Late Payment History</h6>
+                        <div class="small text-muted">
+                          <span class="fw-bold text-dark"><?php echo $late_count; ?></span> installments with interest
+                        </div>
+                      </div>
+                      <div class="text-end">
+                        <h4 class="mb-0 fw-bold text-warning">৳<?php echo number_format($late_value, 0); ?></h4>
+                        <small class="text-warning">Total Interest</small>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <?php if ($is_cancelled) { 
+                  $refund_status_text = $refund_data['status'] == 1 ? 'Paid' : 'Pending';
+                  $refund_status_class = $refund_data['status'] == 1 ? 'bg-success' : 'bg-warning';
+              ?>
+                <!-- Refund Summary for Cancelled Purchase -->
+                <div class="alert alert-danger mb-4">
+                  <h6 class="alert-heading"><i class="lni lni-cross-circle"></i> Purchase Cancelled</h6>
+                  <p class="mb-0 small">This purchase has been cancelled. Refund process details below.</p>
+                </div>
+                
+                <div class="row g-3 mb-4">
+                  <div class="col-md-3">
+                    <div class="card border-0 bg-light">
+                      <div class="card-body text-center">
+                        <small class="text-muted">Total Paid</small>
+                        <h5 class="mb-0 text-danger">৳<?php echo number_format($refund_data['total_paid'], 0); ?></h5>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="card border-0 bg-light">
+                      <div class="card-body text-center">
+                        <small class="text-muted">Deduction</small>
+                        <h5 class="mb-0 text-warning">৳<?php echo number_format($refund_data['deduction'], 0); ?></h5>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="card border-0 bg-light">
+                      <div class="card-body text-center">
+                        <small class="text-muted">Refundable</small>
+                        <h5 class="mb-0 text-success">৳<?php echo number_format($refund_data['refundable'], 0); ?></h5>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="card border-0 bg-light">
+                      <div class="card-body text-center">
+                        <small class="text-muted">Refund Status</small>
+                        <h5 class="mb-0 text-info"><span class="badge <?php echo $refund_status_class; ?>"><?php echo $refund_status_text; ?></span></h5>
+                        <?php if($refund_data['refunded'] > 0) { ?>
+                            <small class="d-block text-success mt-1">Paid: ৳<?php echo number_format($refund_data['refunded'], 0); ?></small>
+                        <?php } ?>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              <?php } else { ?>
+                <!-- Payment Progress Bar -->
+                <div class="mb-4">
+                  <div class="d-flex justify-content-between mb-2">
+                    <span class="text-muted small">Payment Progress</span>
+                    <span class="small fw-bold"><?php echo number_format($completion_pct, 1); ?>%</span>
+                  </div>
+                  <div class="progress" style="height: 25px; border-radius: 8px;">
+                    <div class="progress-bar bg-gradient-success" role="progressbar" 
+                         style="width: <?php echo $completion_pct; ?>%"
+                         aria-valuenow="<?php echo $completion_pct; ?>" aria-valuemin="0" aria-valuemax="100">
+                      <strong><?php echo number_format($completion_pct, 1); ?>%</strong>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Payment Breakdown -->
+                <div class="row g-3 mb-4">
+                  <div class="col-md-4">
+                    <div class="d-flex justify-content-between p-3 border rounded">
+                      <span class="text-muted">Booking Money</span>
+                      <strong class="<?php echo $booking_paid ? 'text-success' : 'text-warning'; ?>">
+                        ৳<?php echo number_format($booking_money, 0); ?>
+                        <?php if ($booking_paid) echo '<i class="lni lni-checkmark ms-1"></i>'; ?>
+                      </strong>
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="d-flex justify-content-between p-3 border rounded">
+                      <span class="text-muted">Down Payment</span>
+                      <strong class="<?php echo $down_paid ? 'text-success' : 'text-warning'; ?>">
+                        ৳<?php echo number_format($down_payment, 0); ?>
+                        <?php if ($down_paid) echo '<i class="lni lni-checkmark ms-1"></i>'; ?>
+                      </strong>
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="d-flex justify-content-between p-3 border rounded">
+                      <span class="text-muted">Installments</span>
+                      <strong class="text-primary">
+                        ৳<?php echo number_format($total_installments_paid, 0); ?> / ৳<?php echo number_format($total_installments_amount, 0); ?>
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Installment Status -->
+                <div class="row g-3">
+                  <div class="col-md-4">
+                    <div class="card border-0 bg-light bg-opacity-10">
+                      <div class="card-body text-center">
+                        <small class="text-muted">Total Installments</small>
+                        <h5 class="mb-0 text-info"><?php echo $payment_stats->total_installments ?? 0; ?></h5>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="card border-0 bg-light bg-opacity-10">
+                      <div class="card-body text-center">
+                        <small class="text-muted">Pending</small>
+                        <h5 class="mb-0 text-warning"><?php echo $pending_count ?? 0; ?></h5>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="card border-0 bg-light bg-opacity-10">
+                      <div class="card-body text-center">
+                        <small class="text-muted">Overdue</small>
+                        <h5 class="mb-0 text-danger"><?php echo $overdue_count ?? 0; ?></h5>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              <?php } ?>
+              <!-- Transfer History (Collapsible) -->
+              <?php if (!empty($transfer_history)): ?>
+              <div class="mt-4 border-top pt-3">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <h6 class="mb-0 fw-bold text-muted"><i class="lni lni-history"></i> Transfer History</h6>
+                  <button class="btn btn-sm btn-link text-decoration-none toggle-history" data-id="<?= $purchase_id ?>">
+                    <i class="lni lni-chevron-down"></i> Show History (<?= count($transfer_history) ?>)
+                  </button>
+                </div>
+                
+                <div id="transferHistoryRow_<?= $purchase_id ?>" style="display: none;">
+                  <div class="timeline ps-3 border-start ms-2">
+                    <?php foreach ($transfer_history as $t_idx => $transfer): 
+                        $t_type = $transfer->transfer_type ?? '';
+                        $t_date = $transfer->transfer_date ? date('d M Y', strtotime($transfer->transfer_date)) : '';
+                    ?>
+                    <div class="mb-4 position-relative">
+                      <div class="position-absolute top-0 start-0 translate-middle bg-white border border-2 border-primary rounded-circle" style="width: 12px; height: 12px; left: -1px;"></div>
+                      <div class="ps-3">
+                        <div class="d-flex justify-content-between">
+                          <strong>
+                            <?php 
+                            if ($t_type == 'name_transfer') echo 'Ownership Transfer';
+                            elseif ($t_type == 'plot_transfer') echo 'Plot Change';
+                            elseif ($t_type == 'cancel_plot') echo 'Cancellation';
+                            else echo 'Transfer';
+                            ?>
+                          </strong>
+                          <small class="text-muted"><?= $t_date ?></small>
+                        </div>
+                        <div class="bg-light p-2 rounded mt-1 small">
+                          <?php if ($t_type == 'name_transfer'): ?>
+                            <div>From: <?= htmlspecialchars($transfer->previous_client_name ?? '') ?></div>
+                            <div>To: <span class="text-success"><?= htmlspecialchars($transfer->new_client_name ?? '') ?></span></div>
+                          <?php elseif ($t_type == 'plot_transfer'): ?>
+                            <div>From: <?= htmlspecialchars($transfer->previous_plot ?? '') ?></div>
+                            <div>To: <span class="text-success"><?= htmlspecialchars($transfer->new_plot ?? '') ?></span></div>
+                          <?php endif; ?>
+                          <?php if (!empty($transfer->reason)): ?>
+                            <div class="text-muted mt-1">Reason: <?= htmlspecialchars($transfer->reason) ?></div>
+                          <?php endif; ?>
+                        </div>
+                      </div>
+                    </div>
+                    <?php endforeach; ?>
+                  </div>
+                </div>
+              </div>
+              <?php endif; ?>
+
+            </div>
+            
+            <div class="card-footer bg-light">
+              <div class="d-flex justify-content-end gap-2">
+                <button class="btn btn-sm btn-outline-primary" onclick="window.openPaymentSchedule(<?php echo $purchase_id; ?>)">
+                  <i class="lni lni-calendar"></i> View Schedule
+                </button>
+                <?php if (!$is_cancelled && $bh['status'] != 3) { ?>
+                <button class="btn btn-sm btn-outline-success" onclick="window.recordPayment(<?php echo $purchase_id; ?>)">
+                  <i class="lni lni-money-location"></i> Record Payment
+                </button>
+                <?php } ?>
+                <?php if ($is_cancelled) { ?>
+                <button class="btn btn-sm btn-outline-success" onclick="window.openRefundModal(<?php echo $purchase_id; ?>)">
+                  <i class="lni lni-money-location"></i> Manage Refund
+                </button>
+                <?php } ?>
               </div>
             </div>
           </div>
 
+        <?php
+              } // end foreach
+          } else {
+              echo '<div class="alert alert-info">No purchases found for this client.</div>';
+          }
+          ?>
+
+
+          <!-- Add Purchase Button and Form -->
+          <div class="mt-4 text-center">
+              <button class="btn btn-lg btn-primary" onclick="openAddPurchaseModal(event)">
+                  <i class="lni lni-plus-circle"></i> Add New Purchase
+              </button>
+          </div>
+          
+          <!-- Add Purchase Form Modal (loaded with client context) -->
+          <div class="mt-4">
+              <?= Wo_LoadManagePage('clients/modals/add_purchase_form', ['get_nominees' => $get_nominees]) ?>
+          </div>
+          
+          <script>
+            // Function to open Add Purchase modal as nested modal
+            // Function to open Add Purchase modal as nested modal
+            function openAddPurchaseModal(event) {
+                if (event) event.preventDefault();
+                
+                // Set client context if available
+                var clientId = '<?php echo $profile_data['id'] ?? ""; ?>';
+                if (typeof window.resetAddPurchaseForm === 'function') {
+                    window.resetAddPurchaseForm(clientId);
+                }
+                
+                // Open the modal using Bootstrap's JS API
+                const addPurchaseModal = new bootstrap.Modal(document.getElementById('addPurchaseModal'), {
+                    backdrop: false,  // No backdrop since it's full screen and nested
+                    keyboard: false   // Prevent closing on ESC
+                });
+                
+                // Show the modal
+                addPurchaseModal.show();
+                
+                // Fix z-index for nested modal (though appendTo body should handle this, keeping for safety)
+                setTimeout(function() {
+                    $('#addPurchaseModal').css('z-index', 2060);
+                }, 100);
+            }
+          </script>
+          
+          <script>
+            // Define recordPayment function if not already defined
+            if (typeof window.recordPayment === 'undefined') {
+                window.recordPayment = function(purchaseId) {
+                    if (typeof window.openPaymentSchedule === 'function') {
+                        // Open the modal
+                        window.openPaymentSchedule(purchaseId);
+                        // Try to switch to Invoices tab after a short delay to allow modal to load
+                        setTimeout(function() {
+                            var $modal = $('#paymentScheduleModal');
+                            if ($modal.length) {
+                                // Find and click the Invoices tab
+                                $modal.find('button[data-bs-target="#invoices"]').trigger('click');
+                            }
+                        }, 500);
+                    } else {
+                        alert('Payment schedule module not loaded. Please refresh the page.');
+                    }
+                };
+            }
+          </script>
+        </section>
+
+          <!-- Recent Activity -->
           <!-- Recent Activity -->
           <div class="card border-0 shadow-sm mt-3">
             <div class="card-header bg-light border-0 py-3">
@@ -1350,6 +1541,17 @@ jQuery(function($){
     window.openRefundModal(id);
   });
 
+  $(document).off('click', '.merge-purchase').on('click', '.merge-purchase', function(e){
+    e.preventDefault();
+    var id = $(this).data('id');
+    if (!id) { alert('Purchase id missing'); return; }
+    if (typeof window.openMergePurchaseModal === 'function') {
+      window.openMergePurchaseModal(id);
+    } else {
+      alert('Merge modal not loaded');
+    }
+  });
+
   // Handle pending change badge click
   $(document).off('click', '.pending-change-badge').on('click', '.pending-change-badge', function(e){
     e.preventDefault();
@@ -1392,7 +1594,113 @@ jQuery(function($){
     });
   });
 
+  // Pass PHP purchase data to JS
+  window.clientPurchases = <?php echo json_encode($client_purchases); ?>;
+
+  // Preview Schedule - opens installment excel modal
+  $(document).off('click', '.preview-schedule').on('click', '.preview-schedule', function(e){
+    e.preventDefault();
+    var purchaseId = $(this).data('id');
+    if (!purchaseId) {
+      alert('Purchase ID not found');
+      return;
+    }
+    
+    // Show loading indicator
+    var btn = $(this);
+    var originalText = btn.html();
+    btn.html('<i class="lni lni-spinner lni-spin"></i> Loading...');
+    btn.prop('disabled', true);
+    
+    // Load the modal content via AJAX
+    $.ajax({
+      url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=installment_excel_modal',
+      type: 'POST',
+      data: { purchase_id: purchaseId },
+      dataType: 'html', // Expect HTML response, not JSON
+      success: function(response){
+        // Check if response looks like HTML (should start with <!-- or <div)
+        if (typeof response === 'string' && (response.trim().startsWith('<') || response.trim().startsWith('<!--'))) {
+          // Remove any existing installment modal
+          $('#installmentExcelModal').remove();
+          // Append the new modal HTML to body
+          $('body').append(response);
+          // Show the modal
+          var modalEl = document.getElementById('installmentExcelModal');
+          if (modalEl) {
+            var modal = new bootstrap.Modal(modalEl);
+            modal.show();
+          } else {
+            console.error('Modal element not found after append');
+            alert('Failed to load modal. Please check console for errors.');
+          }
+        } else {
+          console.error('Invalid response format:', response);
+          alert('Error: Server returned invalid response format');
+        }
+      },
+      error: function(xhr, status, error){
+        console.error('AJAX error:', status, error);
+        console.error('Response:', xhr.responseText);
+        alert('Failed to load schedule preview. Error: ' + error);
+      },
+      complete: function(){
+        btn.html(originalText);
+        btn.prop('disabled', false);
+      }
+    });
+  });
+
+  // Download Schedule - direct download
+  $(document).off('click', '.download-schedule').on('click', '.download-schedule', function(e){
+      e.preventDefault();
+      var purchaseId = $(this).data('id');
+      if (!purchaseId) {
+          alert('Purchase ID not found');
+          return;
+      }
+
+      $.ajax({
+          url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=download_schedule',
+          type: 'POST',
+          data: { purchase_id: purchaseId },
+          xhrFields: { responseType: 'blob' },
+          success: function(blob, status, xhr) {
+
+              // Try to extract filename from headers
+              var filename = "";
+              var disposition = xhr.getResponseHeader('Content-Disposition');
+              if (disposition && disposition.indexOf('filename=') !== -1) {
+                  filename = disposition.split('filename=')[1].replace(/"/g, '');
+              } else {
+                  filename = 'schedule.pdf';
+              }
+
+              // Create temp link to download
+              var link = document.createElement('a');
+              var url = window.URL.createObjectURL(blob);
+              link.href = url;
+              link.download = filename;
+              document.body.appendChild(link);
+              link.click();
+              link.remove();
+              URL.revokeObjectURL(url);
+          },
+          error: function() {
+              alert('Download failed');
+          }
+      });
+  });
 });
 </script>
 
 </div>
+
+<?php 
+// Include the installment excel modal
+if (file_exists('manage/pages/clients/modals/installment_excel_modal.phtml')) {
+    // Don't include here - it's loaded via AJAX when needed
+}
+?>
+
+

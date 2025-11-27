@@ -4,7 +4,7 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-// manage/pages/clients/installment_excel_modal.phtml
+// manage/pages/clients/modals/installment_excel_modal.phtml
 
 /*  $helper->installment need replaced
     because currently we are working with the dedicated database payment schedule table `crm_payment_schedule`
@@ -21,7 +21,7 @@ if (!$helper || !$booking) {
 
 // ---------- Paths and URLs (filename consistent for path & URL) ----------
 $theme = $wo['config']['theme'] ?? 'default';
-$client_name_safe = isset($client['name']) ? preg_replace('/[^A-Za-z0-9_\-]/', '_', $client['name']) : 'client';
+$client_name_safe = isset($client->name) ? preg_replace('/[^A-Za-z0-9_\-]/', '_', $client->name) : 'client';
 $project_safe     = isset($booking->project) ? preg_replace('/[^A-Za-z0-9]/', '_', $booking->project) : 'project';
 $filename = "installment_{$client_name_safe}_" . intval($helper->id) . "_{$project_safe}.xlsx";
 $template_path = "./themes/{$theme}/file_template/installment_schedule_{$project_safe}.xlsx";
@@ -184,6 +184,7 @@ function isRowStyleSimilarHelper($sheetInner, $r1, $r2, $colsToCheck = 6) {
 
 // ------------------ Main generator ------------------
 function generate_modified_excel($template_path, $output_path, $helper, $booking, $client) {
+    global $db; // Make $db available in function scope
     if (!file_exists($template_path)) throw new Exception("Template missing: {$template_path}");
     $spreadsheet = IOFactory::load($template_path);
     $sheet = $spreadsheet->getActiveSheet();
@@ -216,7 +217,6 @@ function generate_modified_excel($template_path, $output_path, $helper, $booking
         '{{DOWN_PAYMENT}}'=>$helper->down_payment??'',
         '{{REMAINING}}'=>(isset($helper->per_katha,$booking->katha)?(floatval($helper->per_katha)*floatval($booking->katha)):0)-((float)($helper->booking_money??0)+(float)($helper->down_payment??0)),
         '{{START_DATE}}'=>$helper->start_date??($helper->default_start_date??''),
-        '{{INSTALLMENTS}}'=>$helper->installments??($helper->default_installments??''),
         '{{YEARLY_ADJUSTMENT}}'=>$helper->yearly_adjustment??'',
         '{{MONTHLY_AMOUNT}}'=>$helper->monthly_amount??''
     ];
@@ -246,11 +246,21 @@ function generate_modified_excel($template_path, $output_path, $helper, $booking
     $sampleRow = findSampleRow($sheet, $headerRow);
     if ($sampleRow > $maxRowFromMarkers) $sampleRow = $headerRow + 1;
 
-    // load schedule
+    // load schedule from crm_payment_schedule
     $schedule = [];
-    if (!empty($helper->installment)) {
-        $decoded = @json_decode($helper->installment, true);
-        if (is_array($decoded)) $schedule = $decoded;
+    $schedule_rows = $db->where('purchase_id', $helper->id)->where('status', '99', '!=')->orderBy('installment_number', 'ASC')->get('crm_payment_schedule');
+    foreach ($schedule_rows as $row) {
+        $schedule[] = [
+            'particular' => $row->particular ?? ('Installment ' . ($row->installment_number ?? '')),
+            'date' => $row->due_date,
+            'payment_date' => $row->payment_date,
+            'payment_method' => $row->payment_method,
+            'paid_amount' => $row->paid_amount,
+            'installment_amount' => $row->installment_amount,
+            'money_receipt_no' => $row->money_receipt_no,
+            'remarks' => $row->remarks,
+            'paid' => ($row->status == 1)
+        ];
     }
 
     $insertAtInitial = $headerRow + 1;
@@ -701,6 +711,9 @@ $tableHtml .= '</table>';
           <?php $download_version = (file_exists($modified_file_path)) ? filemtime($modified_file_path) : time(); ?>
           <a class="btn btn-success btn-sm" id="downloadExcel" href="<?php echo htmlspecialchars($file_download_url) . '?v=' . $download_version; ?>">Download Excel</a>
           <button class="btn btn-primary btn-sm" id="printSchedule">Print Preview</button>
+          <button class="btn btn-info btn-sm" id="emailSchedule" data-purchase-id="<?php echo intval($helper->id); ?>" data-client-email="<?php echo htmlspecialchars($client->email ?? ''); ?>">
+            <i class="lni lni-envelope"></i> Email Schedule
+          </button>
           <button class="btn btn-warning btn-sm" id="regenerateExcel" data-purchase-id="<?php echo intval($helper->id); ?>">Regenerate</button>
           <div class="ms-auto small text-muted">
             <strong>Client:</strong> <?php echo htmlspecialchars(is_array($client)?($client['name']??''):($client->name??'')); ?> &nbsp;•&nbsp;
@@ -739,10 +752,48 @@ $tableHtml .= '</table>';
     const btn=this, pid=btn.getAttribute('data-purchase-id');
     if(!pid){ alert('Missing purchase id'); return; }
     const orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Regenerating...';
-    $.post(Wo_Ajax_Requests_File()+'?f=manage_inventory&s=installment_excel_modal',{purchase_id:pid,regenerate:1})
-      .done(function(resp){ let data; try{data=(typeof resp==='string')?JSON.parse(resp):resp;}catch(e){data=resp;}
-      if(data && data.status===200) location.reload(); else if(data && data.html) document.querySelector('#installmentExcelModal .modal-content').innerHTML=data.html; else location.reload();})
-      .fail(function(){alert('Server error while regenerating Excel');})
+    $.ajax({
+      url: Wo_Ajax_Requests_File()+'?f=manage_inventory&s=installment_excel_modal',
+      type: 'POST',
+      data: {purchase_id:pid, regenerate:1},
+      dataType: 'html',
+      success: function(resp){ 
+        // Remove old modal and show new one
+        $('#installmentExcelModal').remove();
+        $('body').append(resp);
+        const newModal = new bootstrap.Modal(document.getElementById('installmentExcelModal'));
+        newModal.show();
+      },
+      error: function(xhr, status, error){
+        console.error('Regenerate error:', status, error);
+        alert('Server error while regenerating Excel: ' + error);
+      },
+      complete: function(){
+        btn.disabled=false; btn.innerHTML=orig;
+      }
+    });
+  });
+
+  document.getElementById('emailSchedule').addEventListener('click', function(){
+    const btn=this, pid=btn.getAttribute('data-purchase-id');
+    const defaultEmail=btn.getAttribute('data-client-email');
+    if(!pid){ alert('Missing purchase id'); return; }
+    
+    const email = prompt('Enter email address to send schedule:', defaultEmail);
+    if(!email) return;
+    
+    const orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='<i class="lni lni-spinner lni-spin"></i> Sending...';
+    $.post(Wo_Ajax_Requests_File()+'?f=manage_inventory&s=email_schedule',{purchase_id:pid, recipient_email:email})
+      .done(function(resp){ 
+        let data; 
+        try{data=(typeof resp==='string')?JSON.parse(resp):resp;}catch(e){data=resp;}
+        if(data && data.status===200) {
+          alert(data.message || 'Schedule email queued successfully');
+        } else {
+          alert(data.message || 'Failed to queue email');
+        }
+      })
+      .fail(function(){alert('Server error while sending email');})
       .always(function(){btn.disabled=false; btn.innerHTML=orig;});
   });
 
