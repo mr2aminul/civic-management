@@ -1,97 +1,122 @@
 <?php
 /**
  * Birthday Wish Automation
- * Automatically queues birthday wish emails for clients and nominees
+ * Automatically queues birthday wish emails/SMS for clients and nominees
  * Run this daily via cron job (e.g., at midnight)
+ * Now uses: crm_email_queue, crm_sms_queue, crm_audit_trail
  */
 
-require_once '../assets/init.php';
-
-if (!defined('T_CUSTOMERS')) {
-    die('Configuration error');
+if (!defined('RUNNING_FROM_CRON')) {
+    die('Must be run from cron-job.php');
 }
 
 $today = date('m-d'); // Format: MM-DD
 
 try {
     $sent_count = 0;
+    $sms_count = 0;
     
     // Get clients with birthdays today
-    $db->where("DATE_FORMAT(date_of_birth, '%m-%d')", $today);
-    $clients = $db->get(T_CUSTOMERS, null, ['id', 'name', 'email', 'date_of_birth']);
+    $db->where("DATE_FORMAT(birthday, '%m-%d')", $today);
+    $clients = $db->get('crm_customers', null, ['id', 'name', 'email', 'phone', 'birthday']);
     
     foreach ($clients as $client) {
-        if (empty($client->email)) continue;
-        
         // Queue birthday email
-        if ($db->tableExists('crm_email_queue')) {
+        if (!empty($client->email)) {
             // Check if already sent today
-            $db->where('recipient_email', $client->email);
+            $db->where('client_id', $client->id);
             $db->where('email_type', 'birthday_wish');
-            $db->where('DATE(queue_date)', date('Y-m-d'));
+            $db->where('DATE(created_at)', date('Y-m-d'));
             $existing = $db->getOne('crm_email_queue');
             
-            if ($existing) continue; // Already queued
+            if (!$existing) {
+                $age = date('Y') - date('Y', strtotime($client->birthday));
+                
+                $db->insert('crm_email_queue', [
+                    'client_id' => $client->id,
+                    'recipient_email' => $client->email,
+                    'recipient_name' => $client->name,
+                    'email_type' => 'birthday_wish',
+                    'metadata' => json_encode([
+                        'client_name' => $client->name,
+                        'age' => $age
+                    ]),
+                    'status' => 'queued',
+                    'created_at' => date('Y-m-d H:i:s')
+                ]);
+                $sent_count++;
+            }
+        }
+        
+        // Queue birthday SMS
+        if (!empty($client->phone)) {
+            $db->where('client_id', $client->id);
+            $db->where('sms_type', 'birthday_wish');
+            $db->where('DATE(created_at)', date('Y-m-d'));
+            $existing_sms = $db->getOne('crm_sms_queue');
             
-            $age = date('Y') - date('Y', strtotime($client->date_of_birth));
-            
-            $db->insert('crm_email_queue', [
-                'client_id' => $client->id,
-                'recipient_email' => $client->email,
-                'recipient_name' => $client->name,
-                'email_type' => 'birthday_wish',
-                'subject' => "🎉 Happy Birthday {$client->name}!",
-                'body' => "Dear {$client->name},<br><br>🎂 Wishing you a very Happy Birthday!<br><br>May this special day bring you joy, happiness, and wonderful moments.<br><br>Thank you for being a valued member of the Civic Group family.<br><br>Warm regards,<br>Civic Group BD",
-                'status' => 'pending',
-                'queue_date' => date('Y-m-d H:i:s')
-            ]);
-            $sent_count++;
+            if (!$existing_sms) {
+                $db->insert('crm_sms_queue', [
+                    'client_id' => $client->id,
+                    'phone_number' => $client->phone,
+                    'sms_type' => 'birthday_wish',
+                    'metadata' => json_encode([
+                        'name' => $client->name
+                    ]),
+                    'status' => 'queued',
+                    'created_at' => date('Y-m-d H:i:s')
+                ]);
+                $sms_count++;
+            }
         }
     }
     
     // Get nominees with birthdays today
     if ($db->tableExists('crm_nominees')) {
         $db->where("DATE_FORMAT(date_of_birth, '%m-%d')", $today);
-        $nominees = $db->get('crm_nominees', null, ['id', 'name', 'email', 'date_of_birth', 'client_id']);
+        $nominees = $db->get('crm_nominees', null, ['id', 'name', 'email', 'phone', 'date_of_birth', 'client_id']);
         
         foreach ($nominees as $nominee) {
-            if (empty($nominee->email)) continue;
-            
-            // Check if already sent today
-            $db->where('recipient_email', $nominee->email);
-            $db->where('email_type', 'birthday_wish');
-            $db->where('DATE(queue_date)', date('Y-m-d'));
-            $existing = $db->getOne('crm_email_queue');
-            
-            if ($existing) continue;
-            
-            $db->insert('crm_email_queue', [
-                'client_id' => $nominee->client_id,
-                'recipient_email' => $nominee->email,
-                'recipient_name' => $nominee->name,
-                'email_type' => 'birthday_wish',
-                'subject' => "🎉 Happy Birthday {$nominee->name}!",
-                'body' => "Dear {$nominee->name},<br><br>🎂 Wishing you a very Happy Birthday!<br><br>May this special day bring you joy, happiness, and wonderful moments.<br><br>Thank you for being part of the Civic Group family.<br><br>Warm regards,<br>Civic Group BD",
-                'status' => 'pending',
-                'queue_date' => date('Y-m-d H:i:s')
-            ]);
-            $sent_count++;
+            if (!empty($nominee->email)) {
+                $db->where('recipient_email', $nominee->email);
+                $db->where('email_type', 'birthday_wish');
+                $db->where('DATE(created_at)', date('Y-m-d'));
+                $existing = $db->getOne('crm_email_queue');
+                
+                if (!$existing) {
+                    $db->insert('crm_email_queue', [
+                        'client_id' => $nominee->client_id,
+                        'recipient_email' => $nominee->email,
+                        'recipient_name' => $nominee->name,
+                        'email_type' => 'birthday_wish',
+                        'metadata' => json_encode([
+                            'client_name' => $nominee->name,
+                            'age' => date('Y') - date('Y', strtotime($nominee->date_of_birth))
+                        ]),
+                        'status' => 'queued',
+                        'created_at' => date('Y-m-d H:i:s')
+                    ]);
+                    $sent_count++;
+                }
+            }
         }
     }
     
     // Log result
     if ($db->tableExists('crm_audit_trail')) {
         $db->insert('crm_audit_trail', [
-            'user_id' => 0, // System
-            'action' => 'birthday_automation',
-            'details' => json_encode(['queued_count' => $sent_count, 'date' => date('Y-m-d')]),
-            'ip_address' => 'CRON',
-            'created_at' => date('Y-m-d H:i:s')
+            'client_id' => 0,
+            'action_type' => 'system',
+            'action_category' => 'automation',
+            'action_description' => "Birthday automation: queued {$sent_count} emails, {$sms_count} SMS",
+            'performed_by' => 0, // System
+            'performed_at' => date('Y-m-d H:i:s'),
+            'ip_address' => 'CRON'
         ]);
     }
     
-    echo "Birthday automation complete. Queued $sent_count emails.\n";
+    echo "[Birthday Wishes] Queued {$sent_count} emails, {$sms_count} SMS\n";
     
 } catch (Exception $e) {
-    echo "Error: " . $e->getMessage() . "\n";
+    echo "[Birthday Wishes] Error: " . $e->getMessage() . "\n";
 }

@@ -76,7 +76,11 @@
             </div>
             <div class="col-md-2">
               <label class="form-label">Amount (৳) *</label>
-              <input type="number" class="form-control" id="refundTransactionAmount" placeholder="Custom amount" step="0.01" min="0">
+              <input type="number" class="form-control" id="refundTransactionAmount" placeholder="Refund Amount" step="0.01" min="0">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Deduction (৳)</label>
+              <input type="number" class="form-control" id="refundDeductionAmount" placeholder="Fee/Deduction" step="0.01" min="0" value="0">
             </div>
             <div class="col-md-2">
               <label class="form-label">Method</label>
@@ -160,10 +164,13 @@ jQuery(function($){
         
         var transDate = trans.transaction_date ? new Date(trans.transaction_date).toLocaleDateString() : '-';
         var transAmount = parseFloat(trans.transaction_amount || 0);
+        var transDeduction = parseFloat(trans.deduction_amount || 0);
 
         var row = '<tr>' +
           '<td>' + transDate + '</td>' +
-          '<td class="fw-bold">৳' + transAmount.toLocaleString('en-US', {minimumFractionDigits: 2}) + '</td>' +
+          '<td class="fw-bold">৳' + transAmount.toLocaleString('en-US', {minimumFractionDigits: 2}) + 
+          (transDeduction > 0 ? ' <small class="text-danger">(-৳' + transDeduction.toLocaleString('en-US') + ' fee)</small>' : '') +
+          '</td>' +
           '<td>' + (trans.payment_method || '-') + '</td>' +
           '<td><small>' + (trans.money_receipt_no || '-') + '</small></td>' +
           '<td><small>' + (trans.remarks || '-') + '</small></td>' +
@@ -188,22 +195,32 @@ jQuery(function($){
     var purchaseId = $('#refundModal').data('purchaseId');
     var transDate = $('#refundTransactionDate').val();
     var transAmount = parseFloat($('#refundTransactionAmount').val()) || 0;
+    var deductionAmount = parseFloat($('#refundDeductionAmount').val()) || 0;
     var method = $('#refundPaymentMethod').val();
     var receipt = $('#refundReceiptNo').val();
     var remarks = $('#refundRemarks').val();
 
-    if (!transDate || !transAmount) {
-      alert('Please enter transaction date and amount');
+    if (!transDate || (!transAmount && !deductionAmount)) {
+      alert('Please enter transaction date and amount (or deduction)');
       return;
     }
 
-    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=add_refund_transaction',
-      { purchase_id: purchaseId, amount: transAmount, transaction_date: transDate, payment_method: method, receipt_no: receipt, remarks: remarks },
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=add_refund_transaction',
+      { 
+          purchase_id: purchaseId, 
+          amount: transAmount, 
+          deduction: deductionAmount,
+          transaction_date: transDate, 
+          payment_method: method, 
+          receipt_no: receipt, 
+          remarks: remarks 
+      },
       function(resp) {
         var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
         if (data.status === 200) {
           alert('Refund transaction recorded!');
           $('#refundTransactionAmount').val('');
+          $('#refundDeductionAmount').val('0');
           $('#refundReceiptNo').val('');
           $('#refundRemarks').val('');
           window.openRefundModal(purchaseId);
@@ -217,7 +234,7 @@ jQuery(function($){
   window.cancelRefundTransaction = function(transactionId, purchaseId) {
     if (!confirm('Cancel this refund transaction?')) return;
 
-    $.post(Wo_Ajax_Requests_File() + '?f=manage_schedule_endpoints&s=cancel_refund_transaction',
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=cancel_refund_transaction',
       { transaction_id: transactionId, reason: 'Cancelled by user' },
       function(resp) {
         var data = typeof resp === 'string' ? JSON.parse(resp) : resp;

@@ -1,6 +1,6 @@
 /**
  * Modal Tab Data Loader for Payment Schedule Modal
- * Add this to payment_schedule_modal.phtml before closing </script> tag
+ * Add this to manage_purchase_modal.phtml before closing </script> tag
  */
 
 // Load data when tabs are shown
@@ -179,4 +179,146 @@ $(document).ready(function() {
     $('#createInvoiceModal').modal('show');
   });
 
+  // Tab: Documents
+  $('#tab-documents-btn').on('shown.bs.tab', function() {
+    loadDocuments();
+  });
+
+  // Load Documents
+  function loadDocuments() {
+    var purchaseId = $('#ui_purchase_id').val();
+    var type = $('#doc_type_filter').val();
+    if (!purchaseId) return;
+    
+    $('#documents_list_container').html('<p class="text-center text-muted py-5"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading documents...</p>');
+    
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_purchase_documents&purchase_id=' + purchaseId + '&type=' + (type || ''))
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.documents && data.documents.length > 0) {
+          renderDocuments(data.documents);
+        } else {
+          $('#documents_list_container').html('<p class="text-center text-muted py-5"><i class="lni lni-files me-2"></i>No documents found</p>');
+        }
+      })
+      .fail(function() {
+        $('#documents_list_container').html('<p class="text-danger text-center py-5"><i class="lni lni-warning me-2"></i>Failed to load documents</p>');
+      });
+  }
+
+  function renderDocuments(docs) {
+    var html = '<div class="table-responsive"><table class="table table-hover align-middle">';
+    html += '<thead class="table-light"><tr><th>File Name</th><th>Type</th><th>Size</th><th>Date</th><th class="text-end">Action</th></tr></thead><tbody>';
+    
+    docs.forEach(function(doc) {
+      var icon = 'lni-empty-file';
+      var ext = (doc.file_name || '').split('.').pop().toLowerCase();
+      if(['pdf'].includes(ext)) icon = 'lni-offer'; // pdf icon approximation
+      if(['jpg','jpeg','png','gif'].includes(ext)) icon = 'lni-image';
+      if(['doc','docx'].includes(ext)) icon = 'lni-text-format';
+      if(['xls','xlsx'].includes(ext)) icon = 'lni-grid-alt';
+
+      html += '<tr>';
+      html += '  <td><div class="d-flex align-items-center"><i class="lni ' + icon + ' fs-4 me-2 text-secondary"></i><span>' + (doc.file_name || 'Untitled') + '</span></div></td>';
+      html += '  <td><span class="badge bg-light text-dark border">' + (doc.document_type || 'Document') + '</span></td>';
+      html += '  <td class="small text-muted">' + formatBytes(doc.file_size) + '</td>';
+      html += '  <td class="small text-muted">' + (doc.generated_at || '-') + '</td>';
+      html += '  <td class="text-end">';
+      html += '    <div class="btn-group btn-group-sm">';
+      html += '      <a href="' + (doc.file_path || '#') + '" target="_blank" class="btn btn-outline-secondary" title="View/Download"><i class="lni lni-download"></i></a>';
+      html += '      <button type="button" class="btn btn-outline-danger btn-delete-doc" data-id="' + doc.id + '" title="Delete"><i class="lni lni-trash"></i></button>';
+      html += '    </div>';
+      html += '  </td>';
+      html += '</tr>';
+    });
+    
+    html += '</tbody></table></div>';
+    $('#documents_list_container').html(html);
+  }
+
+  function formatBytes(bytes, decimals = 2) {
+    if (!+bytes) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  }
+
+  // Document Filters
+  $('#doc_type_filter').on('change', function() {
+    loadDocuments();
+  });
+
+  // Upload Document
+  $('#btn-upload-document').on('click', function() {
+    $('#file-upload-input').trigger('click');
+  });
+
+  $('#file-upload-input').on('change', function() {
+    var file = this.files[0];
+    if (!file) return;
+
+    var purchaseId = $('#ui_purchase_id').val();
+    var type = $('#doc_type_filter').val() || 'other'; // Default to 'other' or current filter
+    if(type === '') type = 'other';
+
+    var formData = new FormData();
+    formData.append('file', file);
+    formData.append('purchase_id', purchaseId);
+    formData.append('document_type', type);
+
+    var $btn = $('#btn-upload-document');
+    var originalHtml = $btn.html();
+    $btn.prop('disabled', true).html('<i class="spinner-border spinner-border-sm me-1"></i>Uploading...');
+
+    $.ajax({
+      url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=upload_purchase_document',
+      type: 'POST',
+      data: formData,
+      processData: false,
+      contentType: false,
+      success: function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+          loadDocuments();
+          $('#file-upload-input').val(''); // Reset input
+        } else {
+          alert('Upload failed: ' + (data.message || 'Unknown error'));
+        }
+      },
+      error: function() {
+        alert('Server error during upload');
+      },
+      complete: function() {
+        $btn.prop('disabled', false).html(originalHtml);
+      }
+    });
+  });
+
+  // Delete Document
+  $(document).on('click', '.btn-delete-doc', function() {
+    if(!confirm('Are you sure you want to delete this document?')) return;
+    
+    var docId = $(this).data('id');
+    var $btn = $(this);
+    $btn.prop('disabled', true);
+
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=delete_purchase_document', {
+      document_id: docId
+    }, function(resp) {
+      var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+      if (data.status === 200) {
+        loadDocuments();
+      } else {
+        alert('Delete failed: ' + (data.message || 'Unknown error'));
+        $btn.prop('disabled', false);
+      }
+    }).fail(function() {
+      alert('Server error during delete');
+      $btn.prop('disabled', false);
+    });
+  });
+
 });
+

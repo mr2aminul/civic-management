@@ -1124,7 +1124,19 @@ if ($s === 'register_purchase' || $s === 'assign_purchase') {
             $rowHtml .= '</tr>';
 
             $logUser = 'User #' . ($wo['user']['id'] ?? '999');
-            logActivity('purchase', 'update', "{$logUser} updated purchase #{$insert} for booking #{$booking->id}");
+            // logActivity('purchase', 'update', "{$logUser} updated purchase #{$insert} for booking #{$booking->id}");
+            if ($db->tableExists('crm_audit_trail')) {
+                $db->insert('crm_audit_trail', [
+                    'user_id' => $wo['user']['id'] ?? 0,
+                    'action_category' => 'purchase',
+                    'action_type' => 'update',
+                    'action_description' => "Purchase #{$insert} updated for booking #{$booking->id}",
+                    'details' => json_encode(['purchase_id' => $insert, 'booking_id' => $booking->id]),
+                    'performed_by' => $wo['user']['id'] ?? 0,
+                    'ip_address' => $_SERVER['REMOTE_ADDR'],
+                    'performed_at' => date('Y-m-d H:i:s')
+                ]);
+            }
 
             $resp = ['status'=>200,'message'=>'Existing purchase updated.','purchase_id'=>$insert,'html'=>$rowHtml];
             if ($DEV_DEBUG) {
@@ -1242,7 +1254,19 @@ if ($s === 'register_purchase' || $s === 'assign_purchase') {
         $rowHtml .= '</tr>';
 
         $logUser = 'User #' . ($wo['user']['id'] ?? '999');
-        logActivity('purchase', 'create', "{$logUser} created purchase #{$insert} for booking #{$booking->id}");
+        // logActivity('purchase', 'create', "{$logUser} created purchase #{$insert} for booking #{$booking->id}");
+        if ($db->tableExists('crm_audit_trail')) {
+            $db->insert('crm_audit_trail', [
+                'user_id' => $wo['user']['id'] ?? 0,
+                'action_category' => 'purchase',
+                'action_type' => 'create',
+                'action_description' => "Purchase #{$insert} created for booking #{$booking->id}",
+                'details' => json_encode(['purchase_id' => $insert, 'booking_id' => $booking->id]),
+                'performed_by' => $wo['user']['id'] ?? 0,
+                'ip_address' => $_SERVER['REMOTE_ADDR'],
+                'performed_at' => date('Y-m-d H:i:s')
+            ]);
+        }
 
         $resp = ['status'=>200,'message'=>'Purchase registered successfully.','purchase_id'=>$insert,'html'=>$rowHtml];
         if ($DEV_DEBUG) {

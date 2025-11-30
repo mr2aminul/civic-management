@@ -1,25 +1,26 @@
 <?php
 /**
  * Overdue Payment Reminder Automation
- * Checks for overdue payments and queues reminder emails
+ * Checks for overdue payments and queues reminder emails/SMS
  * Run this daily via cron job
+ * NOW USES: crm_payment_schedule with installment_amount column
  */
 
-require_once '../assets/init.php';
-
-if (!defined(T_BOOKING_HELPER')) {
-    die('Configuration error');
+if (!defined('RUNNING_FROM_CRON')) {
+    die('Must be run from cron-job.php');
 }
 
 try {
     $today = date('Y-m-d');
     $sent_count = 0;
+    $sms_count = 0;
     
     // Get unpaid schedules that are overdue
     if ($db->tableExists('crm_payment_schedule')) {
         $db->where('status', 0); // Unpaid
-        $db->where('due_date <', $today);
-        $overdueSchedules = $db->get('crm_payment_schedule', null, ['id', 'purchase_id', 'due_date', 'installment_amount', 'paid_amount']);
+        $db->where('status', 99, '!='); // Not deleted
+        $db->where('due_date', $today, '<');
+        $overdueSchedules = $db->get('crm_payment_schedule', null, ['id', 'purchase_id', 'client_id', 'due_date', 'installment_amount', 'paid_amount']);
         
         $purchaseIds = [];
         foreach ($overdueSchedules as $schedule) {
@@ -28,17 +29,17 @@ try {
         
         foreach (array_keys($purchaseIds) as $purchase_id) {
             // Get purchase and client info
-            $purchase = $db->where('id', $purchase_id)->getOne(T_BOOKING_HELPER, ['client_id', 'file_num']);
+            $purchase = $db->where('id', $purchase_id)->getOne('wo_booking_helper', ['client_id', 'file_num']);
             if (!$purchase) continue;
             
-            $client = $db->where('id', $purchase->client_id)->getOne(T_CUSTOMERS, ['email', 'name']);
-            if (!$client || empty($client->email)) continue;
+            $client = $db->where('id', $purchase->client_id)->getOne('crm_customers', ['id', 'email', 'phone', 'name']);
+            if (!$client) continue;
             
             // Check if reminder already sent this week
             $weekAgo = date('Y-m-d', strtotime('-7 days'));
             $db->where('purchase_id', $purchase_id);
             $db->where('email_type', 'payment_overdue');
-            $db->where('queue_date >=', $weekAgo);
+            $db->where('created_at', $weekAgo, '>=');
             $existing = $db->getOne('crm_email_queue');
             
             if ($existing) continue; // Don't spam
@@ -46,7 +47,8 @@ try {
             // Calculate total overdue amount
             $db->where('purchase_id', $purchase_id);
             $db->where('status', 0);
-            $db->where('due_date <', $today);
+            $db->where('status', 99, '!=');
+            $db->where('due_date', $today, '<');
             $overdueForPurchase = $db->get('crm_payment_schedule');
             
             $totalOverdue = 0;
@@ -61,34 +63,65 @@ try {
             $daysOverdue = floor((strtotime($today) - strtotime($oldestDue)) / 86400);
             
             // Queue reminder email
-            $db->insert('crm_email_queue', [
-                'purchase_id' => $purchase_id,
-                'client_id' => $purchase->client_id,
-                'recipient_email' => $client->email,
-                'recipient_name' => $client->name,
-                'email_type' => 'payment_overdue',
-                'subject' => "⚠️ Payment Overdue Reminder - File: {$purchase->file_num}",
-                'body' => "Dear {$client->name},<br><br>This is a reminder that you have an overdue payment for your property booking (File: {$purchase->file_num}).<br><br><strong>Overdue Amount:</strong> ৳" . number_format($totalOverdue, 2) . "<br><strong>Days Overdue:</strong> $daysOverdue days<br><br>Please arrange payment at your earliest convenience to avoid late fees.<br><br>If you have any questions, please contact our office.<br><br>Thank you,<br>Civic Group BD",
-                'status' => 'pending',
-                'queue_date' => date('Y-m-d H:i:s')
-            ]);
-            $sent_count++;
+            if (!empty($client->email)) {
+                $db->insert('crm_email_queue', [
+                    'purchase_id' => $purchase_id,
+                    'client_id' => $purchase->client_id,
+                    'recipient_email' => $client->email,
+                    'recipient_name' => $client->name,
+                    'email_type' => 'payment_overdue',
+                    'metadata' => json_encode([
+                        'client_name' => $client->name,
+                        'file_num' => $purchase->file_num,
+                        'amount' => $totalOverdue,
+                        'days_overdue' => $daysOverdue
+                    ]),
+                    'status' => 'queued',
+                    'created_at' => date('Y-m-d H:i:s')
+                ]);
+                $sent_count++;
+            }
+            
+            // Queue SMS
+            if (!empty($client->phone)) {
+                $db->insert('crm_sms_queue', [
+                    'purchase_id' => $purchase_id,
+                    'client_id' => $purchase->client_id,
+                    'phone_number' => $client->phone,
+                    'sms_type' => 'payment_overdue',
+                    'metadata' => json_encode([
+                        'name' => $client->name,
+                        'amount' => $totalOverdue
+                    ]),
+                    'status' => 'queued',
+                    'created_at' => date('Y-m-d H:i:s')
+                ]);
+                $sms_count++;
+            }
+            
+            // Update schedule status to overdue (3)
+            $db->where('purchase_id', $purchase_id);
+            $db->where('status', 0);
+            $db->where('due_date', $today, '<');
+            $db->update('crm_payment_schedule', ['status' => 3]); // 3 = overdue
         }
     }
     
     // Log
     if ($db->tableExists('crm_audit_trail')) {
         $db->insert('crm_audit_trail', [
-            'user_id' => 0,
-            'action' => 'overdue_automation',
-            'details' => json_encode(['queued_count' => $sent_count, 'date' => $today]),
-            'ip_address' => 'CRON',
-            'created_at' => date('Y-m-d H:i:s')
+            'client_id' => 0,
+            'action_type' => 'system',
+            'action_category' => 'automation',
+            'action_description' => "Overdue automation: queued {$sent_count} emails, {$sms_count} SMS",
+            'performed_by' => 0,
+            'performed_at' => date('Y-m-d H:i:s'),
+            'ip_address' => 'CRON'
         ]);
     }
     
-    echo "Overdue reminder automation complete. Queued $sent_count emails.\n";
+    echo "[Overdue Reminders] Queued {$sent_count} emails, {$sms_count} SMS\n";
     
 } catch (Exception $e) {
-    echo "Error: " . $e->getMessage() . "\n";
+    echo "[Overdue Reminders] Error: " . $e->getMessage() . "\n";
 }

@@ -98,6 +98,15 @@ $clients = $db->orderBy('name', 'ASC')->get(T_CUSTOMERS);
                                             <div class="form-text">Select one or more nominees associated with this client.</div>
                                         </div>
 
+
+                                        <!-- Booking/Purchase Date -->
+                                        <div class="mb-3">
+                                            <label for="purchaseBookingDate" class="form-label small text-muted text-uppercase">Booking Date</label>
+                                            <input type="date" class="form-control" id="purchaseBookingDate" name="booking_date" 
+                                                   value="<?= date('Y-m-d') ?>" required>
+                                            <div class="form-text">Date when this purchase/booking was made.</div>
+                                        </div>
+
                                         <!-- File Number -->
                                         <div class="mb-3">
                                             <label for="purchaseFileNum" class="form-label small text-muted text-uppercase">File Number</label>
@@ -691,7 +700,7 @@ $(document).ready(function() {
     // Trigger initial state
     $('input[name="payment_mode"]:checked').trigger('change');
 
-    // Schedule Preview - Client-side Generation (matching payment_schedule_modal.phtml)
+    // Schedule Preview - Client-side Generation (matching manage_purchase_modal.phtml)
     $('#previewScheduleBtn').on('click', function() {
         var katha = parseFloat($('#purchaseBooking').data('katha')) || 0;
         var perKatha = parseFloat($('#purchasePerKatha').val()) || 0;

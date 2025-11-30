@@ -191,6 +191,70 @@
         if ($data['status']===200) $db->where('id',$id)->update(T_BOOKING,['status'=>$status,'file_num'=>$file_id]);
     }
 
+    // ------------------ APPLY HOLD ------------------
+    if ($s === 'apply_hold') {
+        $id = $_POST['id'] ?? null;
+        $hold_end_date = $_POST['hold_end_date'] ?? null;
+        $hold_auto_release = $_POST['hold_auto_release'] ?? 0;
+
+        if (empty($id) || empty($hold_end_date)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid parameters.']); exit;
+        }
+
+        $booking = $db->where('id', $id)->getOne(T_BOOKING);
+        if (!$booking) {
+            echo json_encode(['status' => 404, 'message' => 'Booking not found.']); exit;
+        }
+
+        // Only allow hold if status is Available (1) or already on hold (maybe we want to update hold)
+        // Assuming status 1 is Available.
+        // We can also introduce a new status '5' for Hold if desired, or just use the date fields.
+        // Let's keep status as 1 (Available) but set the hold fields.
+        
+        $updateData = [
+            'hold_end_date' => $hold_end_date,
+            'hold_auto_release' => $hold_auto_release
+        ];
+
+        if ($db->where('id', $id)->update(T_BOOKING, $updateData)) {
+            // Log
+            logActivity('inventory', 'hold', "Applied hold on Plot {$booking->plot} until {$hold_end_date}");
+            echo json_encode(['status' => 200, 'message' => 'Hold applied successfully.']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to apply hold.']);
+        }
+        exit;
+    }
+
+    // ------------------ RELEASE HOLD ------------------
+    if ($s === 'release_hold') {
+        $id = $_POST['id'] ?? null;
+        if (empty($id)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid ID.']); exit;
+        }
+
+        $updateData = [
+            'hold_end_date' => null,
+            'hold_auto_release' => 0
+        ];
+
+        if ($db->where('id', $id)->update(T_BOOKING, $updateData)) {
+             logActivity('inventory', 'release_hold', "Released hold on inventory #{$id}");
+             echo json_encode(['status' => 200, 'message' => 'Hold released.']);
+        } else {
+             echo json_encode(['status' => 500, 'message' => 'Failed to release hold.']);
+        }
+        exit;
+    }
+
+    // Helper function to normalize katha values
+    function normalizeKatha($katha) {
+        if (empty($katha)) return '';
+        // Remove any non-numeric characters except decimal point
+        $normalized = preg_replace('/[^0-9.]/', '', trim($katha));
+        return $normalized;
+    }
+
     // ------------------ FETCH DATA ------------------
     if ($s == 'fetch') {
         $page_num = isset($_POST['start']) ? $_POST['start']/$_POST['length']+1 : 1;
@@ -242,7 +306,7 @@
                     'katha'   => $value->katha . ' katha',
                     'facing'  => $facingDisplay,
                     'status'  => $status,
-                    'file_num'=> $client['file_id']
+                    'file_num'=> $value->file_num
                 ];
             }
         }

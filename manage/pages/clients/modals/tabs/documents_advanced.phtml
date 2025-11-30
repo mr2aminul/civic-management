@@ -1,0 +1,391 @@
+<div class="modal-body p-0" style="height: 600px; display: flex; flex-direction: column;">
+    <!-- Toolbar -->
+    <div class="bg-light border-bottom p-2 d-flex justify-content-between align-items-center">
+        <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-secondary" id="adv_doc_refresh"><i class="lni lni-reload"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" id="adv_doc_upload_btn"><i class="lni lni-cloud-upload me-1"></i>Upload</button>
+            <input type="file" id="adv_doc_file_input" style="display:none;" multiple>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+            <div class="input-group input-group-sm" style="width: 200px;">
+                <span class="input-group-text bg-white"><i class="lni lni-search-alt"></i></span>
+                <input type="text" class="form-control" id="adv_doc_search" placeholder="Search files...">
+            </div>
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-secondary active" id="view_grid"><i class="lni lni-grid-alt"></i></button>
+                <button class="btn btn-outline-secondary" id="view_list"><i class="lni lni-list"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex flex-grow-1" style="overflow: hidden;">
+        <!-- Sidebar -->
+        <div class="bg-light border-end p-3" style="width: 220px; overflow-y: auto;">
+            <h6 class="text-muted text-uppercase small fw-bold mb-3">Folders</h6>
+            <div class="list-group list-group-flush bg-transparent">
+                <a href="#" class="list-group-item list-group-item-action bg-transparent border-0 px-2 py-1 active rounded" data-folder="all">
+                    <i class="lni lni-folder me-2 text-warning"></i> All Files
+                </a>
+                <a href="#" class="list-group-item list-group-item-action bg-transparent border-0 px-2 py-1 rounded" data-folder="invoice">
+                    <i class="lni lni-folder me-2 text-warning"></i> Invoices
+                </a>
+                <a href="#" class="list-group-item list-group-item-action bg-transparent border-0 px-2 py-1 rounded" data-folder="receipt">
+                    <i class="lni lni-folder me-2 text-warning"></i> Receipts
+                </a>
+                <a href="#" class="list-group-item list-group-item-action bg-transparent border-0 px-2 py-1 rounded" data-folder="schedule">
+                    <i class="lni lni-folder me-2 text-warning"></i> Schedules
+                </a>
+                <a href="#" class="list-group-item list-group-item-action bg-transparent border-0 px-2 py-1 rounded" data-folder="agreement">
+                    <i class="lni lni-folder me-2 text-warning"></i> Agreements
+                </a>
+                <a href="#" class="list-group-item list-group-item-action bg-transparent border-0 px-2 py-1 rounded" data-folder="certificate">
+                    <i class="lni lni-folder me-2 text-warning"></i> Certificates
+                </a>
+                <a href="#" class="list-group-item list-group-item-action bg-transparent border-0 px-2 py-1 rounded" data-folder="other">
+                    <i class="lni lni-folder me-2 text-warning"></i> Others
+                </a>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex-grow-1 position-relative" id="adv_doc_dropzone">
+            <!-- Loading Overlay -->
+            <div id="adv_doc_loading" class="position-absolute top-0 start-0 w-100 h-100 bg-white justify-content-center align-items-center" style="z-index: 10; opacity: 0.8; display: none;">
+                <div class="text-center">
+                    <div class="spinner-border text-primary mb-2" role="status"></div>
+                    <div class="small text-muted">Loading files...</div>
+                </div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="adv_doc_empty" class="position-absolute top-0 start-0 w-100 h-100 justify-content-center align-items-center" style="display: none;">
+                <div class="text-center text-muted">
+                    <i class="lni lni-empty-file fs-1 mb-3 opacity-50"></i>
+                    <p class="mb-0">No files found in this folder</p>
+                    <small>Drag & drop files here to upload</small>
+                </div>
+            </div>
+
+            <!-- File Container -->
+            <div class="p-3 h-100" style="overflow-y: auto;">
+                <div class="row g-3" id="adv_doc_grid_container">
+                    <!-- Files will be injected here -->
+                </div>
+                <div class="table-responsive" id="adv_doc_list_container" style="display: none;">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Name</th>
+                                <th>Size</th>
+                                <th>Date</th>
+                                <th class="text-end">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adv_doc_list_tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Drag Overlay -->
+            <div id="adv_doc_drag_overlay" class="position-absolute top-0 start-0 w-100 h-100 bg-primary d-flex justify-content-center align-items-center" style="z-index: 20; opacity: 0.1; display: none; pointer-events: none;">
+                <div class="text-center text-primary">
+                    <i class="lni lni-cloud-upload fs-1 mb-2"></i>
+                    <h3>Drop files to upload</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Context Menu -->
+<div id="adv_doc_context_menu" class="dropdown-menu position-fixed" style="z-index: 1060; display: none;">
+    <a class="dropdown-item" href="#" id="ctx_download"><i class="lni lni-download me-2"></i>Download</a>
+    <a class="dropdown-item" href="#" id="ctx_preview"><i class="lni lni-eye me-2"></i>Preview</a>
+    <div class="dropdown-divider"></div>
+    <a class="dropdown-item text-danger" href="#" id="ctx_delete"><i class="lni lni-trash me-2"></i>Delete</a>
+</div>
+
+<script>
+$(document).ready(function() {
+    var currentFolder = 'all';
+    var currentView = 'grid';
+    var purchaseId = $('#ui_purchase_id').val();
+    var allDocuments = [];
+    var contextMenuTarget = null;
+
+    // Initialize
+    function initAdvancedDocs() {
+        purchaseId = $('#ui_purchase_id').val();
+        if (purchaseId) {
+            loadDocuments();
+        }
+    }
+
+    // Tab Shown Event
+    $('#tab-documents-btn').on('shown.bs.tab', function() {
+        initAdvancedDocs();
+    });
+
+    // Load Documents
+    function loadDocuments() {
+        $('#adv_doc_loading').show();
+        $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_purchase_documents&purchase_id=' + purchaseId + '&type=')
+            .done(function(resp) {
+                var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                if (data.status === 200) {
+                    allDocuments = data.documents || [];
+                    renderDocuments();
+                }
+            })
+            .always(function() {
+                $('#adv_doc_loading').hide();
+            });
+    }
+
+    // Render Documents
+    function renderDocuments() {
+        var filtered = allDocuments.filter(function(doc) {
+            if (currentFolder === 'all') return true;
+            return (doc.document_type || 'other').toLowerCase() === currentFolder;
+        });
+
+        // Search Filter
+        var search = $('#adv_doc_search').val().toLowerCase();
+        if (search) {
+            filtered = filtered.filter(function(doc) {
+                return (doc.file_name || '').toLowerCase().includes(search);
+            });
+        }
+
+        if (filtered.length === 0) {
+            $('#adv_doc_empty').show();
+            $('#adv_doc_grid_container').empty();
+            $('#adv_doc_list_tbody').empty();
+            return;
+        }
+
+        $('#adv_doc_empty').hide();
+
+        if (currentView === 'grid') {
+            renderGrid(filtered);
+            $('#adv_doc_grid_container').show();
+            $('#adv_doc_list_container').hide();
+        } else {
+            renderList(filtered);
+            $('#adv_doc_grid_container').hide();
+            $('#adv_doc_list_container').show();
+        }
+    }
+
+    function renderGrid(docs) {
+        var html = '';
+        docs.forEach(function(doc) {
+            var icon = getFileIcon(doc.file_name);
+            html += `
+                <div class="col-6 col-md-4 col-lg-3">
+                    <div class="card h-100 border shadow-sm doc-item" data-id="${doc.id}" data-path="${doc.file_path}" data-url="${doc.url}" data-name="${doc.file_name}" style="cursor: pointer;">
+                        <div class="card-body text-center p-3">
+                            <i class="lni ${icon} fs-1 text-secondary mb-2"></i>
+                            <div class="text-truncate fw-medium small" title="${doc.file_name}">${doc.file_name}</div>
+                            <div class="text-muted small" style="font-size: 0.75rem;">${formatBytes(doc.file_size)}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        $('#adv_doc_grid_container').html(html);
+    }
+
+    function renderList(docs) {
+        var html = '';
+        docs.forEach(function(doc) {
+            var icon = getFileIcon(doc.file_name);
+            html += `
+                <tr class="doc-item" data-id="${doc.id}" data-path="${doc.file_path}" data-url="${doc.url}" data-name="${doc.file_name}" style="cursor: pointer;">
+                    <td>
+                        <div class="d-flex align-items-center">
+                            <i class="lni ${icon} fs-4 me-2 text-secondary"></i>
+                            <span class="text-truncate" style="max-width: 200px;">${doc.file_name}</span>
+                        </div>
+                    </td>
+                    <td class="small text-muted">${formatBytes(doc.file_size)}</td>
+                    <td class="small text-muted">${doc.generated_at || '-'}</td>
+                    <td class="text-end">
+                        <button class="btn btn-sm btn-light btn-ctx-menu"><i class="lni lni-more-alt"></i></button>
+                    </td>
+                </tr>
+            `;
+        });
+        $('#adv_doc_list_tbody').html(html);
+    }
+
+    // Helpers
+    function getFileIcon(filename) {
+        var ext = (filename || '').split('.').pop().toLowerCase();
+        if (['pdf'].includes(ext)) return 'lni-offer';
+        if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) return 'lni-image';
+        if (['doc', 'docx'].includes(ext)) return 'lni-text-format';
+        if (['xls', 'xlsx'].includes(ext)) return 'lni-grid-alt';
+        return 'lni-empty-file';
+    }
+
+    function formatBytes(bytes, decimals = 2) {
+        if (!+bytes) return '0 B';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+    }
+
+    // Events
+    $('.list-group-item[data-folder]').on('click', function(e) {
+        e.preventDefault();
+        $('.list-group-item[data-folder]').removeClass('active');
+        $(this).addClass('active');
+        currentFolder = $(this).data('folder');
+        renderDocuments();
+    });
+
+    $('#view_grid').on('click', function() {
+        currentView = 'grid';
+        $(this).addClass('active');
+        $('#view_list').removeClass('active');
+        renderDocuments();
+    });
+
+    $('#view_list').on('click', function() {
+        currentView = 'list';
+        $(this).addClass('active');
+        $('#view_grid').removeClass('active');
+        renderDocuments();
+    });
+
+    $('#adv_doc_search').on('input', function() {
+        renderDocuments();
+    });
+
+    $('#adv_doc_refresh').on('click', function() {
+        loadDocuments();
+    });
+
+    // Upload
+    $('#adv_doc_upload_btn').on('click', function() {
+        $('#adv_doc_file_input').trigger('click');
+    });
+
+    $('#adv_doc_file_input').on('change', function() {
+        var files = this.files;
+        if (files.length > 0) {
+            uploadFiles(files);
+        }
+    });
+
+    // Drag & Drop
+    var dropzone = $('#adv_doc_dropzone');
+    var dragOverlay = $('#adv_doc_drag_overlay');
+
+    dropzone.on('dragenter dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragOverlay.show();
+    });
+
+    dragOverlay.on('dragleave drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragOverlay.hide();
+    });
+
+    dragOverlay.on('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragOverlay.hide();
+        var files = e.originalEvent.dataTransfer.files;
+        if (files.length > 0) {
+            uploadFiles(files);
+        }
+    });
+
+    function uploadFiles(files) {
+        var formData = new FormData();
+        $.each(files, function(i, file) {
+            formData.append('file', file); // Currently API supports single file, loop if needed or update API
+        });
+        // For now, take first file as API expects 'file'
+        // To support multiple, we'd need to loop ajax calls or update API
+        // Let's loop for now
+        
+        var total = files.length;
+        var completed = 0;
+
+        $('#adv_doc_loading').show();
+
+        Array.from(files).forEach(function(file) {
+            var fd = new FormData();
+            fd.append('file', file);
+            fd.append('purchase_id', purchaseId);
+            fd.append('document_type', currentFolder === 'all' ? 'other' : currentFolder);
+
+            $.ajax({
+                url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=upload_purchase_document',
+                type: 'POST',
+                data: fd,
+                processData: false,
+                contentType: false,
+                success: function() { completed++; },
+                error: function() { completed++; },
+                complete: function() {
+                    if (completed === total) {
+                        loadDocuments();
+                        $('#adv_doc_file_input').val('');
+                    }
+                }
+            });
+        });
+    }
+
+    // Context Menu
+    $(document).on('contextmenu', '.doc-item', function(e) {
+        e.preventDefault();
+        contextMenuTarget = $(this);
+        var top = e.pageY;
+        var left = e.pageX;
+        $('#adv_doc_context_menu').css({top: top, left: left}).show();
+    });
+
+    $(document).on('click', function() {
+        $('#adv_doc_context_menu').hide();
+    });
+
+    $('#ctx_download').on('click', function(e) {
+        e.preventDefault();
+        if (contextMenuTarget) {
+            var url = contextMenuTarget.data('url');
+            window.open(url, '_blank');
+        }
+    });
+
+    $('#ctx_preview').on('click', function(e) {
+        e.preventDefault();
+        if (contextMenuTarget) {
+            var url = contextMenuTarget.data('url');
+            // Simple preview: open in new tab
+            window.open(url, '_blank');
+        }
+    });
+
+    $('#ctx_delete').on('click', function(e) {
+        e.preventDefault();
+        if (contextMenuTarget) {
+            if (!confirm('Delete this file?')) return;
+            var id = contextMenuTarget.data('id');
+            $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=delete_purchase_document', {
+                document_id: id
+            }, function(resp) {
+                loadDocuments();
+            });
+        }
+    });
+});
+</script>

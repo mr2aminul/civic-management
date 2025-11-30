@@ -2,8 +2,8 @@
 // ===============================
 //  🔐 CONFIGURATION & SECURITY
 // ===============================
-// error_reporting(E_ALL);
-// ini_set("display_errors", 1);
+error_reporting(E_ALL);
+ini_set("display_errors", 1);
 date_default_timezone_set("Asia/Dhaka");
 header("Content-type: application/json");
 
@@ -42,6 +42,12 @@ if ($s == 'search_clients') {
     // or pass purchaseId to attempt to resolve and exclude the current client attached to that purchase
     $exclude_client_id = isset($_REQUEST['exclude_client_id']) ? intval($_REQUEST['exclude_client_id']) : 0;
     $exclude_purchase_id = isset($_REQUEST['purchaseId']) ? trim((string)$_REQUEST['purchaseId']) : '';
+    $include_purchase = (isset($_REQUEST['include_purchase']) && $_REQUEST['include_purchase'] == '1');
+    
+    // Direct lookup support for invoice pre-selection
+    $direct_client_id = isset($_REQUEST['client_id']) ? intval($_REQUEST['client_id']) : 0;
+    $direct_purchase_id = isset($_REQUEST['purchase_id']) ? intval($_REQUEST['purchase_id']) : 0;
+    
 
     // Quick sanity: ensure db exists
     if (!isset($db) || !$db) {
@@ -69,9 +75,9 @@ if ($s == 'search_clients') {
     if ($exclude_client_id <= 0 && $exclude_purchase_id !== '') {
         // try several queries safely; stop once we find a valid client id
         try {
-            // 1) booking_helper.purchase_id = ?
+            // 1) booking_helper.id = ?
             $trySqls = [
-                "SELECT DISTINCT bh.client_id FROM `" . T_BOOKING_HELPER . "` bh WHERE bh.purchase_id = ? LIMIT 1",
+                "SELECT DISTINCT bh.client_id FROM `" . T_BOOKING_HELPER . "` bh WHERE bh.id = ? LIMIT 1",
                 // maybe purchaseId actually equals booking_id
                 "SELECT DISTINCT bh.client_id FROM `" . T_BOOKING_HELPER . "` bh WHERE bh.booking_id = ? LIMIT 1",
                 // booking -> booking_helper join (if booking.file_num or booking id maps)
@@ -90,6 +96,38 @@ if ($s == 'search_clients') {
     }
 
     $clientIds = [];
+    
+    // ---------- DIRECT LOOKUP: If client_id provided, use it directly ----------
+    // ---------- DIRECT LOOKUP: If client_id provided, use it directly ----------
+    // This bypasses the complex search logic below to ensure we get the specific client
+    // requested for invoice pre-selection, even if other filters (like project) might exclude it.
+    if ($direct_client_id > 0) {
+        $db->where('id', $direct_client_id);
+        $clients = $db->objectbuilder()->get(T_CUSTOMERS, 1, 'id, name, phone, email, nid');
+        
+        if (!empty($clients)) {
+            $client = $clients[0];
+            $item = [
+                'id' => $client->id,
+                'text' => $client->name . ($client->phone ? " ({$client->phone})" : '')
+            ];
+            
+            if ($include_purchase) {
+                if ($direct_purchase_id > 0) {
+                    $purchases = $db->rawQuery("SELECT id, file_num FROM " . T_BOOKING_HELPER . " WHERE client_id = ? AND id = ? LIMIT 1", [$client->id, $direct_purchase_id]);
+                } else {
+                    $purchases = $db->rawQuery("SELECT id, file_num FROM " . T_BOOKING_HELPER . " WHERE client_id = ? ORDER BY id DESC", [$client->id]);
+                }
+                $item['purchases'] = $purchases;
+            }
+            
+            echo json_encode([$item]);
+            exit();
+        } else {
+            echo json_encode([]);
+            exit();
+        }
+    }
 
     // ---------- 1) If project_filter provided, load project clients as a base set ----------
     $projectClients = [];
@@ -202,6 +240,10 @@ if ($s == 'search_clients') {
         exit();
     }
 
+    // } (else block removed for direct lookup)
+    
+    // end direct lookup check
+
     // ---------- 5) Fetch clients ----------
     $db->where('id', $clientIds, 'IN');
 
@@ -223,10 +265,24 @@ if ($s == 'search_clients') {
     foreach ($clients as $c) {
         // sanity: skip excluded again just in case
         if (!empty($exclude_client_id) && intval($c->id) === intval($exclude_client_id)) continue;
-        $output[] = [
+        
+        $item = [
             'id' => $c->id,
             'text' => $c->name . ($c->phone ? " ({$c->phone})" : '')
         ];
+
+        if ($include_purchase) {
+            // Fetch purchases (booking helpers) for this client
+            // If direct_purchase_id is provided, only fetch that specific purchase
+            if ($direct_purchase_id > 0) {
+                $purchases = $db->rawQuery("SELECT id, file_num FROM " . T_BOOKING_HELPER . " WHERE client_id = ? AND id = ? LIMIT 1", [$c->id, $direct_purchase_id]);
+            } else {
+                $purchases = $db->rawQuery("SELECT id, file_num FROM " . T_BOOKING_HELPER . " WHERE client_id = ? ORDER BY id DESC", [$c->id]);
+            }
+            $item['purchases'] = $purchases;
+        }
+
+        $output[] = $item;
     }
 
     if ($debug) {
@@ -272,6 +328,10 @@ error_reporting(E_ALL);
     			'result' => Wo_LoadManagePage('clients/modals/view_client')
     		);
     	}
+
+    echo json_encode($data);
+    exit();
+
     }
 	
 	if ($s == "editClient_modal") {
@@ -1112,92 +1172,6 @@ error_reporting(E_ALL);
         ));
         exit();
     }
-
-    
-    if ($s == 'delete_client') {
-        // Basic input validation
-        $client_id = isset($_POST['client_id']) ? intval($_POST['client_id']) : 0;
-        if ($client_id <= 0) {
-            echo json_encode(['status' => 400, 'message' => 'Invalid client id']);
-            exit;
-        }
-    
-        $customer = GetCustomerById($client_id);
-        if (empty($customer) || !isset($customer['id'])) {
-            echo json_encode(['status' => 404, 'message' => 'Customer not found']);
-            exit;
-        }
-    
-        $custId = (int) $customer['id'];
-    
-        try {
-            // Start transaction if supported
-            if (method_exists($db, 'startTransaction')) {
-                $db->startTransaction();
-            }
-    
-            // 1) Delete invoices for this customer
-            $invoiceDeleteResult = $db->where('customer_id', $custId)->delete(T_INVOICE);
-    
-            // 2) Get booking_ids from booking_helper for this client (normalize rows)
-            $booking_helpers = $db->where('client_id', $custId)->get(T_BOOKING_HELPER, null, ['booking_id']);
-            $booking_ids = [];
-            if (!empty($booking_helpers) && is_array($booking_helpers)) {
-                foreach ($booking_helpers as $bh) {
-                    if (is_object($bh) && isset($bh->booking_id)) {
-                        $booking_ids[] = (int)$bh->booking_id;
-                    } elseif (is_array($bh) && isset($bh['booking_id'])) {
-                        $booking_ids[] = (int)$bh['booking_id'];
-                    }
-                }
-                $booking_ids = array_values(array_unique($booking_ids));
-            }
-    
-            // 3) Reset related bookings (file_num = NULL and status = 0) if any booking IDs found
-            $updateBookingResult = true;
-            if (!empty($booking_ids)) {
-                $updateBookingResult = $db->where('id', $booking_ids, 'IN')->update(T_BOOKING, [
-                    'file_num' => null,
-                    'status'   => 0
-                ]);
-            }
-    
-            // 4) Delete booking_helper rows for this client
-            $delete_booking_helper = $db->where('client_id', $custId)->delete(T_BOOKING_HELPER);
-    
-            // 5) Delete all crm_nominees for this customer (by customer_id)
-            // Change T_CRM_NOMINEES to your actual constant if different
-            $nomineeDeleteResult = $db->where('customer_id', $custId)->delete(T_CRM_NOMINEES);
-    
-            // 6) Delete customer record
-            $customerDeleteResult = $db->where('id', $custId)->delete(T_CUSTOMERS);
-    
-            // Final check: treat !== false as success (0 rows affected is ok)
-            if (
-                $invoiceDeleteResult !== false &&
-                $updateBookingResult !== false &&
-                $delete_booking_helper !== false &&
-                $nomineeDeleteResult !== false &&
-                $customerDeleteResult !== false
-            ) {
-                if (method_exists($db, 'commit')) { $db->commit(); }
-                echo json_encode(['status' => 200, 'message' => 'Delete success!']);
-                exit;
-            } else {
-                if (method_exists($db, 'rollback')) { $db->rollback(); }
-                echo json_encode(['status' => 400, 'message' => 'Something went wrong while deleting.']);
-                exit;
-            }
-        } catch (Exception $ex) {
-            if (method_exists($db, 'rollback')) { $db->rollback(); }
-            echo json_encode(['status' => 500, 'message' => 'Server error: ' . $ex->getMessage()]);
-            exit;
-        }
     }
 
-
-	
-	header("Content-type: application/json");
-	echo json_encode($data);
-	exit();
-}
+?>

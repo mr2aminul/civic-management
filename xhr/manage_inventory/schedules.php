@@ -167,18 +167,20 @@
         }
     
         // sum installments excluding booking/down rows
-        $sum_installments = 0.0;
+        $sum_installments = '0.00';
         foreach ($sanitized as $si) {
             $p = strtolower(trim((string)$si['particular']));
             $is_booking_row = (strpos($p, 'booking') !== false && strpos($p, 'down') === false) || ($si['type'] === 'booking');
             $is_down_row = (strpos($p, 'down') !== false) || ($si['type'] === 'down');
             if ($is_booking_row || $is_down_row) continue;
-            $sum_installments += (float)$si['installment_amount'];
+            $sum_installments = bcadd($sum_installments, number_format((float)$si['installment_amount'], 2, '.', ''), 2);
         }
     
-        // adjust last installment to match expected_remaining (rounded to 2 decimals)
-        $diff = round($expected_remaining - $sum_installments, 2);
-        if (abs($diff) >= 0.01) {
+        // adjust last installment to match expected_remaining
+        $expected_remaining_str = number_format($expected_remaining, 2, '.', '');
+        $diff = bcsub($expected_remaining_str, $sum_installments, 2);
+        
+        if (bccomp(abs($diff), '0.00', 2) > 0) {
             $lastInstallIdx = null;
             for ($i = count($sanitized) - 1; $i >= 0; $i--) {
                 $p = strtolower(trim((string)$sanitized[$i]['particular']));
@@ -195,34 +197,37 @@
                 }
             }
             if ($lastInstallIdx === null) {
-                echo json_encode(['status' => 400, 'message' => 'No installment rows found to adjust. Expected remaining: ৳' . number_format($expected_remaining, 2) . ', Installments sum: ৳' . number_format($sum_installments, 2)]);
+                echo json_encode(['status' => 400, 'message' => 'No installment rows found to adjust. Expected remaining: ৳' . $expected_remaining_str . ', Installments sum: ৳' . $sum_installments]);
                 exit;
             }
-            $prev = $sanitized[$lastInstallIdx]['installment_amount'];
-            $sanitized[$lastInstallIdx]['installment_amount'] = round($prev + $diff, 2);
-            $sanitized[$lastInstallIdx]['original_installment_amount'] = $sanitized[$lastInstallIdx]['original_installment_amount'] ?? $prev;
+            $prev = number_format((float)$sanitized[$lastInstallIdx]['installment_amount'], 2, '.', '');
+            $new_amount = bcadd($prev, $diff, 2);
+            $sanitized[$lastInstallIdx]['installment_amount'] = (float)$new_amount;
+            $sanitized[$lastInstallIdx]['original_installment_amount'] = $sanitized[$lastInstallIdx]['original_installment_amount'] ?? (float)$prev;
             $sanitized[$lastInstallIdx]['history'][] = [
                 'ts' => date('c'),
                 'field' => 'installment_amount',
-                'from' => $prev,
-                'to' => $sanitized[$lastInstallIdx]['installment_amount'],
+                'from' => (float)$prev,
+                'to' => (float)$new_amount,
                 'reason' => 'Server auto-adjust to match expected remaining'
             ];
             // update sum
-            $sum_installments = round($sum_installments + $diff, 2);
+            $sum_installments = bcadd($sum_installments, $diff, 2);
         }
     
         // final validation
-        $final_installment_sum = 0.0;
+        $final_installment_sum = '0.00';
         foreach ($sanitized as $si) {
             $p = strtolower(trim((string)$si['particular']));
             $is_booking_row = (strpos($p, 'booking') !== false && strpos($p, 'down') === false) || ($si['type'] === 'booking');
             $is_down_row = (strpos($p, 'down') !== false) || ($si['type'] === 'down');
-            if (!$is_booking_row && !$is_down_row) $final_installment_sum += (float)$si['installment_amount'];
+            if (!$is_booking_row && !$is_down_row) {
+                $final_installment_sum = bcadd($final_installment_sum, number_format((float)$si['installment_amount'], 2, '.', ''), 2);
+            }
         }
     
-        if (round($final_installment_sum, 2) !== round($expected_remaining, 2)) {
-            echo json_encode(['status' => 400, 'message' => 'Installments total mismatch after auto-adjustment. Expected: ' . number_format($expected_remaining,2) . ', Got: ' . number_format($final_installment_sum,2)]);
+        if (bccomp($final_installment_sum, $expected_remaining_str, 2) !== 0) {
+            echo json_encode(['status' => 400, 'message' => 'Installments total mismatch after auto-adjustment. Expected: ' . $expected_remaining_str . ', Got: ' . $final_installment_sum]);
             exit;
         }
     
@@ -295,7 +300,12 @@
     
             if (method_exists($db, 'commit')) $db->commit();
     
-            if (function_exists('logActivity')) logActivity('clients', 'update', "Updated payment schedule for purchase ID: {$purchase_id}");
+            if (function_exists('logAuditTrail')) {
+                logAuditTrail($purchase_id, 'update_schedule', 'payment_schedule', "Updated payment schedule for purchase ID: {$purchase_id}", null, ['inserted_rows' => $inserted]);
+            } else {
+                 // Fallback if function not defined in scope (though we define it below)
+                 logAuditTrail($purchase_id, 'update_schedule', 'payment_schedule', "Updated payment schedule for purchase ID: {$purchase_id}", null, ['inserted_rows' => $inserted]);
+            }
     
             echo json_encode([
                 'status' => 200,
@@ -664,9 +674,10 @@
             $difference = $new_total - $old_total;
 
             // Log audit
-            log_crm_audit('payment_schedule', 'plot_change', $purchase_id,
-                ['old_plot' => $old_booking->plot, 'new_plot' => $new_booking->plot, 'price_difference' => $difference],
-                $_SESSION['user_id'] ?? null
+            // Log audit
+            logAuditTrail($purchase_id, 'plot_change_preview', 'payment_schedule', "Recalculated schedule preview for plot change", 
+                ['old_plot' => $old_booking->plot, 'old_total' => $old_total],
+                ['new_plot' => $new_booking->plot, 'new_total' => $new_total, 'difference' => $difference]
             );
 
             echo json_encode([
@@ -707,15 +718,16 @@
                 exit;
             }
 
-            $old_paid = (float)$entry->paid_amount;
-            $new_paid = $old_paid + (float)$amount;
-            $installment_amount = (float)$entry->installment_amount;
+            $old_paid = number_format((float)$entry->paid_amount, 2, '.', '');
+            $amount_str = number_format((float)$amount, 2, '.', '');
+            $new_paid = bcadd($old_paid, $amount_str, 2);
+            $installment_amount = number_format((float)$entry->installment_amount, 2, '.', '');
 
             // Determine status
             $status = 0; // pending
-            if ($new_paid >= $installment_amount) {
+            if (bccomp($new_paid, $installment_amount, 2) >= 0) {
                 $status = 1; // paid
-            } elseif ($new_paid > 0) {
+            } elseif (bccomp($new_paid, '0.00', 2) > 0) {
                 $status = 2; // partial
             }
 
@@ -733,9 +745,10 @@
 
             if ($result) {
                 // Log audit
-                log_crm_audit('payment_schedule', 'payment_received', $payment_schedule_id, 
-                    ['paid_amount' => [$old_paid, $new_paid], 'payment_date' => $payment_date],
-                    $_SESSION['user_id'] ?? null
+                // Log audit
+                logAuditTrail($purchase_id, 'payment_received', 'payment_schedule', "Payment received for schedule #{$payment_schedule_id}", 
+                    ['paid_amount' => $old_paid],
+                    ['paid_amount' => $new_paid, 'payment_date' => $payment_date]
                 );
 
                 echo json_encode([
@@ -791,6 +804,8 @@
             }
 
             // Send email notification
+            // (Email sending logic assumed to be here or handled by helper)
+            
             echo json_encode([
                 'status' => 200,
                 'message' => 'Schedule email sent successfully'
@@ -1062,6 +1077,109 @@
             echo json_encode(['status' => 200, 'history' => $history]);
         } catch (Exception $e) {
             echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ===============================
+    //  💰 REFUND ENDPOINTS
+    // ===============================
+
+    // ------------------ GET REFUND STATUS ------------------
+    if ($s == 'get_refund_status') {
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        if ($purchase_id <= 0) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid purchase ID']); exit;
+        }
+
+        // 1. Calculate Total Paid
+        $total_paid = $db->where('purchase_id', $purchase_id)->where('status', 1)->getValue(T_TRANSACTIONS, 'SUM(amount)');
+        $total_paid = $total_paid ? (float)$total_paid : 0.0;
+
+        // 2. Fetch Refund Transactions
+        $refunds = $db->where('purchase_id', $purchase_id)->orderBy('transaction_date', 'DESC')->get('crm_refunds');
+        
+        $total_refunded = 0;
+        $total_deduction = 0;
+        
+        if ($refunds) {
+            foreach ($refunds as $r) {
+                if ($r['status'] == 1) { // Approved/Completed
+                    $total_refunded += (float)$r['transaction_amount'];
+                    $total_deduction += (float)$r['deduction_amount'];
+                }
+            }
+        }
+
+        $refundable_amount = $total_paid - $total_deduction;
+        
+        echo json_encode([
+            'status' => 200,
+            'summary' => [
+                'total_paid_amount' => $total_paid,
+                'deduction_amount' => $total_deduction,
+                'refundable_amount' => $refundable_amount,
+                'total_refunded' => $total_refunded
+            ],
+            'refund_transactions' => $refunds
+        ]);
+        exit;
+    }
+
+    // ------------------ ADD REFUND TRANSACTION ------------------
+    if ($s == 'add_refund_transaction') {
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        $amount = isset($_POST['amount']) ? (float)$_POST['amount'] : 0;
+        $deduction = isset($_POST['deduction']) ? (float)$_POST['deduction'] : 0;
+        $date = isset($_POST['transaction_date']) ? $_POST['transaction_date'] : date('Y-m-d');
+        $method = isset($_POST['payment_method']) ? $_POST['payment_method'] : 'Cash';
+        $receipt = isset($_POST['receipt_no']) ? $_POST['receipt_no'] : '';
+        $remarks = isset($_POST['remarks']) ? $_POST['remarks'] : '';
+
+        if ($purchase_id <= 0) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid purchase ID']); exit;
+        }
+        if ($amount <= 0 && $deduction <= 0) {
+            echo json_encode(['status' => 400, 'message' => 'Amount or deduction required']); exit;
+        }
+
+        $data = [
+            'purchase_id' => $purchase_id,
+            'transaction_amount' => $amount,
+            'deduction_amount' => $deduction,
+            'transaction_date' => $date,
+            'payment_method' => $method,
+            'money_receipt_no' => $receipt,
+            'remarks' => $remarks,
+            'status' => 1, // Auto-approve for now, or 0 for pending
+            'created_at' => date('Y-m-d H:i:s'),
+            'created_by' => $wo['user']['id'] ?? 0
+        ];
+
+        $id = $db->insert('crm_refunds', $data);
+        if ($id) {
+            // Log
+            logActivity('refund', 'create', "Created refund #{$id} for purchase #{$purchase_id} (Amount: {$amount}, Deduction: {$deduction})");
+            echo json_encode(['status' => 200, 'message' => 'Refund recorded']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to record refund']);
+        }
+        exit;
+    }
+
+    // ------------------ CANCEL REFUND TRANSACTION ------------------
+    if ($s == 'cancel_refund_transaction') {
+        $id = isset($_POST['transaction_id']) ? intval($_POST['transaction_id']) : 0;
+        if ($id <= 0) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid ID']); exit;
+        }
+
+        $update = $db->where('id', $id)->update('crm_refunds', ['status' => 3]); // 3 = Cancelled
+        if ($update) {
+            logActivity('refund', 'cancel', "Cancelled refund #{$id}");
+            echo json_encode(['status' => 200, 'message' => 'Refund cancelled']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to cancel refund']);
         }
         exit;
     }

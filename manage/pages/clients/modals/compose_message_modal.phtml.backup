@@ -1,0 +1,310 @@
+<?php
+/**
+ * Compose Message Modal - Simplified and Reconstructed
+ * Supports Email and SMS composition with client/purchase pre-selection
+ */
+?>
+
+<!-- Compose Message Modal -->
+<div class="modal fade" id="composeMessageModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="lni lni-pencil me-2"></i>Compose Message</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="composeMessageForm">
+          <!-- Channel Selection -->
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label class="form-label">Channel <span class="text-danger">*</span></label>
+              <select class="form-select" name="channel" id="compose_channel" required>
+                <option value="email">Email Only</option>
+                <option value="sms">SMS Only</option>
+                <option value="both">Both (Email & SMS)</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Recipient Type <span class="text-danger">*</span></label>
+              <select class="form-select" name="recipient_type" id="compose_recipient_type" required>
+                <option value="current_client">Current Client</option>
+                <option value="current_purchase">Current Purchase</option>
+                <option value="select_client">Select Client</option>
+                <option value="select_purchase">Select Purchase</option>
+                <option value="custom">Custom Email/Phone</option>
+              </select>
+            </div>
+
+            <!-- Client Selector -->
+            <div class="col-md-6 mt-3" id="compose_client_selector_div" <?= ($is_loaded_from == 'pending_emails') ? 'style="display:none;"' : '' ?>>
+              <label class="form-label">Select Client</label>
+              <select class="form-select" id="compose_client_selector" style="width: 100%;">
+                <option value="">Search Client...</option>
+              </select>
+            </div>
+
+            <!-- Purchase Selector -->
+            <div class="col-md-6 mt-3" id="compose_purchase_selector_div" <?= ($is_loaded_from == 'pending_emails') ? 'style="display:none;"' : '' ?>>
+              <label class="form-label">Select Purchase</label>
+              <select class="form-select" id="compose_purchase_selector" disabled>
+                <option value="">-- Select Client First --</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Custom Recipient -->
+          <div class="mb-3" id="compose_custom_recipient_div" style="display:none;">
+            <label class="form-label">Custom Recipient</label>
+            <input type="text" class="form-control" id="compose_custom_recipient" placeholder="Email or Phone Number">
+          </div>
+
+          <!-- Recipient Info Display -->
+          <div class="alert alert-info mb-3" id="compose_recipient_info" style="display:none;">
+            <strong>Recipient:</strong> <span id="compose_recipient_display"></span>
+          </div>
+
+          <!-- Subject (for email) -->
+          <div class="mb-3" id="compose_subject_div">
+            <label class="form-label">Subject</label>
+            <input type="text" class="form-control" id="compose_subject" placeholder="Email Subject">
+          </div>
+
+          <!-- Message Body -->
+          <div class="mb-3">
+            <label class="form-label">Message <span class="text-danger">*</span></label>
+            <textarea class="form-control" id="compose_message" rows="6" required placeholder="Write your message here..."></textarea>
+            <div class="form-text">
+              <span id="compose_char_count">0</span> characters
+            </div>
+          </div>
+
+          <!-- Hidden fields -->
+          <input type="hidden" id="compose_hidden_client_id">
+          <input type="hidden" id="compose_hidden_purchase_id">
+          <input type="hidden" id="compose_hidden_recipient_email">
+          <input type="hidden" id="compose_hidden_recipient_phone">
+          <input type="hidden" id="compose_hidden_recipient_name">
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn_send_composed_message">
+          <i class="lni lni-send me-1"></i>Send
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+  
+  const composeModal = {
+    state: {
+      currentClientId: null,
+      currentPurchaseId: null
+    },
+    
+    init: function() {
+      // Get current context
+      const urlParams = new URLSearchParams(window.location.search);
+      this.state.currentClientId = urlParams.get('u') || urlParams.get('client_id') || $('#ui_client_id').val();
+      this.state.currentPurchaseId = $('#ui_purchase_id').val();
+      
+      // Initialize Select2
+      this.initClientSelect2();
+      
+      // Bind events
+      this.bindEvents();
+    },
+    
+    initClientSelect2: function() {
+      const self = this;
+      const $modal = $('#composeMessageModal');
+      const $clientSel = $('#compose_client_selector');
+      const $purchaseSel = $('#compose_purchase_selector');
+      
+      // Initialize Select2 for client search
+      $clientSel.select2({
+        dropdownParent: $modal,
+        placeholder: 'Search Client by Name, Phone or ID...',
+        allowClear: true,
+        width: '100%',
+        minimumInputLength: 1,
+        ajax: {
+          url: Wo_Ajax_Requests_File() + '?f=manage_clients&s=search_clients',
+          dataType: 'json',
+          delay: 250,
+          data: function (params) {
+            return {
+              q: params.term || '',
+              include_purchase: 1
+            };
+          },
+          processResults: function (data) {
+            var items = [];
+            if(Array.isArray(data)){
+              items = data.map(function(item){
+                return {
+                  id: item.id,
+                  text: item.text,
+                  purchases: item.purchases || []
+                };
+              });
+            }
+            return { results: items };
+          }
+        }
+      });
+      
+      // Handle client selection
+      $clientSel.on('select2:select', function(e){
+        var data = e.params.data;
+        var clientId = data.id;
+        var purchases = data.purchases || [];
+
+        $('#compose_hidden_client_id').val(clientId);
+        
+        // Populate purchase dropdown
+        $purchaseSel.empty().append('<option value="">-- Select Purchase --</option>');
+        
+        if(purchases.length > 0){
+          purchases.forEach(function(p){
+            var label = (p.file_num ? p.file_num : ('Purchase #' + (p.purchase_id || p.id))) + 
+                        (p.project ? ' (' + p.project + ')' : '');
+            $purchaseSel.append(new Option(label, p.purchase_id || p.id));
+          });
+          $purchaseSel.prop('disabled', false);
+        } else {
+          $purchaseSel.append('<option value="">No purchases found</option>').prop('disabled', true);
+        }
+      });
+
+      $clientSel.on('select2:clear', function(){
+        $('#compose_hidden_client_id').val('');
+        $purchaseSel.empty().append('<option value="">-- Select Client First --</option>').prop('disabled', true);
+      });
+      
+      // Purchase change
+      $purchaseSel.on('change', function(){
+        var pid = $(this).val();
+        $('#compose_hidden_purchase_id').val(pid || '');
+      });
+    },
+    
+    bindEvents: function() {
+      const self = this;
+      
+      // Channel change
+      $('#compose_channel').on('change', function() {
+        const channel = $(this).val();
+        if (channel === 'sms') {
+          $('#compose_subject_div').hide();
+        } else {
+          $('#compose_subject_div').show();
+        }
+        self.updateCharCount();
+      });
+      
+      // Recipient type change
+      $('#compose_recipient_type').on('change', function() {
+        self.handleRecipientTypeChange($(this).val());
+      });
+      
+      // Message character count
+      $('#compose_message').on('input', function() {
+        self.updateCharCount();
+      });
+      
+      // Send button
+      $('#btn_send_composed_message').on('click', function() {
+        self.handleSend();
+      });
+      
+      // Modal shown event - handle pre-selection
+      $('#composeMessageModal').on('shown.bs.modal', function() {
+        const contextClientId = $('#ui_client_id').val() || self.state.currentClientId;
+        const contextPurchaseId = $('#ui_purchase_id').val() || self.state.currentPurchaseId;
+        
+        if (contextPurchaseId) {
+          $('#compose_hidden_purchase_id').val(contextPurchaseId);
+          $('#compose_hidden_client_id').val(contextClientId || '');
+          $('#compose_recipient_type').val('current_purchase').trigger('change');
+        } else if (contextClientId) {
+          $('#compose_hidden_client_id').val(contextClientId);
+          $('#compose_recipient_type').val('current_client').trigger('change');
+        }
+      });
+    },
+    
+    handleRecipientTypeChange: function(type) {
+      // Hide all selector divs
+      $('#compose_client_selector_div').hide();
+      $('#compose_purchase_selector_div').hide();
+      $('#compose_custom_recipient_div').hide();
+      $('#compose_recipient_info').hide();
+      
+      switch(type) {
+        case 'current_client':
+          if (this.state.currentClientId) {
+            $('#compose_recipient_info').show();
+            $('#compose_recipient_display').text('Current Client');
+          }
+          break;
+        case 'current_purchase':
+          if (this.state.currentPurchaseId) {
+            $('#compose_recipient_info').show();
+            $('#compose_recipient_display').text('Current Purchase');
+          }
+          break;
+        case 'select_client':
+          $('#compose_client_selector_div').show();
+          break;
+        case 'select_purchase':
+          $('#compose_client_selector_div').show();
+          $('#compose_purchase_selector_div').show();
+          break;
+        case 'custom':
+          $('#compose_custom_recipient_div').show();
+          break;
+      }
+    },
+    
+    updateCharCount: function() {
+      const message = $('#compose_message').val();
+      const count = message.length;
+      $('#compose_char_count').text(count);
+    },
+    
+    handleSend: async function() {
+      const form = $('#composeMessageForm')[0];
+      $('#compose_client_selector_div').hide();
+      $('#compose_purchase_selector_div').hide();
+      $('#compose_custom_recipient_div').hide();
+      $('#compose_char_count').text('0');
+      
+      // Reset hidden fields
+      $('#compose_hidden_client_id').val('');
+      $('#compose_hidden_purchase_id').val('');
+      $('#compose_hidden_recipient_email').val('');
+      $('#compose_hidden_recipient_phone').val('');
+      $('#compose_hidden_recipient_name').val('');
+      
+      // Clear Select2
+      if ($('#compose_client_selector').hasClass('select2-hidden-accessible')) {
+        $('#compose_client_selector').val(null).trigger('change');
+      }
+    }
+  };
+  
+  // Expose to window for preselect script access
+  window.composeModal = composeModal;
+  
+  // Initialize on DOM ready
+  $(document).ready(function() {
+    composeModal.init();
+  });
+})();
+</script>

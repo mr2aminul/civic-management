@@ -1,0 +1,65 @@
+<?php
+/**
+ * Compose Message Pre-select Handler - Production Ready
+ * Provides global functions for opening compose modal with pre-selection
+ */
+
+$is_loaded_from = isset($is_loaded_from) ? $is_loaded_from : '';
+$client_id = isset($client_id) ? intval($client_id) : 0;
+$purchase_id = isset($purchase_id) ? intval($purchase_id) : 0;
+?>
+
+<script>
+/**
+ * Global function to open compose modal with pre-selection
+ */
+window.openComposeMessageModal = function(clientId, purchaseId, clientName, fileNum) {
+    var $modal = $('#composeMessageModal');
+    
+    // Set context IDs
+    if (clientId) {
+        $('#ui_client_id').val(clientId);
+        if (window.composeModal && window.composeModal.state) {
+            window.composeModal.state.currentClientId = clientId;
+        }
+    }
+    
+    if (purchaseId) {
+        $('#ui_purchase_id').val(purchaseId);
+        if (window.composeModal && window.composeModal.state) {
+            window.composeModal.state.currentPurchaseId = purchaseId;
+        }
+    }
+    
+    // Show the modal
+    $modal.modal('show');
+};
+
+/**
+ * Helper for manage_purchase_modal
+ */
+window.openComposeFromPurchaseModal = function() {
+    var purchaseId = $('#ui_purchase_id').val();
+    var clientId = $('#ui_client_id').val();
+    
+    if (typeof openComposeMessageModal === 'function') {
+        openComposeMessageModal(clientId, purchaseId, '', '');
+    } else {
+        $('#composeMessageModal').modal('show');
+    }
+};
+
+/**
+ * Helper for pending_emails tab
+ */
+window.openComposeFromPendingEmails = function() {
+    var clientId = $('#comm_filter_client').val() || $('#ui_client_id').val();
+    var purchaseId = $('#comm_filter_purchase').val() || $('#ui_purchase_id').val();
+    
+    if (typeof openComposeMessageModal === 'function') {
+        openComposeMessageModal(clientId, purchaseId, '', '');
+    } else {
+        $('#composeMessageModal').modal('show');
+    }
+};
+</script>

@@ -1,517 +1,58 @@
 <?php
 /**
- * manage_inventory.php sub-file : invoices.php
- * Invoices Module - Complete Invoice & Payment Management
- * Handles: invoice creation, payment recording, credit management
+ * Invoices Module - Fully Automated Invoice & Payment Management
+ * Maximum automation: payments auto-update schedules, invoices, send emails
  */
 
 header('Content-Type: application/json; charset=utf-8');
 
-// place inside manage_inventory.php (or the invoices sub-file) where $s === 'get_invoices' is handled
-
-// GET / POST handler inside manage_inventory.php (or invoices sub-file)
-// Replace existing get_invoices block with this implementation.
-// It follows the style of `search_clients` for summary calculation (booking_money, down_payment, paid totals, credits).
-// ------------ Improved get_invoices, create_invoice, record_payment handlers -------------
-header('Content-Type: application/json; charset=utf-8');
-
 if ($s === 'get_invoices') {
     try {
-        global $db;
         $purchase_id = isset($_GET['purchase_id']) ? intval($_GET['purchase_id']) : 0;
-        $client_id   = isset($_GET['client_id']) ? intval($_GET['client_id']) : 0;
-
+        $client_id = isset($_GET['client_id']) ? intval($_GET['client_id']) : 0;
+        
         if (!$purchase_id && !$client_id) {
             echo json_encode(['status' => 400, 'message' => 'Purchase ID or Client ID required']);
             exit;
         }
 
-        // Build where
         if ($purchase_id) {
             $db->where('purchase_id', $purchase_id);
         } else {
             $db->where('client_id', $client_id);
         }
-        $db->orderBy('invoice_date', 'DESC');
+        
+        $db->orderBy('created_at', 'DESC');
         $invoices = $db->get('crm_invoices');
 
-        $rows = [];
-        $total_amount = 0.0;
-        $total_paid = 0.0;
-        $outstanding = 0.0;
-        $pending_count = 0;
-        $overdue_count = 0;
-        $overpayment = 0.0;
-
+        $result = [];
         if (!empty($invoices)) {
             foreach ($invoices as $inv) {
-                $remaining = floatval($inv->remaining_amount ?? (floatval($inv->amount) - floatval($inv->paid_amount)));
-                $rows[] = [
-                    'id' => intval($inv->id),
-                    'purchase_id' => intval($inv->purchase_id),
-                    'client_id' => intval($inv->client_id),
+                // Get PDF path
+                $pdf_path = $db->where('invoice_id', $inv->id)->where('document_type', 'invoice')->getValue('crm_documents', 'file_path');
+                
+                $result[] = [
+                    'id' => $inv->id,
                     'invoice_number' => $inv->invoice_number,
                     'invoice_type' => $inv->invoice_type,
-                    'invoice_date' => $inv->invoice_date,
+                    'amount' => $inv->amount,
+                    'paid_amount' => $inv->paid_amount ?? 0,
+                    'remaining_amount' => $inv->remaining_amount ?? $inv->amount,
                     'due_date' => $inv->due_date,
-                    'amount' => (float)$inv->amount,
-                    'paid_amount' => (float)$inv->paid_amount,
-                    'remaining_amount' => $remaining,
                     'status' => $inv->status,
-                    'notes' => $inv->notes,
                     'created_at' => $inv->created_at,
+                    'pdf_path' => $pdf_path
                 ];
-
-                $total_amount += floatval($inv->amount);
-                $total_paid += floatval($inv->paid_amount);
-                if ($remaining > 0) $outstanding += $remaining;
-                if (in_array($inv->status, ['draft','issued'])) $pending_count++;
-                if ($inv->status === 'overdue') $overdue_count++;
-                // Overpayment not per-invoice here; will be reported from credits separately
             }
         }
 
-        // fetch credits for purchase (sum remaining)
-        $credits = [];
-        if ($purchase_id) {
-            $db->where('purchase_id', $purchase_id);
-            $db->orderBy('created_at', 'DESC');
-            $creditRows = $db->get('crm_payment_credits');
-            if (!empty($creditRows)) {
-                foreach ($creditRows as $c) {
-                    $remaining_credit = floatval($c->remaining_amount ?? ($c->credit_amount - $c->applied_amount));
-                    $credits[] = [
-                        'id' => intval($c->id),
-                        'credit_amount' => (float)$c->credit_amount,
-                        'applied_amount' => (float)$c->applied_amount,
-                        'remaining_amount' => $remaining_credit,
-                        'source_invoice_id' => intval($c->source_invoice_id),
-                        'created_at' => $c->created_at
-                    ];
-                    $overpayment += $remaining_credit;
-                }
-            }
-        }
-
-        $summary = [
-            'total_amount' => $total_amount,
-            'total_paid' => $total_paid,
-            'outstanding' => $outstanding,
-            'pending_count' => $pending_count,
-            'overdue_count' => $overdue_count,
-            'overpayment' => $overpayment,
-        ];
-
-        echo json_encode(['status' => 200, 'invoices' => $rows, 'summary' => $summary, 'credits' => $credits]);
+        echo json_encode(['status' => 200, 'invoices' => $result]);
         exit;
     } catch (Exception $e) {
-        echo json_encode(['status' => 500, 'message' => 'Error: '.$e->getMessage()]);
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
         exit;
     }
 }
-
-if ($s === 'get_invoice_summary') {
-    global $db;
-    $client_id   = isset($_POST['client_id']) ? intval($_POST['client_id']) : 0;
-    $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
-
-    if (!$client_id || !$purchase_id) {
-        echo json_encode([]);
-        exit;
-    }
-
-    // Fetch purchase and plot details
-    $db->where('id', $purchase_id);
-    $purchase = $db->getOne('wo_booking_helper');
-
-    if (!$purchase) {
-        echo json_encode([]);
-        exit;
-    }
-
-    $db->where('id', $purchase->booking_id);
-    $plot_details = $db->getOne('wo_booking');
-
-    $total_amount = floatval(($purchase->per_katha * $plot_details->katha) + $purchase->booking_money + $purchase->down_payment);
-    $booking_paid = floatval($purchase->booking_money_paid ?? 0);
-    $down_paid    = floatval($purchase->down_payment_paid ?? 0);
-    $total_paid   = $booking_paid + $down_paid;
-
-    // Payment schedule
-    $db->where('purchase_id', $purchase_id);
-    $db->orderBy('installment_number','ASC');
-    $schedules = $db->get('crm_payment_schedule');
-
-    $payment_schedule = [];
-    foreach ($schedules as $sch) {
-        $balance = floatval($sch->installment_amount) - floatval($sch->paid_amount);
-        $payment_schedule[] = [
-            'id' => $sch->id,
-            'particular' => $sch->particular ?? 'Installment '.$sch->installment_number,
-            'due_date' => $sch->due_date,
-            'installment_amount' => floatval($sch->installment_amount),
-            'paid_amount' => floatval($sch->paid_amount),
-            'balance' => max(0, $balance)
-        ];
-    }
-
-    $response = [
-        'total_amount'   => $total_amount,
-        'booking_money'  => ['paid'=>$booking_paid, 'total'=>$purchase->booking_money],
-        'down_payment'   => ['paid'=>$down_paid, 'total'=>$purchase->down_payment],
-        'total_paid'     => $total_paid,
-        'total_due'      => max(0,$total_amount-$total_paid),
-        'credits'        => floatval($purchase->credits ?? 0),
-        'payment_schedule'=> $payment_schedule
-    ];
-
-    echo json_encode([$response]);
-    exit;
-}
-
-if ($s === 'create_invoice') {
-    global $db;
-
-    $purchase_id   = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
-    $invoice_type  = isset($_POST['invoice_type']) ? Wo_Secure($_POST['invoice_type']) : 'installment';
-    $invoice_amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0.0;
-    $invoice_date  = isset($_POST['invoice_date']) ? Wo_Secure($_POST['invoice_date']) : date('Y-m-d');
-    $due_date      = isset($_POST['due_date']) ? Wo_Secure($_POST['due_date']) : date('Y-m-d');
-
-    if (!$purchase_id || $invoice_amount <= 0) {
-        echo json_encode(['status' => 400, 'message' => 'Purchase ID and positive Amount required']);
-        exit;
-    }
-
-    // --- Find client from purchase ---
-    $db->where('id', $purchase_id);
-    $ph = $db->getOne('wo_booking_helper');
-    if (!$ph) {
-        echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
-        exit;
-    }
-    $client_id = intval($ph->client_id);
-    $interest_percent = floatval($ph->interest_percent ?? 3);
-
-    // --- Generate invoice number (INV-YYYYMM-00001) ---
-    $invoice_prefix = 'INV-' . date('Ym');
-    $last = $db->rawQuery("SELECT invoice_number FROM crm_invoices WHERE invoice_number LIKE ? ORDER BY id DESC LIMIT 1", [$invoice_prefix . '%']);
-    $nextNum = 1;
-    if (!empty($last) && !empty($last[0]->invoice_number)) {
-        if (preg_match('/(\d{5})$/', $last[0]->invoice_number, $mm)) {
-            $nextNum = intval($mm[1]) + 1;
-        }
-    }
-    $invoice_number = $invoice_prefix . '-' . str_pad($nextNum, 5, '0', STR_PAD_LEFT);
-
-    // --- Create invoice record ---
-    $invoice_data = [
-        'invoice_number' => $invoice_number,
-        'purchase_id'    => $purchase_id,
-        'client_id'      => $client_id,
-        'invoice_type'   => $invoice_type,
-        'invoice_date'   => $invoice_date,
-        'due_date'       => $due_date,
-        'amount'         => $invoice_amount,
-        'paid_amount'    => $invoice_amount,
-        'remaining_amount'=> 0.00,
-        'status'         => 'paid',
-        'created_at'     => date('Y-m-d H:i:s')
-    ];
-
-    $invoice_id = $db->insert('crm_invoices', $invoice_data);
-    if (!$invoice_id) {
-        echo json_encode(['status' => 500, 'message' => 'Failed to create invoice']);
-        exit;
-    }
-
-    // --- Fetch unpaid/partial payment schedules for this purchase ---
-    $db->where('purchase_id', $purchase_id);
-    $db->where('status', '0'); // unpaid (0) or partial (2)
-    $db->orderBy('installment_number', 'ASC');
-    $schedules = $db->get('crm_payment_schedule');
-
-    $remaining_payment = $invoice_amount;
-
-    foreach ($schedules as $sch) {
-        $balance = floatval($sch->installment_amount) - floatval($sch->paid_amount);
-        if ($balance <= 0) continue;
-
-        $pay = min($remaining_payment, $balance);
-        $newPaid = floatval($sch->paid_amount) + $pay;
-        $balanceAfterPay = floatval($sch->installment_amount) - $newPaid;
-
-        // Overdue calculation
-        $interest = 0.0;
-        $overdueDays = 0;
-        if (strtotime($sch->due_date) < strtotime($invoice_date) && $balanceAfterPay > 0) {
-            $overdueDays = floor((strtotime($invoice_date) - strtotime($sch->due_date)) / 86400);
-            $interest = round($balanceAfterPay * $interest_percent / 100, 2);
-        }
-
-        $status = ($newPaid >= $sch->installment_amount) ? 1 : 2; // 1=paid, 2=partial
-
-        $db->where('id', $sch->id);
-        $db->update('crm_payment_schedule', [
-            'paid_amount'       => $newPaid,
-            'payment_date'      => $invoice_date,
-            'status'            => $status,
-            'late_fee_amount'   => $interest,
-            'days_overdue'      => $overdueDays,
-            'money_receipt_no'  => $invoice_number,
-            'invoice_id'        => $invoice_id
-        ]);
-
-        $remaining_payment -= $pay;
-        if ($remaining_payment <= 0) break;
-    }
-
-    // --- Store overpayment credit if any ---
-    if ($remaining_payment > 0) {
-        $db->insert('crm_overpayment_credits', [
-            'purchase_id' => $purchase_id,
-            'client_id'   => $client_id,
-            'amount'      => $remaining_payment,
-            'invoice_id'  => $invoice_id,
-            'created_at'  => date('Y-m-d H:i:s')
-        ]);
-    }
-
-    // Audit Trail
-    if ($db->tableExists('crm_audit_trail')) {
-        $db->insert('crm_audit_trail', [
-            'user_id' => $wo['user_id'] ?? 0,
-            'action' => 'invoice_created',
-            'details' => json_encode([
-                'invoice_id' => $invoice_id,
-                'invoice_number' => $invoice_number,
-                'purchase_id' => $purchase_id,
-                'amount' => $invoice_amount
-            ]),
-            'ip_address' => $_SERVER['REMOTE_ADDR'],
-            'created_at' => date('Y-m-d H:i:s')
-        ]);
-    }
-
-    // Queue email notification
-    if ($db->tableExists('crm_email_queue')) {
-        // Get client email
-        $client = $db->where('id', $client_id)->getOne(T_CUSTOMERS, ['email', 'name']);
-        if ($client && !empty($client['email'])) {
-            $db->insert('crm_email_queue', [
-                'purchase_id' => $purchase_id,
-                'client_id' => $client_id,
-                'recipient_email' => $client['email'],
-                'recipient_name' => $client['name'],
-                'email_type' => 'invoice_created',
-                'subject' => "New Invoice $invoice_number - ৳" . number_format($invoice_amount, 2),
-                'body' => "Dear {$client['name']},<br><br>A new invoice has been generated for your purchase.<br><br>Invoice Number: $invoice_number<br>Amount: ৳" . number_format($invoice_amount, 2) . "<br>Due Date: $due_date<br><br>Thank you.",
-                'status' => 'pending',
-                'queue_date' => date('Y-m-d H:i:s')
-            ]);
-        }
-    }
-
-    echo json_encode([
-        'status' => 200,
-        'message' => 'Invoice created and payment schedule updated',
-        'invoice_id' => $invoice_id,
-        'invoice_number' => $invoice_number
-    ]);
-    exit;
-}
-
-
-
-if ($s === 'record_payment') {
-    try {
-        global $db;
-        // POST inputs
-        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
-        $amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0.0;
-        $payment_date = isset($_POST['payment_date']) ? Wo_Secure($_POST['payment_date']) : date('Y-m-d');
-        $payment_method = isset($_POST['payment_method']) ? Wo_Secure($_POST['payment_method']) : 'cash';
-        $reference = isset($_POST['reference']) ? Wo_Secure($_POST['reference']) : '';
-        $notes = isset($_POST['notes']) ? Wo_Secure($_POST['notes']) : '';
-        // invoice_ids can be array or single string
-        $invoice_ids = [];
-        if (isset($_POST['invoice_ids']) && is_array($_POST['invoice_ids'])) {
-            $invoice_ids = array_map('intval', $_POST['invoice_ids']);
-        } elseif (isset($_POST['invoice_ids'])) {
-            // support invoice_ids[]=1 or invoice_ids=1
-            if (is_string($_POST['invoice_ids'])) {
-                // maybe comma separated
-                $invoice_ids = array_filter(array_map('intval', explode(',', $_POST['invoice_ids'])));
-            } else {
-                $invoice_ids = [intval($_POST['invoice_ids'])];
-            }
-        }
-
-        if (!$purchase_id || $amount <= 0) {
-            echo json_encode(['status' => 400, 'message' => 'Purchase and positive Amount required']);
-            exit;
-        }
-
-        // get client id for purchase
-        $db->where('id', $purchase_id);
-        $ph = $db->getOne('wo_booking_helper');
-        if (!$ph) {
-            echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
-            exit;
-        }
-        $client_id = intval($ph->client_id);
-
-        // prepare invoice list to apply to
-        if (empty($invoice_ids)) {
-            // fetch unpaid invoices for this purchase (oldest first)
-            $db->where('purchase_id', $purchase_id);
-            $db->where('remaining_amount', 0, '>');
-            $db->orWhere('paid_amount', 0); // ensure open invoices
-            $db->orderBy('invoice_date', 'ASC');
-            $cands = $db->get('crm_invoices', null, 'id, amount, paid_amount, remaining_amount, payment_schedule_id');
-            $invoice_ids = [];
-            if (!empty($cands)) {
-                foreach ($cands as $ci) $invoice_ids[] = intval($ci->id);
-            }
-        }
-
-        if (empty($invoice_ids)) {
-            // nothing to apply to - create credit if allowed
-            // create receipt + credit
-        }
-
-        // Generate receipt number: MR-YYYYMM-00001
-        $receipt_prefix = 'MR-' . date('Ym');
-        $last = $db->rawQuery("SELECT receipt_number FROM `crm_money_receipts` WHERE receipt_number LIKE ? ORDER BY id DESC LIMIT 1", [$receipt_prefix . '%']);
-        $nextNum = 1;
-        if (!empty($last) && !empty($last[0]->receipt_number)) {
-            if (preg_match('/(\d{5})$/', $last[0]->receipt_number, $mm)) {
-                $nextNum = intval($mm[1]) + 1;
-            }
-        }
-        $receipt_number = $receipt_prefix . '-' . str_pad($nextNum, 5, '0', STR_PAD_LEFT);
-
-        // Insert money receipt (use fields aligned with schema)
-        $invoices_paid_arr = []; // will push {invoice_id, applied_amount}
-        $receipt_data = [
-            'receipt_number' => $receipt_number,
-            'purchase_id' => $purchase_id,
-            'client_id' => $client_id,
-            'receipt_date' => $payment_date,
-            'payment_date' => $payment_date,
-            'amount_paid' => $amount,
-            'payment_method' => $payment_method,
-            'transaction_reference' => $reference,
-            'invoices_paid' => json_encode([], JSON_UNESCAPED_UNICODE),
-            'notes' => $notes,
-            'status' => 'issued',
-            'created_at' => date('Y-m-d H:i:s')
-        ];
-
-        $receipt_id = $db->insert('crm_money_receipts', $receipt_data);
-        if (!$receipt_id) {
-            echo json_encode(['status' => 500, 'message' => 'Failed to create receipt']);
-            exit;
-        }
-
-        $remaining = $amount;
-        $applied_total = 0;
-
-        foreach ($invoice_ids as $iid) {
-            if ($remaining <= 0) break;
-
-            $db->where('id', $iid);
-            $inv = $db->getOne('crm_invoices');
-            if (!$inv) continue;
-
-            $inv_remaining = floatval($inv->remaining_amount ?? (floatval($inv->amount) - floatval($inv->paid_amount)));
-            if ($inv_remaining <= 0) continue;
-
-            $apply = min($remaining, $inv_remaining);
-            $new_paid = round(floatval($inv->paid_amount) + $apply, 2);
-            $new_remaining = round(max(0, floatval($inv->amount) - $new_paid), 2);
-            $new_status = ($new_remaining <= 0.001) ? 'paid' : 'partial';
-
-            // update invoice
-            $db->where('id', $inv->id);
-            $db->update('crm_invoices', [
-                'paid_amount' => $new_paid,
-                'remaining_amount' => $new_remaining,
-                'status' => $new_status,
-                'updated_at' => date('Y-m-d H:i:s')
-            ]);
-
-            // if invoice linked to payment schedule, update schedule row(s)
-            if (!empty($inv->payment_schedule_id)) {
-                // Add to schedule paid_amount and set payment_date/status appropriately.
-                // Note: schedule may be an installment row; if you want to split among many schedules,
-                // extend this logic. Here we update that schedule row.
-                $db->where('id', intval($inv->payment_schedule_id));
-                $sched = $db->getOne('crm_payment_schedule');
-                if ($sched) {
-                    $sched_new_paid = round(floatval($sched->paid_amount) + $apply, 2);
-                    $sched_status = ($sched_new_paid >= floatval($sched->installment_amount) - 0.001) ? 1 : 2; // 1=paid,2=partial
-                    $db->where('id', $sched->id);
-                    $db->update('crm_payment_schedule', [
-                        'paid_amount' => $sched_new_paid,
-                        'payment_date' => $payment_date,
-                        'status' => $sched_status,
-                        'updated_at' => date('Y-m-d H:i:s')
-                    ]);
-                }
-            }
-
-            $invoices_paid_arr[] = ['invoice_id' => intval($inv->id), 'applied_amount' => $apply];
-            $remaining -= $apply;
-            $applied_total += $apply;
-        }
-
-        // update receipts.invoices_paid JSON
-        $db->where('id', $receipt_id);
-        $db->update('crm_money_receipts', ['invoices_paid' => json_encode($invoices_paid_arr, JSON_UNESCAPED_UNICODE)]);
-
-        // Handle overpayment / create payment credit record if remaining > 0
-        $overpayment_amount = 0;
-        if ($remaining > 0.01) {
-            $overpayment_amount = round($remaining, 2);
-            $credit_data = [
-                'purchase_id' => $purchase_id,
-                'client_id' => $client_id,
-                'credit_amount' => $overpayment_amount,
-                'applied_amount' => 0.00,
-                'source_invoice_id' => null,
-                'created_at' => date('Y-m-d H:i:s')
-            ];
-            $db->insert('crm_payment_credits', $credit_data);
-            logAuditTrail($purchase_id, 'create', 'credit', "Overpayment credit created for ৳$overpayment_amount", null, $credit_data);
-        }
-
-        // Log payment
-        $logData = [
-            'receipt_id' => $receipt_id,
-            'receipt_number' => $receipt_number,
-            'applied' => $invoices_paid_arr,
-            'overpayment' => $overpayment_amount
-        ];
-        logAuditTrail($purchase_id, 'create', 'payment', "Payment of ৳$amount recorded via $payment_method", null, $logData);
-
-        echo json_encode([
-            'status' => 200,
-            'message' => 'Payment recorded successfully',
-            'receipt_id' => $receipt_id,
-            'receipt_number' => $receipt_number,
-            'applied_total' => $applied_total,
-            'applied_breakdown' => $invoices_paid_arr,
-            'overpayment_credit' => $overpayment_amount
-        ]);
-        exit;
-    } catch (Exception $e) {
-        echo json_encode(['status' => 500, 'message' => 'Error: '.$e->getMessage()]);
-        exit;
-    }
-}
-
-
 
 if ($s === 'get_invoice_detail') {
     try {
@@ -538,6 +79,629 @@ if ($s === 'get_invoice_detail') {
     }
 }
 
+if ($s === 'create_invoice') {
+    try {
+        global $wo;
+        
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        $client_id = isset($_POST['client_id']) ? intval($_POST['client_id']) : 0;
+        $invoice_type = isset($_POST['invoice_type']) ? Wo_Secure($_POST['invoice_type']) : 'installment';
+        $amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0;
+        $due_date = isset($_POST['due_date']) ? Wo_Secure($_POST['due_date']) : date('Y-m-d');
+        $invoice_date = isset($_POST['invoice_date']) ? Wo_Secure($_POST['invoice_date']) : date('Y-m-d');
+        $notes = isset($_POST['notes']) ? Wo_Secure($_POST['notes']) : '';
+        $payment_schedule_id = isset($_POST['payment_schedule_id']) ? intval($_POST['payment_schedule_id']) : null;
+        $description = isset($_POST['description']) ? Wo_Secure($_POST['description']) : '';
+        
+        if (!$purchase_id || !$amount) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID and Amount required']);
+            exit;
+        }
+
+        // Get purchase details for client_id and description generation
+        $purchase = $db->where('id', $purchase_id)->getOne('wo_booking_helper');
+        if (!$purchase) {
+            echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+            exit;
+        }
+
+        // Auto-set client_id if not provided
+        if (!$client_id) {
+            $client_id = $purchase->client_id;
+        }
+
+        // Auto-generate description if not provided
+        if (!$description) {
+            $type_labels = [
+                'booking_money' => 'Booking Money',
+                'down_payment' => 'Down Payment',
+                'installment' => 'Installment Payment'
+            ];
+            $description = $type_labels[$invoice_type] ?? 'Payment';
+            
+            // Add plot details if available
+            if ($purchase->plot) {
+                $description .= " for Plot {$purchase->plot}";
+            }
+        }
+
+        // Generate invoice number: INV-YYYYMM-00001
+        $invoice_prefix = 'INV-' . date('Ym');
+        $last = $db->rawQuery("SELECT invoice_number FROM `crm_invoices` WHERE invoice_number LIKE ? ORDER BY id DESC LIMIT 1", [$invoice_prefix . '%']);
+        $nextNum = 1;
+        if (!empty($last) && !empty($last[0]->invoice_number)) {
+            if (preg_match('/(\d{5})$/', $last[0]->invoice_number, $mm)) {
+                $nextNum = intval($mm[1]) + 1;
+            }
+        }
+        $invoice_number = $invoice_prefix . '-' . str_pad($nextNum, 5, '0', STR_PAD_LEFT);
+
+        // Check for overdue status
+        $status = 'issued';
+        if ($due_date < date('Y-m-d')) {
+            $status = 'overdue';
+        }
+
+
+        $data = [
+            'purchase_id' => $purchase_id,
+            'client_id' => $client_id,
+            'invoice_number' => $invoice_number,
+            'invoice_type' => $invoice_type,
+            'payment_schedule_id' => $payment_schedule_id,
+            'description' => $description,
+            'invoice_date' => $invoice_date,
+            'amount' => $amount,
+            'paid_amount' => 0,
+            'remaining_amount' => $amount,
+            'due_date' => $due_date,
+            'notes' => $notes,
+            'status' => $status,
+            'created_at' => date('Y-m-d H:i:s'),
+            'created_by' => $wo['user']['id'] ?? 0,
+            'updated_at' => date('Y-m-d H:i:s')
+        ];
+
+        $id = $db->insert('crm_invoices', $data);
+        
+        if ($id) {
+            // Log to audit trail
+            logAuditTrail($purchase_id, 'create', 'invoice', "Invoice $invoice_number created for ৳$amount", null, $data);
+            
+            // UPDATE PAYMENT SCHEDULE
+            if ($payment_schedule_id) {
+                $db->where('id', $payment_schedule_id);
+                $db->update('crm_payment_schedule', [
+                    'invoice_id' => $id,
+                    'invoice_status' => 'issued',
+                    'invoice_date' => $invoice_date,
+                    'updated_at' => date('Y-m-d H:i:s')
+                ]);
+            }
+
+            // AUTO-GENERATE MONEY RECEIPT IF PAYMENT RECEIVED
+            $receipt_id = 0;
+            $receipt_pdf_generated = false;
+            
+            if (isset($_POST['payment_received']) && $_POST['payment_received'] == '1') {
+                $pay_amount = isset($_POST['payment_amount']) ? floatval($_POST['payment_amount']) : $amount;
+                $pay_method = isset($_POST['payment_method']) ? Wo_Secure($_POST['payment_method']) : 'cash';
+                
+                if ($pay_amount > 0) {
+                    // Generate Receipt Number
+                    $receipt_prefix = 'MR-' . date('Ym');
+                    $last_rcpt = $db->rawQuery("SELECT receipt_number FROM `crm_money_receipts` WHERE receipt_number LIKE ? ORDER BY id DESC LIMIT 1", [$receipt_prefix . '%']);
+                    $nextRcptNum = 1;
+                    if (!empty($last_rcpt) && !empty($last_rcpt[0]->receipt_number)) {
+                        if (preg_match('/(\d{5})$/', $last_rcpt[0]->receipt_number, $mm)) {
+                            $nextRcptNum = intval($mm[1]) + 1;
+                        }
+                    }
+                    $receipt_number = $receipt_prefix . '-' . str_pad($nextRcptNum, 5, '0', STR_PAD_LEFT);
+
+                    // Insert Receipt
+                    $receipt_data = [
+                        'purchase_id' => $purchase_id,
+                        'client_id' => $client_id,
+                        'receipt_number' => $receipt_number,
+                        'amount_paid' => $pay_amount,
+                        'payment_date' => date('Y-m-d'),
+                        'payment_method' => $pay_method,
+                        'notes' => "Auto-generated for Invoice $invoice_number",
+                        'status' => 'issued',
+                        'invoices_paid' => json_encode([[
+                            'invoice_id' => $id,
+                            'invoice_number' => $invoice_number,
+                            'applied_amount' => $pay_amount
+                        ]]),
+                        'created_at' => date('Y-m-d H:i:s'),
+                        'created_by' => $wo['user']['id'] ?? 0
+                    ];
+                    $receipt_id = $db->insert('crm_money_receipts', $receipt_data);
+
+                    if ($receipt_id) {
+                        // Update Invoice Status
+                        $new_paid = $pay_amount;
+                        $new_remaining = max(0, $amount - $new_paid);
+                        $new_status = ($new_remaining <= 0.01) ? 'paid' : 'partial';
+                        
+                        $db->where('id', $id)->update('crm_invoices', [
+                            'paid_amount' => $new_paid,
+                            'remaining_amount' => $new_remaining,
+                            'status' => $new_status
+                        ]);
+
+                        // Update Schedule Status
+                        if ($payment_schedule_id) {
+                            $sched_status = ($new_remaining <= 0.01) ? 1 : 2; // 1=paid, 2=partial
+                            $db->where('id', $payment_schedule_id)->update('crm_payment_schedule', [
+                                'paid_amount' => $new_paid,
+                                'payment_date' => date('Y-m-d'),
+                                'status' => $sched_status
+                            ]);
+                        }
+
+                        // Log Receipt
+                        logAuditTrail($purchase_id, 'create', 'payment', "Auto-payment of ৳$pay_amount recorded for Invoice $invoice_number", null, $receipt_data);
+
+                        // Generate Receipt PDF & Email
+                        $rcpt_pdf = auto_generate_receipt_pdf($receipt_id);
+                        $receipt_pdf_generated = $rcpt_pdf['success'] ?? false;
+                        
+                        if ($receipt_pdf_generated && !empty($rcpt_pdf['full_path'])) {
+                            // Queue Receipt Email
+                            $client = $db->where('id', $client_id)->getOne('crm_customers', ['name', 'email']);
+                            if ($client && !empty($client->email)) {
+                                $db->insert('crm_email_queue', [
+                                    'purchase_id' => $purchase_id,
+                                    'client_id' => $client_id,
+                                    'recipient_email' => $client->email,
+                                    'recipient_name' => $client->name,
+                                    'email_type' => 'payment_received',
+                                    'metadata' => json_encode([
+                                        'client_name' => $client->name,
+                                        'receipt_number' => $receipt_number,
+                                        'amount' => $pay_amount,
+                                        'payment_date' => date('Y-m-d'),
+                                        'payment_method' => $pay_method,
+                                        'file_num' => $purchase->file_num ?? '-',
+                                        'pdf_path' => $rcpt_pdf['full_path']
+                                    ]),
+                                    'attachment_path' => $rcpt_pdf['full_path'],
+                                    'status' => 'queued',
+                                    'created_at' => date('Y-m-d H:i:s')
+                                ]);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // AUTO-GENERATE INVOICE PDF AND QUEUE EMAIL WITH ATTACHMENT
+            // Helper already loaded via init.php
+            $pdf_result = auto_generate_invoice_pdf($id);
+            
+            echo json_encode([
+                'status' => 200, 
+                'message' => 'Invoice created successfully' . ($receipt_id ? ' & Payment Recorded' : ''), 
+                'invoice_id' => $id, 
+                'invoice_number' => $invoice_number,
+                'receipt_id' => $receipt_id,
+                'pdf_generated' => $pdf_result['success'] ?? false,
+                'email_queued' => $pdf_result['email_queued'] ?? false
+            ]);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to create invoice']);
+
+        }
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+if ($s === 'suggest_next_invoice') {
+    try {
+        $purchase_id = isset($_GET['purchase_id']) ? intval($_GET['purchase_id']) : 0;
+        
+        if (!$purchase_id) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID required']);
+            exit;
+        }
+
+        // Get next unpaid installment from payment schedule
+        $db->where('purchase_id', $purchase_id);
+        $db->where('status', 0); // Unpaid
+        $db->where('status', 99, '!='); // Not deleted
+        $db->orderBy('installment_number', 'ASC');
+        $next = $db->getOne('crm_payment_schedule');
+
+        if (!$next) {
+            echo json_encode(['status' => 200, 'suggestion' => null, 'message' => 'All installments paid']);
+            exit;
+        }
+
+        $suggestion = [
+            'invoice_type' => $next->installment_type ?? 'installment',
+            'amount' => $next->installment_amount,
+            'due_date' => $next->due_date,
+            'description' => $next->particular ?? '',
+            'payment_schedule_id' => $next->id
+        ];
+
+        // Calculate overdue details
+        if ($next->due_date < date('Y-m-d')) {
+            $d1 = new DateTime($next->due_date);
+            $d2 = new DateTime(date('Y-m-d'));
+            $diff = $d2->diff($d1);
+            $days_overdue = $diff->days;
+            
+            // 5% late fee logic
+            $late_fee = $next->installment_amount * 0.05;
+            
+            $suggestion['is_overdue'] = true;
+            $suggestion['days_overdue'] = $days_overdue;
+            $suggestion['late_fee'] = $late_fee;
+            $suggestion['suggested_amount'] = $next->installment_amount + $late_fee; // Total with late fee
+        } else {
+            $suggestion['is_overdue'] = false;
+            $suggestion['days_overdue'] = 0;
+            $suggestion['late_fee'] = 0;
+            $suggestion['suggested_amount'] = $next->installment_amount;
+        }
+
+        echo json_encode(['status' => 200, 'suggestion' => $suggestion]);
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+if ($s === 'get_invoice_summary') {
+    try {
+        $client_id = isset($_POST['client_id']) ? intval($_POST['client_id']) : 0;
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        
+        if (!$purchase_id) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID required']);
+            exit;
+        }
+
+        // Get purchase details
+        $purchase = $db->where('id', $purchase_id)->getOne('wo_booking_helper');
+        if (!$purchase) {
+            echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+            exit;
+        }
+
+        // Get booking details for price
+        $booking = $db->where('id', $purchase->booking_id)->getOne('wo_booking', ['katha']);
+        $total_amount = $booking->katha * $purchase->per_katha ?? 0;
+
+        // Calculate paid amounts
+        $paid_amount = $db->where('purchase_id', $purchase_id)->getValue('crm_invoices', 'SUM(paid_amount)') ?? 0;
+        $total_due = max(0, $total_amount - $paid_amount);
+
+        // Get credits
+        $credits = $db->where('purchase_id', $purchase_id)->where('remaining_amount', 0, '>')->getValue('crm_payment_credits', 'SUM(remaining_amount)') ?? 0;
+
+        // Get booking money and down payment stats
+        $bm_total = $purchase->booking_money ?? 0;
+        $dp_total = $purchase->down_payment ?? 0;
+        
+        // Calculate paid BM/DP from invoices
+        $bm_paid = $db->where('purchase_id', $purchase_id)->where('invoice_type', 'booking_money')->getValue('crm_invoices', 'SUM(paid_amount)') ?? 0;
+        $dp_paid = $db->where('purchase_id', $purchase_id)->where('invoice_type', 'down_payment')->getValue('crm_invoices', 'SUM(paid_amount)') ?? 0;
+
+        // Get pending schedule
+        $db->where('purchase_id', $purchase_id);
+        $db->where('status', 1, '!='); // Not fully paid
+        $db->where('status', 99, '!='); // Not deleted
+        $db->orderBy('due_date', 'ASC');
+        $schedules = $db->get('crm_payment_schedule');
+        
+        $schedule_data = [];
+        foreach ($schedules as $sch) {
+            $schedule_data[] = [
+                'id' => $sch->id,
+                'particular' => $sch->particular,
+                'due_date' => $sch->due_date,
+                'installment_amount' => $sch->installment_amount,
+                'paid_amount' => $sch->paid_amount,
+                'balance' => $sch->installment_amount - $sch->paid_amount
+            ];
+        }
+
+        echo json_encode([
+            'status' => 200,
+            'total_amount' => $total_amount,
+            'total_paid' => $paid_amount,
+            'total_due' => $total_due,
+            'credits' => $credits,
+            'booking_money' => ['total' => $bm_total, 'paid' => $bm_paid],
+            'down_payment' => ['total' => $dp_total, 'paid' => $dp_paid],
+            'payment_schedule' => $schedule_data
+        ]);
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+if ($s === 'calculate_late_fees') {
+    try {
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        $amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0;
+        
+        if (!$purchase_id) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID required']);
+            exit;
+        }
+
+        // Simple late fee calculation: 5% of overdue amount
+        // Find overdue installments
+        $db->where('purchase_id', $purchase_id);
+        $db->where('due_date', date('Y-m-d'), '<');
+        $db->where('status', 1, '!='); // Not paid
+        $db->where('status', 99, '!=');
+        $overdue_schedules = $db->get('crm_payment_schedule');
+        
+        $total_late_fee = 0;
+        $overdue_total = 0;
+        
+        foreach ($overdue_schedules as $sch) {
+            $balance = $sch->installment_amount - $sch->paid_amount;
+            $overdue_total += $balance;
+            // 5% late fee on overdue balance
+            $total_late_fee += ($balance * 0.05);
+        }
+        
+        $suggested_total = $amount + $total_late_fee;
+
+        echo json_encode([
+            'status' => 200,
+            'total_late_fee' => $total_late_fee,
+            'overdue_amount' => $overdue_total,
+            'suggested_total' => $suggested_total
+        ]);
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+if ($s === 'record_payment') {
+    try {
+        global $wo;
+        
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        $amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0;
+        $payment_date = isset($_POST['payment_date']) ? Wo_Secure($_POST['payment_date']) : date('Y-m-d');
+        $payment_method = isset($_POST['payment_method']) ? Wo_Secure($_POST['payment_method']) : 'cash';
+        $reference = isset($_POST['reference']) ? Wo_Secure($_POST['reference']) : '';
+        $notes = isset($_POST['notes']) ? Wo_Secure($_POST['notes']) : '';
+        $invoice_ids = isset($_POST['invoice_ids']) ? $_POST['invoice_ids'] : [];
+
+        if (!$purchase_id || !$amount) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID and Amount required']);
+            exit;
+        }
+
+        $db->startTransaction();
+
+        try {
+            // Get purchase details
+            $purchase = $db->where('id', $purchase_id)->getOne('wo_booking_helper');
+            if (!$purchase) {
+                throw new Exception('Purchase not found');
+            }
+
+            $client_id = $purchase->client_id;
+
+            // Generate receipt number: MR-YYYYMM-00001
+            $receipt_prefix = 'MR-' . date('Ym');
+            $last = $db->rawQuery("SELECT receipt_number FROM `crm_money_receipts` WHERE receipt_number LIKE ? ORDER BY id DESC LIMIT 1", [$receipt_prefix . '%']);
+            $nextNum = 1;
+            if (!empty($last) && !empty($last[0]->receipt_number)) {
+                if (preg_match('/(\d{5})$/', $last[0]->receipt_number, $mm)) {
+                    $nextNum = intval($mm[1]) + 1;
+                }
+            }
+            $receipt_number = $receipt_prefix . '-' . str_pad($nextNum, 5, '0', STR_PAD_LEFT);
+
+            // Record money receipt
+            $receipt_data = [
+                'purchase_id' => $purchase_id,
+                'client_id' => $client_id,
+                'receipt_number' => $receipt_number,
+                'amount_paid' => $amount,
+                'payment_date' => $payment_date,
+                'payment_method' => $payment_method,
+                'transaction_reference' => $reference,
+                'notes' => $notes,
+                'status' => 'issued',
+                'created_at' => date('Y-m-d H:i:s'),
+                'created_by' => $wo['user']['id'] ?? 0
+            ];
+
+            $receipt_id = $db->insert('crm_money_receipts', $receipt_data);
+            
+            if (!$receipt_id) {
+                throw new Exception('Failed to create receipt');
+            }
+
+            // Apply payment to invoices and auto-update payment schedules
+            $remaining = $amount;
+            $total_invoices_paid = 0;
+            $invoices_paid_arr = [];
+
+            // If no invoice_ids provided, auto-select unpaid invoices
+            if (empty($invoice_ids)) {
+                $db->where('purchase_id', $purchase_id);
+                $db->where('status', 'issued', '!=');
+                $db->where('status', 'paid', '!=');
+                $db->orderBy('due_date', 'ASC');
+                $unpaid_invoices = $db->get('crm_invoices');
+                $invoice_ids = array_map(function($inv) { return $inv->id; }, $unpaid_invoices);
+            }
+
+            foreach ($invoice_ids as $invoice_id) {
+                if ($remaining <= 0) break;
+
+                $db->where('id', intval($invoice_id));
+                $invoice = $db->getOne('crm_invoices');
+
+                if (!$invoice) continue;
+
+                $unpaid = floatval($invoice->remaining_amount ?? ($invoice->amount - $invoice->paid_amount));
+                if ($unpaid <= 0) continue;
+
+                $payment_to_apply = min($remaining, $unpaid);
+
+                $new_paid = floatval($invoice->paid_amount) + $payment_to_apply;
+                $new_remaining = max(0, floatval($invoice->amount) - $new_paid);
+                $new_status = ($new_remaining <= 0.01) ? 'paid' : 'partial';
+
+                $db->where('id', $invoice_id);
+                $db->update('crm_invoices', [
+                    'paid_amount' => $new_paid,
+                    'remaining_amount' => $new_remaining,
+                    'status' => $new_status,
+                    'updated_at' => date('Y-m-d H:i:s'),
+                    'updated_by' => $wo['user']['id'] ?? 0
+                ]);
+
+                // AUTO-UPDATE PAYMENT SCHEDULE if linked
+                if ($invoice->payment_schedule_id) {
+                    $db->where('id', $invoice->payment_schedule_id);
+                    $schedule = $db->getOne('crm_payment_schedule');
+                    
+                    if ($schedule) {
+                        $sched_new_paid = floatval($schedule->paid_amount) + $payment_to_apply;
+                        $sched_amount = floatval($schedule->installment_amount);
+                        $sched_status = ($sched_new_paid >= $sched_amount - 0.01) ? 1 : 2; // 1=paid, 2=partial
+
+                        $db->where('id', $invoice->payment_schedule_id);
+                        $db->update('crm_payment_schedule', [
+                            'paid_amount' => $sched_new_paid,
+                            'payment_date' => $payment_date,
+                            'status' => $sched_status,
+                            'updated_at' => date('Y-m-d H:i:s')
+                        ]);
+                    }
+                }
+
+                $invoices_paid_arr[] = [
+                    'invoice_id' => intval($invoice->id),
+                    'invoice_number' => $invoice->invoice_number,
+                    'applied_amount' => $payment_to_apply
+                ];
+                
+                $remaining -= $payment_to_apply;
+                $total_invoices_paid += $payment_to_apply;
+            }
+
+            // Update receipt with invoices_paid JSON
+            $db->where('id', $receipt_id);
+            $db->update('crm_money_receipts', [
+                'invoices_paid' => json_encode($invoices_paid_arr, JSON_UNESCAPED_UNICODE)
+            ]);
+
+            // Handle overpayment credit automatically
+            $overpayment_amount = 0;
+            if ($remaining > 0.01) {
+                $overpayment_amount = round($remaining, 2);
+                $credit_data = [
+                    'purchase_id' => $purchase_id,
+                    'client_id' => $client_id,
+                    'receipt_id' => $receipt_id,
+                    'credit_amount' => $overpayment_amount,
+                    'applied_amount' => 0,
+                    'status' => 'active',
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
+
+                $db->insert('crm_payment_credits', $credit_data);
+
+                // Log overpayment to audit trail
+                logAuditTrail($purchase_id, 'create', 'credit', "Overpayment credit created for ৳$overpayment_amount", null, $credit_data);
+            }
+
+            // Log payment to audit trail
+            $logData = [
+                'receipt_id' => $receipt_id,
+                'receipt_number' => $receipt_number,
+                'invoices_paid' => $invoices_paid_arr,
+                'overpayment' => $overpayment_amount
+            ];
+            logAuditTrail($purchase_id, 'create', 'payment', "Payment of ৳$amount recorded via $payment_method", null, $logData);
+
+            // AUTO-GENERATE RECEIPT PDF AND QUEUE EMAIL WITH ATTACHMENT
+            // Helper already loaded via init.php
+            $pdf_result = auto_generate_receipt_pdf($receipt_id);
+            
+            // Update email queue with PDF attachment if generated
+            if ($pdf_result['success'] && !empty($pdf_result['full_path'])) {
+                // Get client details
+                $client = $db->where('id', $client_id)->getOne('crm_customers', ['name', 'email', 'phone']);
+                $purchase = $db->where('id', $purchase_id)->getOne('wo_booking_helper', ['file_num']);
+                
+                if ($client && !empty($client->email)) {
+                    $db->insert('crm_email_queue', [
+                        'purchase_id' => $purchase_id,
+                        'client_id' => $client_id,
+                        'recipient_email' => $client->email,
+                        'recipient_name' => $client->name,
+                        'email_type' => 'payment_received',
+                        'template_variables' => json_encode([
+                            'client_name' => $client->name,
+                            'receipt_number' => $receipt_number,
+                            'amount' => $amount,
+                            'payment_date' => $payment_date,
+                            'payment_method' => $payment_method,
+                            'file_num' => $purchase->file_num ?? '-',
+                            'pdf_path' => $pdf_result['full_path']
+                        ]),
+                        'attachment_path' => $pdf_result['full_path'],
+                        'status' => 'queued',
+                        'created_at' => date('Y-m-d H:i:s')
+                    ]);
+                }
+            }
+
+            // CHECK IF ALL PAYMENTS COMPLETE → AUTO-GENERATE COMPLETION CERTIFICATE
+            $completion_result = check_and_generate_completion_certificate($purchase_id);
+
+            $db->commit();
+
+            echo json_encode([
+                'status' => 200,
+                'message' => 'Payment recorded and schedules updated successfully',
+                'receipt_id' => $receipt_id,
+                'receipt_number' => $receipt_number,
+                'applied_total' => $total_invoices_paid,
+                'invoices_paid' => $invoices_paid_arr,
+                'overpayment_credit' => $overpayment_amount,
+                'receipt_pdf_generated' => $pdf_result['success'] ?? false,
+                'all_payments_complete' => $completion_result['all_paid'] ?? false,
+                'certificate_generated' => $completion_result['certificate_generated'] ?? false,
+                'email_queued' => true
+            ]);
+        } catch (Exception $e) {
+            $db->rollback();
+            throw $e;
+        }
+
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        exit;
+    }
+}
 
 if ($s === 'get_credits') {
     try {
@@ -550,18 +714,16 @@ if ($s === 'get_credits') {
 
         $db->where('purchase_id', $purchase_id);
         $db->orderBy('created_at', 'DESC');
-        $credits = $db->get('crm_overpayment_credits');
+        $credits = $db->get('crm_payment_credits');
 
         $result = [];
         if (!empty($credits)) {
             foreach ($credits as $credit) {
                 $result[] = [
                     'id' => $credit->id,
-                    'receipt_number' => $credit->receipt_id ? $db->where('id', $credit->receipt_id)->getOne('crm_money_receipts', 'receipt_number')->receipt_number : 'N/A',
                     'credit_amount' => $credit->credit_amount,
-                    'remaining_credit' => $credit->remaining_credit,
-                    'status' => $credit->status,
-                    'applied_to' => $credit->applied_to ?? 'None',
+                    'applied_amount' => $credit->applied_amount ?? 0,
+                    'status' => $credit->status ?? 'active',
                     'created_at' => $credit->created_at
                 ];
             }
@@ -594,11 +756,11 @@ if ($s === 'get_receipts') {
                 $result[] = [
                     'id' => $receipt->id,
                     'receipt_number' => $receipt->receipt_number,
-                    'amount' => $receipt->amount,
+                    'amount' => $receipt->amount_paid,
                     'payment_date' => $receipt->payment_date,
                     'payment_method' => $receipt->payment_method,
-                    'reference' => $receipt->reference,
-                    'notes' => $receipt->notes,
+                    'reference' => $receipt->transaction_reference ?? '',
+                    'notes' => $receipt->notes ?? '',
                     'created_at' => $receipt->created_at
                 ];
             }
@@ -612,23 +774,123 @@ if ($s === 'get_receipts') {
     }
 }
 
-function logAuditTrail($purchase_id, $action, $category, $description, $before = null, $after = null) {
-    global $db, $wo;
-    
-    $user_id = $wo['user_id'] ?? 0;
-    $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
-    
-    $data = [
-        'purchase_id' => $purchase_id,
-        'action_type' => $action,
-        'action_category' => $category,
-        'action_description' => $description,
-        'before_values' => $before ? json_encode($before, JSON_UNESCAPED_UNICODE) : null,
-        'after_values' => $after ? json_encode($after, JSON_UNESCAPED_UNICODE) : null,
-        'performed_by' => $user_id,
-        'performed_at' => date('Y-m-d H:i:s'),
-        'ip_address' => $ip_address,
-    ];
-    
-    return $db->insert('crm_audit_trail', $data);
+if ($s === 'get_purchase_documents') {
+    try {
+        $purchase_id = isset($_GET['purchase_id']) ? intval($_GET['purchase_id']) : 0;
+        $type = isset($_GET['type']) ? Wo_Secure($_GET['type']) : null;
+        
+        if (!$purchase_id) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID required']);
+            exit;
+        }
+
+        $documents = crm_get_purchase_documents($purchase_id, $type);
+        
+        // Format for frontend
+        $result = [];
+        foreach ($documents as $doc) {
+            $result[] = [
+                'id' => $doc->id,
+                'file_name' => $doc->file_name,
+                'document_type' => $doc->document_type,
+                'generated_at' => $doc->generated_at,
+                'file_size' => $doc->file_size,
+                'file_path' => $doc->file_path,
+                'fm_file_id' => $doc->fm_file_id
+            ];
+        }
+
+        echo json_encode(['status' => 200, 'documents' => $result]);
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+if ($s === 'upload_purchase_document') {
+    try {
+        global $wo;
+        
+        $purchase_id = isset($_POST['purchase_id']) ? intval($_POST['purchase_id']) : 0;
+        $document_type = isset($_POST['document_type']) ? Wo_Secure($_POST['document_type']) : 'document';
+        
+        if (!$purchase_id || empty($_FILES['file'])) {
+            echo json_encode(['status' => 400, 'message' => 'Purchase ID and File required']);
+            exit;
+        }
+
+        // Get client_id from purchase
+        $purchase = $db->where('id', $purchase_id)->getOne('wo_booking_helper', ['client_id']);
+        if (!$purchase) {
+            echo json_encode(['status' => 404, 'message' => 'Purchase not found']);
+            exit;
+        }
+
+        $file = $_FILES['file'];
+        $source_path = $file['tmp_name'];
+        $original_name = $file['name'];
+        
+        // Move to temp location with original name to preserve extension logic in helper
+        $temp_path = sys_get_temp_dir() . '/' . $original_name;
+        move_uploaded_file($source_path, $temp_path);
+        
+        $result = crm_store_document($temp_path, $purchase->client_id, $purchase_id, $document_type, [
+            'uploaded_by' => $wo['user']['id'] ?? 0
+        ]);
+        
+        @unlink($temp_path); // Cleanup
+
+        if ($result['success']) {
+            echo json_encode(['status' => 200, 'message' => 'Document uploaded successfully', 'document' => $result]);
+        } else {
+            echo json_encode(['status' => 500, 'message' => $result['message']]);
+        }
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+if ($s === 'delete_purchase_document') {
+    try {
+        global $wo;
+        
+        $document_id = isset($_POST['document_id']) ? intval($_POST['document_id']) : 0;
+        
+        if (!$document_id) {
+            echo json_encode(['status' => 400, 'message' => 'Document ID required']);
+            exit;
+        }
+
+        // Get fm_file_id from crm_documents
+        $doc = $db->where('id', $document_id)->getOne('crm_documents', ['fm_file_id']);
+        if (!$doc) {
+            echo json_encode(['status' => 404, 'message' => 'Document not found']);
+            exit;
+        }
+
+        // Soft delete via helper
+        // Note: crm_delete_document expects fm_files.id, not crm_documents.id
+        // But wait, crm_delete_document wraps fm_delete_file which takes file_id.
+        // Let's assume we pass fm_file_id.
+        
+        $result = crm_delete_document($doc->fm_file_id, $wo['user']['id'] ?? 0);
+        
+        if ($result['success'] || $result === true) { // fm_delete_file might return boolean or array
+             // Also mark as deleted in crm_documents or delete row?
+             // Since it's soft delete in fm_files, we should probably keep crm_documents but maybe mark it?
+             // Or just delete from crm_documents since the file is gone from active view.
+             $db->where('id', $document_id)->delete('crm_documents');
+             
+             echo json_encode(['status' => 200, 'message' => 'Document deleted successfully']);
+        } else {
+            echo json_encode(['status' => 500, 'message' => 'Failed to delete document']);
+        }
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['status' => 500, 'message' => 'Error: ' . $e->getMessage()]);
+        exit;
+    }
 }

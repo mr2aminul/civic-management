@@ -20,7 +20,7 @@ $schedule_config = [
       <div class="modal-header bg-gradient-success text-white border-0 p-0 d-block">
         <div class="d-flex align-items-center p-3">
           <h5 class="modal-title mb-0">
-            <i class="lni lni-dollar me-2"></i>Payment Schedule — <span id="ui_project_name"></span>
+            <i class="lni lni-dollar me-2"></i>Manage Purchase — <span id="ui_project_name"></span>
           </h5>
           <div class="ms-3" id="ui_pending_badge_container" style="display:none;">
             <span id="ui_pending_badge" class="badge bg-warning text-dark" style="cursor:pointer;" title="Click to view pending changes">
@@ -48,6 +48,9 @@ $schedule_config = [
           </button>
           <button class="nav-link text-white" id="tab-invoices-btn" data-bs-toggle="tab" data-bs-target="#tab-invoices" type="button" role="tab" style="border:none; background:transparent; opacity:0.8;">
             <i class="lni lni-document me-1"></i>Invoices
+          </button>
+          <button class="nav-link text-white" id="tab-documents-btn" data-bs-toggle="tab" data-bs-target="#tab-documents" type="button" role="tab" style="border:none; background:transparent; opacity:0.8;">
+            <i class="lni lni-files me-1"></i>Documents
           </button>
           <button class="nav-link text-white" id="tab-emails-btn" data-bs-toggle="tab" data-bs-target="#tab-emails" type="button" role="tab" style="border:none; background:transparent; opacity:0.8;">
             <i class="lni lni-email me-1"></i>Emails
@@ -226,11 +229,36 @@ $schedule_config = [
             <div class="card border-0 shadow-sm">
               <div class="card-body">
                 <div class="row g-3">
-                  <div class="col-md-6">
+                  <div class="col-12">
+                    <label class="form-label fw-medium d-block">Reschedule Type</label>
+                    <div class="form-check form-check-inline">
+                      <input class="form-check-input" type="radio" name="reschedule_type" id="reschedule_type_amount" value="amount" checked>
+                      <label class="form-check-label" for="reschedule_type_amount">Change Monthly Amount</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                      <input class="form-check-input" type="radio" name="reschedule_type" id="reschedule_type_duration" value="duration">
+                      <label class="form-check-label" for="reschedule_type_duration">Change Duration (Installments)</label>
+                    </div>
+                  </div>
+                  
+                  <!-- Amount Input -->
+                  <div class="col-md-6" id="reschedule_amount_group">
                     <label class="form-label fw-medium">New Monthly Amount (৳)</label>
                     <input type="number" id="reschedule_new_monthly" class="form-control" placeholder="e.g., 45000" min="1" step="1">
                     <small class="text-muted d-block mt-1">Must be greater than current amount</small>
                   </div>
+                  
+                  <!-- Duration Input (Hidden by default) -->
+                  <div class="col-md-6 d-none" id="reschedule_duration_group">
+                    <label class="form-label fw-medium">New Number of Installments</label>
+                    <input type="number" id="reschedule_new_installments" class="form-control" placeholder="e.g., 12" min="1" step="1">
+                    <small class="text-muted d-block mt-1">Monthly amount will be auto-calculated</small>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label small">Reschedule Fee (Added to Total)</label>
+                    <input type="number" class="form-control form-control-sm" id="reschedule_fee" placeholder="0.00" value="0">
+                  </div>
+
                   <div class="col-md-6">
                     <label class="form-label fw-medium">Adjustment Mode</label>
                     <select id="reschedule_adjustment_mode" class="form-select">
@@ -281,16 +309,33 @@ $schedule_config = [
           </div>
         </div>
 
+        <!-- TAB: Documents -->
+        <div class="tab-pane fade" id="tab-documents" role="tabpanel">
+            <?php echo Wo_LoadManagePage('clients/modals/tabs/documents_advanced'); ?>
+        </div>
+
         <!-- TAB 5: Emails -->
         <div class="tab-pane fade" id="tab-emails" role="tabpanel">
           <div class="modal-body p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h6 class="fw-bold mb-0"><i class="lni lni-envelope me-2"></i>Communication Queue</h6>
+              <button class="btn btn-sm btn-primary" id="btn_compose_from_purchase">
+                <i class="lni lni-pencil me-1"></i>Compose Message
+              </button>
+            </div>
+            
             <ul class="nav nav-pills gap-2 mb-3" role="tablist">
-              <li class="nav-item"><button class="nav-link active" id="email-receipts-tab" data-bs-toggle="pill" data-bs-target="#email-receipts" type="button">Money Receipts</button></li>
-              <li class="nav-item"><button class="nav-link" id="email-schedules-tab" data-bs-toggle="pill" data-bs-target="#email-schedules" type="button">Payment Schedules</button></li>
+              <li class="nav-item"><button class="nav-link active" id="email-pending-tab" data-bs-toggle="pill" data-bs-target="#email-pending" type="button">Pending</button></li>
+              <li class="nav-item"><button class="nav-link" id="email-sent-tab" data-bs-toggle="pill" data-bs-target="#email-sent" type="button">Sent</button></li>
             </ul>
+            
             <div class="tab-content">
-              <div class="tab-pane fade show active" id="email-receipts"><div id="pending_receipts_container"><p class="text-muted text-center py-4">No pending money receipts</p></div></div>
-              <div class="tab-pane fade" id="email-schedules"><div id="pending_schedules_container"><p class="text-muted text-center py-4">No pending schedules to send</p></div></div>
+              <div class="tab-pane fade show active" id="email-pending">
+                <div id="pending_emails_container"><p class="text-muted text-center py-4">Loading...</p></div>
+              </div>
+              <div class="tab-pane fade" id="email-sent">
+                <div id="sent_emails_container"><p class="text-muted text-center py-4">Loading...</p></div>
+              </div>
             </div>
           </div>
         </div>
@@ -1819,6 +1864,25 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
     loadAuditTrail();
   });
 
+  // Tab: Documents
+  $('#tab-documents-btn').on('shown.bs.tab', function() {
+    loadDocuments();
+  });
+
+  $('#doc_type_filter').on('change', function() {
+    loadDocuments();
+  });
+
+  $('#btn-upload-document').on('click', function() {
+    $('#file-upload-input').click();
+  });
+
+  $('#file-upload-input').on('change', function() {
+    if (this.files && this.files[0]) {
+        uploadDocument(this.files[0]);
+    }
+  });
+
   // Audit filter event listeners
   $('#audit_category_filter, #audit_date_from, #audit_date_to').on('change', function() {
     loadAuditTrail();
@@ -1885,17 +1949,36 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
       });
   }
 
+  // Create Invoice button handler
+  $('#create_invoice_btn').on('click', function() {
+    var purchaseId = $('#ui_purchase_id').val();
+    var clientId = <?php echo $wo['client']['id'] ?? 0; ?>;
+    var clientName = '<?php echo addslashes($wo['client']['name'] ?? ''); ?>';
+    var fileNum = currentPurchaseData && currentPurchaseData.file_num ? currentPurchaseData.file_num : '';
+    
+    if (typeof openCreateInvoiceModal === 'function') {
+      openCreateInvoiceModal(clientId, purchaseId, clientName, fileNum);
+    } else {
+      console.error('openCreateInvoiceModal function not found');
+      alert('Invoice modal is not available. Please refresh the page.');
+    }
+  });
+
+
   function renderInvoices(invoices) {
     var html = '<div class="table-responsive"><table class="table table-sm table-hover">';
-    html += '<thead><tr><th>Invoice #</th><th>Type</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>';
+    html += '<thead><tr><th>Invoice #</th><th>Type</th><th>Amount</th><th>Status</th><th>Date</th><th class="text-end">Action</th></tr></thead><tbody>';
     invoices.forEach(function(inv) {
       var statusClass = inv.status === 'paid' ? 'success' : (inv.status === 'partial' ? 'warning' : 'danger');
+      var pdfBtn = inv.pdf_path ? '<a href="' + inv.pdf_path + '" target="_blank" class="btn btn-xs btn-outline-danger"><i class="lni lni-download me-1"></i>PDF</a>' : '<span class="text-muted small">-</span>';
+
       html += '<tr>';
       html += '  <td>' + (inv.invoice_number || '-') + '</td>';
       html += '  <td>' + (inv.invoice_type || '-') + '</td>';
       html += '  <td>৳' + (parseFloat(inv.amount || 0).toLocaleString()) + '</td>';
       html += '  <td><span class="badge bg-' + statusClass + '">' + (inv.status || 'pending') + '</span></td>';
       html += '  <td>' + (inv.invoice_date || '-') + '</td>';
+      html += '  <td class="text-end">' + pdfBtn + '</td>';
       html += '</tr>';
     });
     html += '</tbody></table></div>';
@@ -1907,35 +1990,80 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
     var purchaseId = $('#ui_purchase_id').val();
     if (!purchaseId) return;
     
-    $('#pending_receipts_container').html('<p class="text-center text-muted py-4"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading...</p>');
+    // Load pending emails
+    $('#pending_emails_container').html('<p class="text-center text-muted py-4"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading...</p>');
     
-    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_pending_emails&purchase_id=' + purchaseId)
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_emails&purchase_id=' + purchaseId + '&status=pending')
       .done(function(resp) {
         var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
         if (data.status === 200 && data.emails && data.emails.length > 0) {
-          renderPendingEmails(data.emails);
+          renderEmails(data.emails, 'pending_emails_container');
         } else {
-          $('#pending_receipts_container').html('<p class="text-muted text-center py-4">No pending emails</p>');
+          $('#pending_emails_container').html('<p class="text-muted text-center py-4"><i class="lni lni-inbox me-2"></i>No pending emails</p>');
         }
       })
       .fail(function() {
-        $('#pending_receipts_container').html('<p class="text-muted text-center py-4">No pending emails</p>');
+        $('#pending_emails_container').html('<p class="text-muted text-center py-4">Failed to load emails</p>');
+      });
+    
+    // Load sent emails
+    $('#sent_emails_container').html('<p class="text-center text-muted py-4"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading...</p>');
+    
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_emails&purchase_id=' + purchaseId + '&status=sent')
+      .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.emails && data.emails.length > 0) {
+          renderEmails(data.emails, 'sent_emails_container');
+        } else {
+          $('#sent_emails_container').html('<p class="text-muted text-center py-4"><i class="lni lni-inbox me-2"></i>No sent emails</p>');
+        }
+      })
+      .fail(function() {
+        $('#sent_emails_container').html('<p class="text-muted text-center py-4">Failed to load emails</p>');
       });
   }
 
-  function renderPendingEmails(emails) {
-    var html = '<div class="list-group">';
+  function renderEmails(emails, containerId) {
+    var html = '<div class="table-responsive"><table class="table table-sm table-hover">';
+    html += '<thead class="table-light"><tr>';
+    html += '<th>Type</th><th>Recipient</th><th>Subject</th><th>Date</th><th>Status</th>';
+    html += '</tr></thead><tbody>';
+    
     emails.forEach(function(email) {
-      html += '<div class="list-group-item">';
-      html += '  <div class="d-flex justify-content-between">';
-      html += '    <div><strong>' + (email.template_type || 'Email') + '</strong><br><small>' + (email.recipient_email || '') + '</small></div>';
-      html += '    <span class="badge bg-' + (email.status === 'sent' ? 'success' : 'warning') + '">' + (email.status || 'queued') + '</span>';
-      html += '  </div>';
-      html += '</div>';
+      html += '<tr>';
+      html += '<td><i class="lni lni-envelope text-primary"></i></td>';
+      html += '<td><div class="fw-semibold">' + (email.recipient_name || 'Unknown') + '</div>';
+      html += '<small class="text-muted">' + (email.recipient_email || '') + '</small></td>';
+      html += '<td><small>' + (email.subject || 'No subject') + '</small></td>';
+      html += '<td><small>' + (email.queue_date || email.sent_date || '') + '</small></td>';
+      html += '<td><span class="badge bg-' + (email.status === 'sent' ? 'success' : 'warning') + '">' + (email.status || 'queued') + '</span></td>';
+      html += '</tr>';
     });
-    html += '</div>';
-    $('#pending_receipts_container').html(html);
+    
+    html += '</tbody></table></div>';
+    $('#' + containerId).html(html);
   }
+  
+  // Compose button handler
+  $('#btn_compose_from_purchase').on('click', function() {
+    // Use the global function from compose_message_preselect.phtml
+    if (typeof openComposeFromPurchaseModal === 'function') {
+      openComposeFromPurchaseModal();
+    } else {
+      // Fallback
+      var purchaseId = $('#ui_purchase_id').val();
+      var clientId = $('#ui_client_id').val();
+      
+      if (purchaseId) {
+        $('#ui_purchase_id').val(purchaseId);
+      }
+      if (clientId) {
+        $('#ui_client_id').val(clientId);
+      }
+      
+      $('#composeMessageModal').modal('show');
+    }
+  });
 
   // Load Audit Trail
   function loadAuditTrail() {
@@ -2008,56 +2136,83 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
     $('#createInvoiceModal').modal('show');
   });
 
-  $('#reschedule_preview_btn').on('click', function(){
-      var newMonthly = intval($('#reschedule_new_monthly').val());
-      if(newMonthly <= 0){ alert('Please enter a valid monthly amount'); return; }
+  // Reschedule Type Toggle
+  $('input[name="reschedule_type"]').on('change', function() {
+    var type = $(this).val();
+    if (type === 'amount') {
+      $('#reschedule_amount_group').removeClass('d-none');
+      $('#reschedule_duration_group').addClass('d-none');
+    } else {
+      $('#reschedule_amount_group').addClass('d-none');
+      $('#reschedule_duration_group').removeClass('d-none');
+    }
+  });
 
-      // Generate preview
-      var previewHtml = '<table class="table table-sm table-bordered"><thead><tr><th>#</th><th>Particular</th><th>Due Date</th><th class="text-end">Amount</th></tr></thead><tbody>';
-      
-      // Logic: Keep paid rows, regenerate unpaid
-      var paidRows = window.currentSchedule.filter(r => r.paid);
-      var unpaidTotal = window.currentSchedule.filter(r => !r.paid).reduce((sum, r) => sum + (r.installment_amount - (r.paid_amount||0)), 0);
-      
-      var newRows = [];
-      var rem = unpaidTotal;
-      var idx = paidRows.length + 1;
-      var lastDate = paidRows.length > 0 ? new Date(paidRows[paidRows.length-1].date) : new Date();
-      
-      while(rem > 0){
-          var amt = Math.min(rem, newMonthly);
-          // Simple monthly increment
-          lastDate.setMonth(lastDate.getMonth() + 1);
-          var dateStr = lastDate.toISOString().slice(0,10);
-          
-          newRows.push({
-              installment: idx++,
-              particular: 'Installment (Rescheduled)',
-              date: dateStr,
-              installment_amount: amt
-          });
-          rem -= amt;
-          
-          previewHtml += '<tr><td>' + (idx-1) + '</td><td>Installment (Rescheduled)</td><td>' + dateStr + '</td><td class="text-end">৳' + fmtMoneyInt(amt) + '</td></tr>';
-      }
-      previewHtml += '</tbody></table>';
-      $('#reschedule_preview_container').html(previewHtml);
-      
-      // Store for submit
-      window.reschedulePreviewRows = newRows;
+  $('#reschedule_preview_btn').on('click', function(){
+      var type = $('input[name="reschedule_type"]:checked').val();
+      var newMonthly = parseFloat($('#reschedule_new_monthly').val() || 0);
+      var newInstallments = parseInt($('#reschedule_new_installments').val() || 0);
+      var adjustmentMode = $('#reschedule_adjustment_mode').val();
+      var rescheduleFee = parseFloat($('#reschedule_fee').val() || 0);
+      var purchaseId = $('#ui_purchase_id').val();
+
+      if (type === 'amount' && newMonthly <= 0) { alert('Please enter a valid monthly amount'); return; }
+      if (type === 'duration' && newInstallments <= 0) { alert('Please enter a valid number of installments'); return; }
+
+      var $btn = $(this);
+      $btn.prop('disabled', true).html('<i class="spinner-border spinner-border-sm me-1"></i>Generating...');
+
+      $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=preview_reschedule', {
+          purchase_id: purchaseId,
+          reschedule_type: type,
+          monthly_amount: newMonthly,
+          installment_count: newInstallments,
+          adjustment_mode: adjustmentMode,
+          reschedule_fee: rescheduleFee
+      })
+      .done(function(resp) {
+          var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+          if (data.status === 200 && data.preview && data.preview.after && data.preview.after.new_schedule) {
+              var schedule = data.preview.after.new_schedule;
+              var previewHtml = '<table class="table table-sm table-bordered"><thead><tr><th>#</th><th>Particular</th><th>Due Date</th><th class="text-end">Amount</th></tr></thead><tbody>';
+              
+              schedule.forEach(function(row) {
+                  previewHtml += '<tr><td>' + row.installment_number + '</td><td>' + row.particular + '</td><td>' + row.due_date + '</td><td class="text-end">৳' + parseFloat(row.amount).toLocaleString() + '</td></tr>';
+              });
+              
+              previewHtml += '</tbody></table>';
+              
+              // Show summary of changes
+              var after = data.preview.after;
+              previewHtml += '<div class="alert alert-info mt-2 mb-0">';
+              previewHtml += '<small><strong>Summary:</strong> ' + after.new_installment_count + ' installments of approx ৳' + parseFloat(after.monthly_amount).toLocaleString() + '/month</small>';
+              previewHtml += '</div>';
+
+              $('#reschedule_preview_container').html(previewHtml);
+          } else {
+              alert('Failed to generate preview: ' + (data.message || 'Unknown error'));
+          }
+      })
+      .fail(function() {
+          alert('Server error while generating preview');
+      })
+      .always(function() {
+          $btn.prop('disabled', false).html('<i class="lni lni-eye me-1"></i>Preview');
+      });
   });
 
   // Reschedule Submit Handler
   $('#reschedule_submit_btn').on('click', function() {
+    var type = $('input[name="reschedule_type"]:checked').val();
     var newMonthly = parseFloat($('#reschedule_new_monthly').val() || 0);
+    var newInstallments = parseInt($('#reschedule_new_installments').val() || 0);
     var reason = $('#reschedule_reason').val();
     var adjustmentMode = $('#reschedule_adjustment_mode').val();
     var purchaseId = $('#ui_purchase_id').val();
 
-    if (newMonthly <= 0) {
-        alert('Please enter a valid monthly amount');
-        return;
-    }
+    if (type === 'amount' && newMonthly <= 0) { alert('Please enter a valid monthly amount'); return; }
+    if (type === 'duration' && newInstallments <= 0) { alert('Please enter a valid number of installments'); return; }
+    
     if (!reason || reason.trim() === '') {
         alert('Please enter a reason for rescheduling');
         return;
@@ -2066,14 +2221,13 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
     var $btn = $(this);
     $btn.prop('disabled', true).html('<i class="lni lni-spinner-arrow lni-spin me-1"></i>Submitting...');
 
-    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=submit_pending_change', {
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=submit_payment_reschedule', {
         purchase_id: purchaseId,
-        change_type: 'reschedule',
-        change_data: JSON.stringify({
-            new_monthly: newMonthly,
-            adjustment_mode: adjustmentMode
-        }),
-        request_reason: reason
+        reschedule_type: type,
+        monthly_amount: newMonthly,
+        installment_count: newInstallments,
+        adjustment_mode: adjustmentMode,
+        notes: reason
     })
     .done(function(resp) {
         var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
@@ -2096,8 +2250,128 @@ function updateTotals(){ var totalInstallments = currentSchedule.reduce((s,r)=>s
     });
   });
 
+  // Document Functions
+  function loadDocuments() {
+    var purchaseId = $('#ui_purchase_id').val();
+    var type = $('#doc_type_filter').val();
+    
+    if (!purchaseId) return;
+
+    $('#documents_list_container').html('<p class="text-center text-muted py-5"><i class="lni lni-spinner-arrow lni-spin me-2"></i>Loading documents...</p>');
+
+    $.get(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=get_purchase_documents', {
+        purchase_id: purchaseId,
+        type: type
+    })
+    .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200 && data.documents && data.documents.length > 0) {
+            renderDocuments(data.documents);
+        } else {
+            $('#documents_list_container').html('<div class="text-center py-5"><i class="lni lni-files text-muted mb-3" style="font-size: 2rem;"></i><p class="text-muted">No documents found</p></div>');
+        }
+    })
+    .fail(function() {
+        $('#documents_list_container').html('<p class="text-danger text-center py-5">Failed to load documents</p>');
+    });
+  }
+
+  function renderDocuments(docs) {
+    var html = '<div class="table-responsive"><table class="table table-hover align-middle">';
+    html += '<thead class="table-light"><tr><th>Name</th><th>Type</th><th>Size</th><th>Date</th><th class="text-end">Actions</th></tr></thead><tbody>';
+    
+    docs.forEach(function(doc) {
+        var icon = 'lni-empty-file';
+        if (doc.file_name.endsWith('.pdf')) icon = 'lni-adobe';
+        else if (doc.file_name.endsWith('.xlsx') || doc.file_name.endsWith('.xls')) icon = 'lni-grid-alt';
+        else if (doc.file_name.endsWith('.jpg') || doc.file_name.endsWith('.png')) icon = 'lni-image';
+        
+        var size = (doc.file_size / 1024).toFixed(1) + ' KB';
+        if (doc.file_size > 1024 * 1024) size = (doc.file_size / (1024 * 1024)).toFixed(1) + ' MB';
+        
+        html += '<tr>';
+        html += '<td><div class="d-flex align-items-center"><i class="lni ' + icon + ' me-2 text-primary"></i><span class="text-truncate" style="max-width: 200px;" title="' + doc.file_name + '">' + doc.file_name + '</span></div></td>';
+        html += '<td><span class="badge bg-light text-dark border">' + doc.document_type + '</span></td>';
+        html += '<td><small class="text-muted">' + size + '</small></td>';
+        html += '<td><small class="text-muted">' + (doc.generated_at || '-') + '</small></td>';
+        html += '<td class="text-end">';
+        html += '<div class="btn-group">';
+        html += '<a href="' + doc.file_path + '" target="_blank" class="btn btn-sm btn-outline-primary" title="View/Download"><i class="lni lni-download"></i></a>';
+        html += '<button class="btn btn-sm btn-outline-danger delete-doc-btn" data-id="' + doc.id + '" title="Delete"><i class="lni lni-trash"></i></button>';
+        html += '</div>';
+        html += '</td>';
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table></div>';
+    $('#documents_list_container').html(html);
+    
+    // Bind delete
+    $('.delete-doc-btn').off('click').on('click', function() {
+        var id = $(this).data('id');
+        if (confirm('Are you sure you want to delete this document?')) {
+            deleteDocument(id);
+        }
+    });
+  }
+
+  function uploadDocument(file) {
+    var purchaseId = $('#ui_purchase_id').val();
+    var type = $('#doc_type_filter').val() || 'other'; // Default to other if filter is empty or 'other'
+    if (type === '') type = 'other';
+
+    var formData = new FormData();
+    formData.append('purchase_id', purchaseId);
+    formData.append('file', file);
+    formData.append('document_type', type);
+
+    $('#btn-upload-document').prop('disabled', true).html('<i class="lni lni-spinner-arrow lni-spin me-1"></i>Uploading...');
+
+    $.ajax({
+        url: Wo_Ajax_Requests_File() + '?f=manage_inventory&s=upload_purchase_document',
+        type: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        success: function(resp) {
+            var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+            if (data.status === 200) {
+                // alert('Uploaded successfully');
+                loadDocuments();
+            } else {
+                alert('Upload failed: ' + (data.message || 'Unknown error'));
+            }
+        },
+        error: function() {
+            alert('Server error during upload');
+        },
+        complete: function() {
+            $('#btn-upload-document').prop('disabled', false).html('<i class="lni lni-cloud-upload me-1"></i>Upload File');
+            $('#file-upload-input').val(''); // Reset input
+        }
+    });
+  }
+
+  function deleteDocument(docId) {
+    $.post(Wo_Ajax_Requests_File() + '?f=manage_inventory&s=delete_purchase_document', {
+        document_id: docId
+    })
+    .done(function(resp) {
+        var data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+        if (data.status === 200) {
+            loadDocuments();
+        } else {
+            alert('Delete failed: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .fail(function() {
+        alert('Server error during delete');
+    });
+  }
+
 });
 
 </script>
+
 </div>
 </div>

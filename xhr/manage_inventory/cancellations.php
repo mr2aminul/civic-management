@@ -70,154 +70,62 @@
             // refundable amount cannot be negative
             $refundable_amount = max(0.0, $total_paid - $cancellation_fee);
     
-            // Begin transaction
-            $db->startTransaction();
-    
-            // 1) mark helper as cancelled
-            $helper_update = [
-                'status' => 4, // numeric status for cancelled
-                'cancel_date' => time(),
-                'updated_at' => date('Y-m-d H:i:s')
+            // 3. Create Pending Change Request
+            $change_data = [
+                'reason' => $reason,
+                'fee_mode' => $fee_mode,
+                'fee_value' => $fee_value,
+                'initiate_refund' => $initiate_refund,
+                'cancellation_fee' => $cancellation_fee,
+                'refundable_amount' => $refundable_amount,
+                'total_paid' => $total_paid
             ];
-            $ok = $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, $helper_update);
-            if ($ok === false) {
-                $db->rollback();
-                http_response_code(500);
-                echo json_encode(['status' => 500, 'message' => 'Failed to update booking helper status']);
-                exit();
-            }
-    
-            // 2) update payment schedule rows for this purchase (mark cancelled/archived)
-            $ps_update = [
-                'remarks' => 'Plot cancelled. Reason: ' . mb_substr($reason, 0, 1000),
-                'status' => 4, // cancelled/archived
-                'updated_at' => date('Y-m-d H:i:s')
-            ];
-            $ok2 = $db->where('purchase_id', $purchase_id)->update('crm_payment_schedule', $ps_update);
-            if ($ok2 === false) {
-                $db->rollback();
-                http_response_code(500);
-                echo json_encode(['status' => 500, 'message' => 'Failed to update payment schedule']);
-                exit();
-            }
-    
-            // 3) Booking-level logic: mirror old cancel_purchase behavior:
-            // - find other helpers for the same booking (excluding this one)
-            // - if no other non-free helpers => cancel booking and clear file_num
-            // - if other helpers exist & booking.file_num equals cancelled helper's file_num => replace or clear
-            $otherHelpers = $db->where('booking_id', $booking_id)->where('id', $purchase_id, '!=')->get(T_BOOKING_HELPER);
-            $free_statuses = ['0','1','4','available','cancelled','canceled']; // treat these as free/non-owning
-            $hasNonFree = false;
-            $otherFileNumCandidate = null;
-            if (!empty($otherHelpers)) {
-                foreach ($otherHelpers as $oh) {
-                    $hstatus_raw = (isset($oh->status) ? (string)$oh->status : '');
-                    $hstatus = strtolower(trim($hstatus_raw));
-                    if ($hstatus !== '' && !in_array($hstatus, $free_statuses, true)) {
-                        $hasNonFree = true;
-                    }
-                    $oh_fn = isset($oh->file_num) ? trim((string)$oh->file_num) : '';
-                    if ($oh_fn !== '') {
-                        $otherFileNumCandidate = $oh_fn;
-                        // don't break, still want to detect hasNonFree; but if both found we can stop
-                        if ($hasNonFree) break;
-                    }
-                }
-            }
-    
-            // fetch booking row
-            $booking = $db->where('id', $booking_id)->getOne(T_BOOKING);
-            if (!$booking) {
-                $db->rollback();
-                http_response_code(500);
-                echo json_encode(['status' => 500, 'message' => 'Booking row not found']);
-                exit();
-            }
-            $booking_file_num = isset($booking->file_num) ? trim((string)$booking->file_num) : '';
-    
-            if (!$hasNonFree) {
-                // no non-free helper -> cancel booking and clear file_num
-                $bkUpdate = ['status' => 4, 'file_num' => null];
-                $ok3 = $db->where('id', $booking_id)->update(T_BOOKING, $bkUpdate);
-                if ($ok3 === false) {
-                    $db->rollback();
-                    http_response_code(500);
-                    echo json_encode(['status' => 500, 'message' => 'Failed to update booking status']);
-                    exit();
-                }
-            } else {
-                // there are active helper(s)
-                $cancelled_file_num = isset($helper->file_num) ? trim((string)$helper->file_num) : '';
-                if ($cancelled_file_num !== '' && $booking_file_num !== '' && $booking_file_num === $cancelled_file_num) {
-                    // replace booking.file_num with other candidate (if available) or clear it
-                    $newFileNum = ($otherFileNumCandidate !== null) ? $otherFileNumCandidate : null;
-                    $bkUpd = ['file_num' => $newFileNum, 'updated_at' => date('Y-m-d H:i:s')];
-                    $ok4 = $db->where('id', $booking_id)->update(T_BOOKING, $bkUpd);
-                    if ($ok4 === false) {
-                        $db->rollback();
-                        http_response_code(500);
-                        echo json_encode(['status' => 500, 'message' => 'Failed to update booking file number']);
-                        exit();
-                    }
-                }
-                // else booking.file_num belongs to some other helper -> leave as-is
-            }
-    
-            // 4) optionally create refund schedule
-            $refund_id = null;
-            if ($initiate_refund === 1 && $refundable_amount > 0) {
-                $refund_data = [
-                    'purchase_id' => $purchase_id,
-                    'client_id' => isset($helper->client_id) ? intval($helper->client_id) : null,
-                    'refund_initiation_date' => date('Y-m-d'),
-                    'total_paid_amount' => round($total_paid, 2),
-                    'deduction_percentage' => ($fee_mode === 'percent') ? floatval($fee_value) : 0,
-                    'deduction_amount' => round($cancellation_fee, 2),
-                    'refundable_amount' => round($refundable_amount, 2),
-                    'installment_number' => 1,
-                    'installment_amount' => round($refundable_amount, 2),
-                    'due_date' => date('Y-m-d', strtotime('+30 days')),
-                    'status' => 0,
-                    'created_by' => isset($wo['user']['id']) ? intval($wo['user']['id']) : null,
-                    'created_at' => date('Y-m-d H:i:s')
-                ];
-    
-                $ins = $db->insert('crm_refund_schedule', $refund_data);
-                if ($ins === false) {
-                    // rollback because the refund creation failed (you can change behaviour: continue without refund if you prefer)
-                    $db->rollback();
-                    http_response_code(500);
-                    echo json_encode(['status' => 500, 'message' => 'Failed to create refund schedule']);
-                    exit();
-                }
-                $refund_id = $ins;
-            }
-    
-            // All good -> commit
-            $db->commit();
-    
-            // Logging
-            $logMsg = "Purchase #{$purchase_id} cancelled. Reason: " . mb_substr($reason, 0, 500);
-            if ($cancellation_fee > 0) $logMsg .= " Fee ({$fee_mode}): " . number_format($cancellation_fee, 2);
-            if ($initiate_refund === 1) $logMsg .= " Refund initiated: " . number_format($refundable_amount, 2) . " (refund_id: " . ($refund_id ?: 'n/a') . ")";
-            logActivity('purchase', 'cancel_plot', $logMsg);
-    
-            // Response
-            http_response_code(200);
-            echo json_encode([
-                'status' => 200,
-                'message' => 'Plot cancellation processed successfully',
+
+            $pending_data = [
+                'change_type' => 'cancel',
                 'purchase_id' => $purchase_id,
-                'booking_id' => $booking_id,
-                'cancellation_fee' => round($cancellation_fee, 2),
-                'total_paid' => round($total_paid, 2),
-                'refundable_amount' => round($refundable_amount, 2),
-                'refund_id' => $refund_id
-            ]);
+                'client_id' => isset($helper->client_id) ? intval($helper->client_id) : 0,
+                'requested_by' => $wo['user']['id'] ?? 0,
+                'request_date' => date('Y-m-d H:i:s'),
+                'request_reason' => $reason,
+                'change_data_json' => json_encode($change_data, JSON_UNESCAPED_UNICODE),
+                'status' => 'pending',
+                'created_at' => date('Y-m-d H:i:s')
+            ];
+
+            $pending_id = $db->insert('crm_pending_changes', $pending_data);
+
+            if ($pending_id) {
+                // Update purchase to show pending flag
+                $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, ['has_pending_changes' => 1]);
+
+                // Log activity
+                if ($db->tableExists('crm_audit_trail')) {
+                    $db->insert('crm_audit_trail', [
+                        'client_id' => $pending_data['client_id'],
+                        'purchase_id' => $purchase_id,
+                        'action_category' => 'purchase',
+                        'action_type' => 'cancel_requested',
+                        'action_description' => "Cancellation requested. Reason: $reason",
+                        'performed_by' => $wo['user']['id'] ?? 0,
+                        'performed_at' => date('Y-m-d H:i:s'),
+                        'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'Unknown'
+                    ]);
+                }
+
+                http_response_code(200);
+                echo json_encode([
+                    'status' => 200,
+                    'message' => 'Cancellation request submitted for approval',
+                    'pending_change_id' => $pending_id
+                ]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['status' => 500, 'message' => 'Failed to submit cancellation request']);
+            }
             exit();
+
         } catch (Exception $e) {
-            // safe rollback
-            try { $db->rollback(); } catch (Exception $_) {}
             http_response_code(500);
             echo json_encode(['status' => 500, 'message' => 'Server error: ' . $e->getMessage()]);
             exit();

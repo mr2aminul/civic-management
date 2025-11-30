@@ -198,32 +198,60 @@
                 $transfer_fee = ($total_paid * $fee_value) / 100;
             }
             
-            $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, [
-                'client_id' => (string)$client_id,
-                'time' => time(),
-                'updated_at' => time()
-            ]);
+            // Create Transfer History Record (Pending)
+            $transfer_data = [
+                'purchase_id' => $purchase_id,
+                'transfer_type' => 'name_transfer',
+                'from_client_id' => $helper->client_id,
+                'to_client_id' => $client_id,
+                'transfer_date' => date('Y-m-d'),
+                'approval_status' => 0, // Pending
+                'transfer_fee' => $transfer_fee,
+                'remarks' => $reason,
+                'created_by' => $wo['user']['id'] ?? 0,
+                'created_at' => date('Y-m-d H:i:s')
+            ];
             
-            $db->where('purchase_id', $purchase_id)->update('crm_payment_schedule', [
-                'remarks' => 'Name transferred to client ID: ' . $client_id . ' | ' . $reason,
-                'updated_at' => date('Y-m-d H:i:s')
-            ]);
+            $transfer_id = $db->insert('crm_transfer_history', $transfer_data);
             
-            // Log the transfer with fee info
-            $logMsg = "Purchase #{$purchase_id} name transferred to client {$client_id}. Reason: {$reason}";
-            if ($transfer_fee > 0) {
-                $logMsg .= " Fee: {$fee_mode} ({$fee_value}) = ৳" . number_format($transfer_fee, 2);
+            if ($transfer_id) {
+                // Create Pending Change Request
+                $pending_data = [
+                    'change_type' => 'name_transfer',
+                    'purchase_id' => $purchase_id,
+                    'client_id' => $helper->client_id,
+                    'requested_by' => $wo['user']['id'] ?? 0,
+                    'request_date' => date('Y-m-d H:i:s'),
+                    'request_reason' => $reason,
+                    'change_data_json' => json_encode([
+                        'transfer_id' => $transfer_id,
+                        'to_client_id' => $client_id,
+                        'fee_mode' => $fee_mode,
+                        'fee_value' => $fee_value,
+                        'transfer_fee' => $transfer_fee
+                    ]),
+                    'status' => 'pending',
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
+                $db->insert('crm_pending_changes', $pending_data);
+                
+                // Update purchase to show pending flag
+                $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, ['has_pending_changes' => 1]);
+
+                // Log activity
+                logActivity('purchase', 'transfer_requested', "Name transfer requested for Purchase #{$purchase_id}");
+
+                $db->commit();
+                
+                echo json_encode([
+                    'status' => 200,
+                    'message' => 'Name transfer request submitted for approval',
+                    'transfer_id' => $transfer_id
+                ]);
+            } else {
+                $db->rollback();
+                echo json_encode(['status' => 500, 'message' => 'Failed to create transfer record']);
             }
-            logActivity('purchase', 'name_transfer', $logMsg);
-            
-            $db->commit();
-            
-            echo json_encode([
-                'status' => 200,
-                'message' => 'Name transfer processed successfully',
-                'transfer_fee' => round($transfer_fee, 2),
-                'new_client_id' => $client_id
-            ]);
         } catch (Exception $e) {
             $db->rollback();
             echo json_encode(['status' => 500, 'message' => 'Server error: ' . $e->getMessage()]);
@@ -287,35 +315,71 @@
                 $transfer_fee = ($new_total * $fee_value) / 100;
             }
             
-            $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, [
-                'booking_id' => $new_plot_id,
-                'per_katha' => $new_per_katha,
-                'time' => time(),
-                'updated_at' => time()
-            ]);
+            // Create Transfer History Record (Pending)
+            $transfer_data = [
+                'purchase_id' => $purchase_id,
+                'transfer_type' => 'plot_transfer',
+                'from_client_id' => $helper->client_id,
+                'to_client_id' => $helper->client_id, // Same client for plot transfer
+                'transfer_date' => date('Y-m-d'),
+                'approval_status' => 0, // Pending
+                'transfer_fee' => $transfer_fee,
+                'plot_transfer_rate_old' => $old_per_katha,
+                'plot_transfer_rate_new' => $new_per_katha,
+                'plot_transfer_details' => json_encode([
+                    'old_booking_id' => $helper->booking_id,
+                    'new_booking_id' => $new_plot_id,
+                    'old_total' => $old_total,
+                    'new_total' => $new_total
+                ]),
+                'remarks' => $reason,
+                'created_by' => $wo['user']['id'] ?? 0,
+                'created_at' => date('Y-m-d H:i:s')
+            ];
             
-            $db->where('purchase_id', $purchase_id)->update('crm_payment_schedule', [
-                'remarks' => 'Plot transferred from plot ID: ' . $helper->booking_id . ' to plot ID: ' . $new_plot_id . ' | Old rate: ' . $old_per_katha . ' | New rate: ' . $new_per_katha . ' | ' . $reason,
-                'status' => 99, // archived/transferred status
-                'updated_at' => date('Y-m-d H:i:s')
-            ]);
+            $transfer_id = $db->insert('crm_transfer_history', $transfer_data);
             
-            // Log the plot transfer
-            $logMsg = "Purchase #{$purchase_id} plot transferred from booking {$helper->booking_id} to {$new_plot_id}. Old price: ৳" . number_format($old_total, 2) . ", New price: ৳" . number_format($new_total, 2) . ". Reason: {$reason}";
-            if ($transfer_fee > 0) {
-                $logMsg .= " Fee: {$fee_mode} ({$fee_value}) = ৳" . number_format($transfer_fee, 2);
+            if ($transfer_id) {
+                // Create Pending Change Request
+                $pending_data = [
+                    'change_type' => 'plot_transfer',
+                    'purchase_id' => $purchase_id,
+                    'client_id' => $helper->client_id,
+                    'requested_by' => $wo['user']['id'] ?? 0,
+                    'request_date' => date('Y-m-d H:i:s'),
+                    'request_reason' => $reason,
+                    'change_data_json' => json_encode([
+                        'transfer_id' => $transfer_id,
+                        'new_plot_id' => $new_plot_id,
+                        'new_per_katha' => $new_per_katha,
+                        'fee_mode' => $fee_mode,
+                        'fee_value' => $fee_value,
+                        'transfer_fee' => $transfer_fee,
+                        'old_total' => $old_total,
+                        'new_total' => $new_total
+                    ]),
+                    'status' => 'pending',
+                    'created_at' => date('Y-m-d H:i:s')
+                ];
+                $db->insert('crm_pending_changes', $pending_data);
+                
+                // Update purchase to show pending flag
+                $db->where('id', $purchase_id)->update(T_BOOKING_HELPER, ['has_pending_changes' => 1]);
+
+                // Log activity
+                logActivity('purchase', 'transfer_requested', "Plot transfer requested for Purchase #{$purchase_id}");
+
+                $db->commit();
+                
+                echo json_encode([
+                    'status' => 200,
+                    'message' => 'Plot transfer request submitted for approval',
+                    'transfer_id' => $transfer_id
+                ]);
+            } else {
+                $db->rollback();
+                echo json_encode(['status' => 500, 'message' => 'Failed to create transfer record']);
             }
-            logActivity('purchase', 'plot_transfer', $logMsg);
-            
-            $db->commit();
-            
-            echo json_encode([
-                'status' => 200,
-                'message' => 'Plot transfer processed successfully. Schedule will be recalculated.',
-                'old_total' => round($old_total, 2),
-                'new_total' => round($new_total, 2),
-                'transfer_fee' => round($transfer_fee, 2)
-            ]);
         } catch (Exception $e) {
             $db->rollback();
             echo json_encode(['status' => 500, 'message' => 'Server error: ' . $e->getMessage()]);

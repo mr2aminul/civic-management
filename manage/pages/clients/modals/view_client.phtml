@@ -41,7 +41,7 @@ try {
         SELECT bh.per_katha, b.katha 
         FROM `wo_booking_helper` bh
         JOIN `wo_booking` b ON b.id = bh.booking_id
-        WHERE bh.client_id = ? AND bh.status != '4'
+        WHERE bh.client_id = ? AND bh.status NOT IN ('4', '5')
     ", [$clientId]);
     
     foreach ($helpers as $helper) {
@@ -71,7 +71,7 @@ $get_nominees = $db->where('customer_id', $clientId)->orderBy('name', 'ASC')->ge
 
 .select2-dropdown {
   z-index: 2050 !important;
-  position: fixed !important;
+  /* position: fixed !important; */
 }
 
 /* Specific fixes for nested modals */
@@ -117,7 +117,7 @@ $get_nominees = $db->where('customer_id', $clientId)->orderBy('name', 'ASC')->ge
 
 #addPurchaseModal .select2-dropdown {
   z-index: 2070 !important;
-  position: fixed !important;
+  /* position: fixed !important; */
 }
 
 /* Ensure Select2 dropdowns stay within viewport */
@@ -697,8 +697,18 @@ if (isset($wo['booking_helper']) && !empty($wo['booking_helper'])) {
         // Basic amounts
         $booking_money = floatval($bh['booking_money'] ?? 0);
         $down_payment = floatval($bh['down_payment'] ?? 0);
-        $booking_paid = !empty($bh['booking_payment_date']);
-        $down_paid = !empty($bh['down_payment_date']);
+        
+        // Fetch actual paid amounts for booking and down payment from schedule
+        $booking_paid_amt = $db->where('purchase_id', $purchase_id)
+                               ->where('(particular LIKE ? OR installment_type = ?)', ['%Booking%', 'booking'])
+                               ->getValue('crm_payment_schedule', 'SUM(paid_amount)') ?: 0;
+                               
+        $down_paid_amt = $db->where('purchase_id', $purchase_id)
+                            ->where('(particular LIKE ? OR installment_type = ?)', ['%Down%', 'down'])
+                            ->getValue('crm_payment_schedule', 'SUM(paid_amount)') ?: 0;
+
+        $booking_paid = ($booking_paid_amt >= $booking_money && $booking_money > 0);
+        $down_paid = ($down_paid_amt >= $down_payment && $down_payment > 0);
         
         // Grand Totals
         $total_installments_amount = floatval($payment_stats->total_amount ?? 0);
@@ -846,7 +856,7 @@ if (isset($wo['booking_helper']) && !empty($wo['booking_helper'])) {
                       </li>
                       <li>
                         <a class="dropdown-item manage-schedule <?= $is_reschedule_pending ? 'disabled' : '' ?>" href="javascript:;" data-id="<?= $purchase_id ?>">
-                          <i class="lni lni-calendar me-2 text-primary"></i> Manage Schedule
+                          <i class="lni lni-calendar me-2 text-primary"></i> Manage Purchase
                         </a>
                       </li>
                       <li>
@@ -1072,7 +1082,7 @@ if (isset($wo['booking_helper']) && !empty($wo['booking_helper'])) {
                     <div class="d-flex justify-content-between p-3 border rounded">
                       <span class="text-muted">Booking Money</span>
                       <strong class="<?php echo $booking_paid ? 'text-success' : 'text-warning'; ?>">
-                        ৳<?php echo number_format($booking_money, 0); ?>
+                        ৳<?php echo number_format($booking_paid_amt, 0); ?> / ৳<?php echo number_format($booking_money, 0); ?>
                         <?php if ($booking_paid) echo '<i class="lni lni-checkmark ms-1"></i>'; ?>
                       </strong>
                     </div>
@@ -1081,7 +1091,7 @@ if (isset($wo['booking_helper']) && !empty($wo['booking_helper'])) {
                     <div class="d-flex justify-content-between p-3 border rounded">
                       <span class="text-muted">Down Payment</span>
                       <strong class="<?php echo $down_paid ? 'text-success' : 'text-warning'; ?>">
-                        ৳<?php echo number_format($down_payment, 0); ?>
+                        ৳<?php echo number_format($down_paid_amt, 0); ?> / ৳<?php echo number_format($down_payment, 0); ?>
                         <?php if ($down_paid) echo '<i class="lni lni-checkmark ms-1"></i>'; ?>
                       </strong>
                     </div>
@@ -1275,15 +1285,18 @@ if (isset($wo['booking_helper']) && !empty($wo['booking_helper'])) {
             <div class="card-body">
               <div class="activity-timeline">
                 <?php
-                  $audit_logs = $db->where('module', 'payment_schedule')->where('record_id', $clientId)->orderBy('created_at', 'DESC')->get('crm_audit_log', 5) ?: [];
+                  // Use crm_audit_trail instead of crm_audit_log
+                  $audit_logs = $db->where('client_id', $clientId)
+                                   ->orderBy('performed_at', 'DESC')
+                                   ->get('crm_audit_trail', 5) ?: [];
                   
                   if (empty($audit_logs)) {
                     echo '<p class="text-muted mb-0">No recent activity</p>';
                   } else {
                     foreach ($audit_logs as $log) {
                       echo '<div class="d-flex gap-3 mb-2 pb-2 border-bottom">';
-                      echo '<div class="text-muted small">' . date('M d, Y H:i', strtotime($log->created_at)) . '</div>';
-                      echo '<div><strong>' . ucfirst($log->action) . '</strong> - ' . $log->notes . '</div>';
+                      echo '<div class="text-muted small">' . date('M d, Y H:i', strtotime($log->performed_at)) . '</div>';
+                      echo '<div><strong>' . htmlspecialchars(ucwords(str_replace('_', ' ', $log->action_type))) . '</strong> - ' . htmlspecialchars($log->action_description) . '</div>';
                       echo '</div>';
                     }
                   }
@@ -1300,12 +1313,15 @@ if (isset($wo['booking_helper']) && !empty($wo['booking_helper'])) {
   </div>
 </div>
       <!-- Load all modals -->
-      <?= Wo_LoadManagePage('clients/modals/payment_schedule_modal') ?>
+      <?= Wo_LoadManagePage('clients/modals/manage_purchase_modal') ?>
+      <?= Wo_LoadManagePage('clients/modals/create-invoice', ['is_loaded_from' => 'view_client_modal', 'client_id' => $clientId]) ?>
       <?= Wo_LoadManagePage('clients/modals/transfer_modal') ?>
       <?= Wo_LoadManagePage('clients/modals/refund_modal') ?>
       <?= Wo_LoadManagePage('clients/modals/pending_change_detail') ?>
       <!-- Added missing merge_purchase_modal loading -->
       <?= Wo_LoadManagePage('clients/modals/merge_purchase_modal') ?>
+      <?= Wo_LoadManagePage('clients/modals/compose_message_preselect', ['is_loaded_from' => 'view_client_modal', 'client_id' => $clientId]) ?>
+      <?= Wo_LoadManagePage('clients/modals/compose_message_modal', ['is_loaded_from' => 'view_client_modal', 'client_id' => $clientId]) ?>
 <!-- Core JavaScript for View Client -->
 <script>
 jQuery(function($){

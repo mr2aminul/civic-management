@@ -1,0 +1,139 @@
+<script>
+// Global Pre-select Function for Invoice Modal
+// Supports two modes:
+// 1. Direct mode (from view_client_modal): client/purchase already selected, just pass IDs
+// 2. Dynamic mode (from invoices tab or other): pre-select in dropdowns
+window.openCreateInvoiceModal = function(clientId, purchaseId, clientName, fileNum){
+    var $modal = $('#createInvoiceModal');
+    var $clientSel = $('#create_invoice_client_select');
+    var $purchaseSel = $('#invoice_purchase_select');
+    
+    // Store pre-selection data in modal data
+    $modal.data('preselect', {
+        clientId: clientId,
+        purchaseId: purchaseId,
+        clientName: clientName,
+        fileNum: fileNum
+    });
+    
+    // Show the modal
+    $modal.modal('show');
+    
+    // Execute logic once modal is shown (to ensure Select2 is initialized)
+    $modal.one('shown.bs.modal', function(){
+        var preselect = $modal.data('preselect');
+        
+        // Reset form first
+        $('#createInvoiceForm')[0].reset();
+        $('#generate_receipt_check').prop('checked', false).trigger('change');
+        
+        // Check if we're in direct mode (fields are hidden)
+        var isDirectMode = $clientSel.closest('.row').hasClass('d-none');
+        
+        if (isDirectMode) {
+            // Direct mode: just set the hidden field
+            $('#create_invoice_client_id').val(preselect.clientId);
+            
+            // Set purchase ID in purchase select (even if hidden, backend will use it)
+            $purchaseSel.empty().append(new Option(preselect.fileNum || 'Purchase #' + preselect.purchaseId, preselect.purchaseId, true, true));
+            $purchaseSel.val(preselect.purchaseId);
+            
+            // Load summary and suggestions directly
+            if (preselect.clientId && preselect.purchaseId) {
+                // These functions should be defined in create-invoice.phtml
+                if (typeof loadSummary === 'function') loadSummary(preselect.purchaseId);
+                if (typeof loadSuggestion === 'function') loadSuggestion(preselect.purchaseId);
+            }
+        } else {
+            // Dynamic mode: populate Select2 dropdowns
+            $('#create_invoice_client_id').val(preselect.clientId);
+            
+            if (!preselect.clientId) {
+                // No pre-selection, just initialize and return
+                return;
+            }
+            
+            // Check if option already exists
+            if ($clientSel.find("option[value='" + preselect.clientId + "']").length) {
+                $clientSel.val(preselect.clientId).trigger('change');
+            } else {
+                // Create a new option and add it to Select2
+                var newOption = new Option(
+                    preselect.clientName || ('Client ID: ' + preselect.clientId), 
+                    preselect.clientId, 
+                    true, 
+                    true
+                );
+                $clientSel.append(newOption).trigger('change');
+                
+                // Fetch purchases to populate second dropdown
+                $purchaseSel.empty().append('<option value="">Loading...</option>').prop('disabled', true);
+                
+                $.post(Wo_Ajax_Requests_File() + '?f=manage_clients&s=search_clients', {
+                    client_id: preselect.clientId,
+                    purchase_id: preselect.purchaseId,
+                    include_purchase: 1
+                }, function(resp){
+                    console.log(preselect);
+                    var match = null;
+                    if (Array.isArray(resp) && resp.length > 0) {
+                        match = resp.find(function(item){ return item.id == preselect.clientId; });
+                        if (!match) match = resp[0]; // Fallback to first result
+                    }
+                    
+                    if (match && match.purchases && match.purchases.length > 0) {
+                        $purchaseSel.empty().append('<option value="">-- Select Purchase --</option>');
+                        match.purchases.forEach(function(p){
+                            var purchId = p.purchase_id || p.id;
+                            var label = (p.file_num ? p.file_num : ('Purchase #' + purchId)) + 
+                                        (p.project ? ' (' + p.project + ')' : '');
+                            $purchaseSel.append(new Option(label, purchId));
+                        });
+                        $purchaseSel.prop('disabled', false);
+                        
+                        // Select specific purchase if provided
+                        if (preselect.purchaseId) {
+                            $purchaseSel.val(preselect.purchaseId).trigger('change');
+                        } else if (match.purchases.length === 1) {
+                            // Auto-select if only one purchase
+                            $purchaseSel.val(match.purchases[0].purchase_id || match.purchases[0].id).trigger('change');
+                        }
+                    } else {
+                        $purchaseSel.empty().append('<option value="">No purchases found</option>').prop('disabled', true);
+                    }
+                }, 'json').fail(function(){
+                    $purchaseSel.empty().append('<option value="">Failed to load</option>').prop('disabled', true);
+                });
+            }
+        }
+    });
+};
+
+// Helper function for invoices tab to open modal with current selection
+window.openInvoiceModalFromInvoicesTab = function() {
+    var clientId = $('#invoices_client_id').val() || $('#invoices_client_select').val();
+    var purchaseId = $('#invoices_purchase_select').val();
+    
+    var clientName = '';
+    if (clientId) {
+        var $sel = $('#invoices_client_select');
+        var selectedData = $sel.select2('data');
+        if (selectedData && selectedData.length > 0) {
+            clientName = selectedData[0].text;
+        }
+    }
+    
+    var fileNum = '';
+    if (purchaseId) {
+        fileNum = $('#invoices_purchase_select option:selected').text().split(' ')[0];
+    }
+    
+    // Call the main function
+    if (typeof openCreateInvoiceModal === 'function') {
+        openCreateInvoiceModal(clientId, purchaseId, clientName, fileNum);
+    } else {
+        // Fallback: just open the modal
+        $('#createInvoiceModal').modal('show');
+    }
+};
+</script>

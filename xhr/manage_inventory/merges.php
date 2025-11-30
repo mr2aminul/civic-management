@@ -63,6 +63,20 @@ header('Content-Type: application/json; charset=utf-8');
                 $db->where('id', $source_purchase_id)->update(T_BOOKING_HELPER, ['has_pending_changes' => 1]);
                 $db->where('id', $target_purchase_id)->update(T_BOOKING_HELPER, ['has_pending_changes' => 1]);
                 
+                // Log to audit trail
+                if ($db->tableExists('crm_audit_trail')) {
+                    $db->insert('crm_audit_trail', [
+                        'user_id' => $wo['user']['id'] ?? 0,
+                        'action_category' => 'purchase',
+                        'action_type' => 'merge_requested',
+                        'action_description' => "Merge requested: Purchase #$source_purchase_id into #$target_purchase_id",
+                        'details' => json_encode(['merge_id' => $id, 'source' => $source_purchase_id, 'target' => $target_purchase_id]),
+                        'performed_by' => $wo['user']['id'] ?? 0,
+                        'ip_address' => $_SERVER['REMOTE_ADDR'],
+                        'performed_at' => date('Y-m-d H:i:s')
+                    ]);
+                }
+                
                 echo json_encode(['status' => 200, 'message' => 'Merge request created', 'merge_id' => $id]);
             } else {
                 echo json_encode(['status' => 500, 'message' => 'Failed to create merge request']);
@@ -150,17 +164,40 @@ if ($s == 'approve_merge') {
             $db->where('id', $merge_id);
             $db->update('crm_merge_requests', $update_data);
 
-            // Transfer all invoices from source to target
-            $db->where('purchase_id', $merge->source_purchase_id);
-            $db->update('crm_invoices', ['purchase_id' => $merge->target_purchase_id]);
+            // 1. Transfer Invoices (if configured)
+            // Note: merge_credits column stores the 'Consolidate Invoices' preference
+            if ($merge->merge_credits == 1) {
+                $db->where('purchase_id', $merge->source_purchase_id);
+                $db->update('crm_invoices', ['purchase_id' => $merge->target_purchase_id]);
+            }
 
-            // Transfer all receipts from source to target
-            $db->where('purchase_id', $merge->source_purchase_id);
-            $db->update('crm_money_receipts', ['purchase_id' => $merge->target_purchase_id]);
+            // 2. Transfer Payments/Receipts (if configured)
+            if ($merge->merge_paid_amount == 1) {
+                // Transfer receipts
+                $db->where('purchase_id', $merge->source_purchase_id);
+                $db->update('crm_money_receipts', ['purchase_id' => $merge->target_purchase_id]);
 
-            // Transfer all credits from source to target
-            $db->where('purchase_id', $merge->source_purchase_id);
-            $db->update('crm_overpayment_credits', ['purchase_id' => $merge->target_purchase_id]);
+                // Transfer overpayment credits (fix table name from schema)
+                if ($db->tableExists('crm_payment_credits')) {
+                    $db->where('purchase_id', $merge->source_purchase_id);
+                    $db->update('crm_payment_credits', ['purchase_id' => $merge->target_purchase_id]);
+                }
+            }
+
+            // 3. Transfer Payment Schedule (if configured)
+            if ($merge->merge_payment_schedule == 1) {
+                // Get max installment number from target to append source installments
+                $max_inst = $db->where('purchase_id', $merge->target_purchase_id)->getValue('crm_payment_schedule', 'MAX(installment_number)');
+                $max_inst = $max_inst ? intval($max_inst) : 0;
+
+                // Update source schedule items: change purchase_id and increment installment_number
+                // We use raw query for atomic update of installment_number
+                $db->rawQuery("UPDATE crm_payment_schedule 
+                               SET purchase_id = ?, 
+                                   installment_number = installment_number + ? 
+                               WHERE purchase_id = ?", 
+                               [$merge->target_purchase_id, $max_inst, $merge->source_purchase_id]);
+            }
 
             // Mark source purchase as merged
             $db->where('id', $merge->source_purchase_id);
